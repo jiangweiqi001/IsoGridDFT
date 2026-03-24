@@ -1,0 +1,1 @@
+"""GTH pseudopotential package placeholders."""
