@@ -27,3 +27,15 @@ def test_import_pseudo_entrypoint() -> None:
 
     pseudo_data = load_gth_pseudo_data("H")
     assert pseudo_data.element == "H"
+
+
+def test_import_ops_entrypoint() -> None:
+    from isogrid.ops import apply_kinetic_operator
+
+    assert callable(apply_kinetic_operator)
+
+
+def test_import_local_hamiltonian_entrypoint() -> None:
+    from isogrid.ks import apply_local_hamiltonian
+
+    assert callable(apply_local_hamiltonian)

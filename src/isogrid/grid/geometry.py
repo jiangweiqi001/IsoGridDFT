@@ -25,6 +25,9 @@ class StructuredGridGeometry:
     x_points: np.ndarray
     y_points: np.ndarray
     z_points: np.ndarray
+    x_point_jacobian: np.ndarray
+    y_point_jacobian: np.ndarray
+    z_point_jacobian: np.ndarray
     point_jacobian: np.ndarray
     cell_widths_x: np.ndarray
     cell_widths_y: np.ndarray
@@ -90,6 +93,9 @@ def build_grid_geometry(spec: StructuredGridSpec) -> StructuredGridGeometry:
         x_points=x_points,
         y_points=y_points,
         z_points=z_points,
+        x_point_jacobian=x_mapping.point_jacobian,
+        y_point_jacobian=y_mapping.point_jacobian,
+        z_point_jacobian=z_mapping.point_jacobian,
         point_jacobian=point_jacobian,
         cell_widths_x=cell_widths_x,
         cell_widths_y=cell_widths_y,
