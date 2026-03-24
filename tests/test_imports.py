@@ -1,4 +1,4 @@
-"""Import smoke tests for the package skeleton and config defaults."""
+"""Import smoke tests for the package skeleton and direct entry points."""
 
 
 def test_import_isogrid() -> None:
@@ -20,3 +20,10 @@ def test_import_grid_entrypoint() -> None:
 
     spec = build_default_h2_grid_spec()
     assert spec.name == "h2_r1p4_structured_grid"
+
+
+def test_import_pseudo_entrypoint() -> None:
+    from isogrid.pseudo import load_gth_pseudo_data
+
+    pseudo_data = load_gth_pseudo_data("H")
+    assert pseudo_data.element == "H"

@@ -18,9 +18,10 @@ What is present today:
 - a minimal `src/isogrid/` package skeleton
 - a formal `isogrid.config` layer for benchmark defaults and JAX runtime setup
 - a first structured adaptive grid geometry and mapping layer for geometry-driven structured grids
+- a first GTH data layer and local ionic pseudopotential slice for H, C, N, and O with `gth-pade`
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
 - a `PySCF` basis-sequence audit script for reference-side convergence checks
-- placeholder and sanity tests for imports, audit modules, and grid geometry
+- placeholder and sanity tests for imports, audit modules, grid geometry, and local GTH potentials
 
 ## Audit Baseline
 
@@ -30,6 +31,7 @@ They currently cover:
 
 - H2 singlet and triplet comparison at `R = 1.4 Bohr`
 - a basis-sequence scan for PySCF-side reference convergence checks
+- a local GTH ionic-potential audit slice on the default H2 structured grid
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
 
@@ -45,6 +47,18 @@ It currently provides:
 
 It does not yet implement differential operators, Poisson, KS Hamiltonians, or SCF.
 
+## Pseudopotential Baseline
+
+The current `src/isogrid/pseudo/` layer provides only the first local GTH slice.
+
+It currently provides:
+
+- internal GTH data objects for H, C, N, O with `gth-pade`
+- local ionic pseudopotential evaluation on the structured grid
+- clear placeholders for future nonlocal projector work
+
+It does not yet implement nonlocal projector action, Poisson, KS Hamiltonians, or SCF.
+
 ## Minimal Setup
 
 ```bash
@@ -57,4 +71,5 @@ To run the PySCF audit scripts, install PySCF as well:
 pip install -e .[audit,test]
 python -m isogrid.audit.pyscf_h2_reference
 python -m isogrid.audit.pyscf_h2_basis_convergence
+python -m isogrid.audit.gth_local_h2_audit
 ```
