@@ -17,9 +17,10 @@ What is present today:
 
 - a minimal `src/isogrid/` package skeleton
 - a formal `isogrid.config` layer for benchmark defaults and JAX runtime setup
+- a first structured adaptive grid geometry and mapping layer for geometry-driven structured grids
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
 - a `PySCF` basis-sequence audit script for reference-side convergence checks
-- placeholder tests that only check imports and module presence
+- placeholder and sanity tests for imports, audit modules, and grid geometry
 
 ## Audit Baseline
 
@@ -31,6 +32,18 @@ They currently cover:
 - a basis-sequence scan for PySCF-side reference convergence checks
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
+
+## Grid Geometry Baseline
+
+The initial structured grid layer lives in `src/isogrid/grid/`.
+
+It currently provides:
+
+- structured logical-to-physical coordinate mapping
+- geometry-driven center-fine and far-field-coarse stretching
+- 3D grid point coordinates and minimal geometric weights
+
+It does not yet implement differential operators, Poisson, KS Hamiltonians, or SCF.
 
 ## Minimal Setup
 

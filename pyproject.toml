@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Adaptive real-space Kohn-Sham DFT for isolated molecules."
 readme = "README.md"
 requires-python = ">=3.10"
-dependencies = []
+dependencies = ["numpy>=1.26"]
 
 [project.optional-dependencies]
 audit = ["pyscf>=2.3"]
