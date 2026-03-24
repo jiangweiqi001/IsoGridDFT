@@ -65,3 +65,9 @@ def test_import_static_ks_entrypoint() -> None:
     from isogrid.ks import apply_static_ks_hamiltonian
 
     assert callable(apply_static_ks_hamiltonian)
+
+
+def test_import_fixed_potential_eigensolver_entrypoint() -> None:
+    from isogrid.ks import solve_fixed_potential_eigenproblem
+
+    assert callable(solve_fixed_potential_eigenproblem)

@@ -62,7 +62,7 @@ class StaticKSHamiltonianTerms:
     local_ionic_evaluation: LocalIonicPotentialEvaluation | None
     nonlocal_ionic_evaluation: NonlocalIonicActionEvaluation | None
     hartree_poisson_result: OpenBoundaryPoissonResult | None
-    lsda_evaluation: LSDAEvaluation
+    lsda_evaluation: LSDAEvaluation | None
 
 
 def _normalize_spin_channel(spin_channel: str) -> str:
@@ -168,6 +168,34 @@ def _resolve_hartree_potential(
     )
 
 
+def _resolve_xc_potential(
+    grid_geometry: StructuredGridGeometry,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    spin_channel: str,
+    case: BenchmarkCase,
+    xc_potential: np.ndarray | None,
+    xc_functional: str | None,
+) -> tuple[np.ndarray, LSDAEvaluation | None]:
+    if xc_potential is not None:
+        return (
+            validate_orbital_field(
+                xc_potential,
+                grid_geometry=grid_geometry,
+                name="xc_potential",
+            ),
+            None,
+        )
+
+    lsda_evaluation = evaluate_lsda_terms(
+        rho_up=rho_up,
+        rho_down=rho_down,
+        functional=case.reference_model.xc if xc_functional is None else xc_functional,
+    )
+    potential = lsda_evaluation.v_xc_up if spin_channel == "up" else lsda_evaluation.v_xc_down
+    return potential, lsda_evaluation
+
+
 def build_orbital_density(
     psi: np.ndarray,
     grid_geometry: StructuredGridGeometry,
@@ -217,6 +245,7 @@ def evaluate_static_ks_terms(
     local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
     nonlocal_ionic_action: NonlocalIonicActionEvaluation | np.ndarray | None = None,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
     xc_functional: str | None = None,
 ) -> StaticKSHamiltonianTerms:
     """Resolve the current static KS action and all of its explicit pieces."""
@@ -246,19 +275,20 @@ def evaluate_static_ks_terms(
         rho_total=rho_total,
         hartree_potential=hartree_potential,
     )
-    lsda_evaluation = evaluate_lsda_terms(
+    xc_field, lsda_evaluation = _resolve_xc_potential(
+        grid_geometry=grid_geometry,
         rho_up=rho_up_field,
         rho_down=rho_down_field,
-        functional=case.reference_model.xc if xc_functional is None else xc_functional,
-    )
-    xc_potential = (
-        lsda_evaluation.v_xc_up if normalized_spin == "up" else lsda_evaluation.v_xc_down
+        spin_channel=normalized_spin,
+        case=case,
+        xc_potential=xc_potential,
+        xc_functional=xc_functional,
     )
 
     kinetic_action = apply_kinetic_operator(psi=field, grid_geometry=grid_geometry)
     local_ionic_action = local_potential * field
     hartree_action = hartree_field * field
-    xc_action = xc_potential * field
+    xc_action = xc_field * field
     total_action = kinetic_action + local_ionic_action + nonlocal_action + hartree_action + xc_action
     return StaticKSHamiltonianTerms(
         psi=field,
@@ -273,7 +303,7 @@ def evaluate_static_ks_terms(
         hartree_potential=hartree_field,
         hartree_action=hartree_action,
         hartree_energy=hartree_energy,
-        xc_potential=xc_potential,
+        xc_potential=xc_field,
         xc_action=xc_action,
         total_action=total_action,
         local_ionic_evaluation=local_evaluation,
@@ -293,6 +323,7 @@ def apply_static_ks_hamiltonian(
     local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
     nonlocal_ionic_action: NonlocalIonicActionEvaluation | np.ndarray | None = None,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
     xc_functional: str | None = None,
 ) -> np.ndarray:
     """Apply the first-stage static KS Hamiltonian with Hartree to one orbital field."""
@@ -307,6 +338,7 @@ def apply_static_ks_hamiltonian(
         local_ionic_potential=local_ionic_potential,
         nonlocal_ionic_action=nonlocal_ionic_action,
         hartree_potential=hartree_potential,
+        xc_potential=xc_potential,
         xc_functional=xc_functional,
     ).total_action
 
@@ -320,6 +352,7 @@ def build_default_h2_static_ks_action(
     local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
     nonlocal_ionic_action: NonlocalIonicActionEvaluation | np.ndarray | None = None,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
 ) -> StaticKSHamiltonianTerms:
     """Convenience wrapper for the default H2 benchmark configuration."""
 
@@ -335,4 +368,5 @@ def build_default_h2_static_ks_action(
         local_ionic_potential=local_ionic_potential,
         nonlocal_ionic_action=nonlocal_ionic_action,
         hartree_potential=hartree_potential,
+        xc_potential=xc_potential,
     )
