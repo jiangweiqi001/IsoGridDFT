@@ -39,3 +39,21 @@ def test_import_local_hamiltonian_entrypoint() -> None:
     from isogrid.ks import apply_local_hamiltonian
 
     assert callable(apply_local_hamiltonian)
+
+
+def test_import_nonlocal_entrypoint() -> None:
+    from isogrid.pseudo import evaluate_nonlocal_ionic_action
+
+    assert callable(evaluate_nonlocal_ionic_action)
+
+
+def test_import_lsda_entrypoint() -> None:
+    from isogrid.xc import evaluate_lsda_potential
+
+    assert callable(evaluate_lsda_potential)
+
+
+def test_import_static_ks_entrypoint() -> None:
+    from isogrid.ks import apply_static_ks_hamiltonian
+
+    assert callable(apply_static_ks_hamiltonian)

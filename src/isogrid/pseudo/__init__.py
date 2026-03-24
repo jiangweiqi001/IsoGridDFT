@@ -1,4 +1,6 @@
-"""Minimal GTH pseudopotential data and local-potential helpers."""
+"""Minimal GTH pseudopotential data and local/nonlocal potential helpers."""
+
+from importlib import import_module
 
 from .gth_data import GTH_DATA_SOURCE
 from .gth_data import SUPPORTED_GTH_ELEMENTS
@@ -15,18 +17,34 @@ from .model import GTHLocalTerm
 from .model import GTHNonlocalChannel
 from .model import GTHPseudoData
 
+_nonlocal_module = import_module('.nonlocal', __name__)
+AtomicNonlocalActionContribution = _nonlocal_module.AtomicNonlocalActionContribution
+NonlocalIonicActionEvaluation = _nonlocal_module.NonlocalIonicActionEvaluation
+ProjectorFieldEvaluation = _nonlocal_module.ProjectorFieldEvaluation
+build_default_h2_nonlocal_ionic_action = _nonlocal_module.build_default_h2_nonlocal_ionic_action
+evaluate_atomic_nonlocal_action = _nonlocal_module.evaluate_atomic_nonlocal_action
+evaluate_atomic_projector_field = _nonlocal_module.evaluate_atomic_projector_field
+evaluate_nonlocal_ionic_action = _nonlocal_module.evaluate_nonlocal_ionic_action
+
 __all__ = [
     "AtomicLocalPotentialContribution",
+    "AtomicNonlocalActionContribution",
     "GTH_DATA_SOURCE",
     "GTHLocalTerm",
     "GTHNonlocalChannel",
     "GTHPseudoData",
     "LocalIonicPotentialEvaluation",
+    "NonlocalIonicActionEvaluation",
+    "ProjectorFieldEvaluation",
     "SUPPORTED_GTH_ELEMENTS",
     "SUPPORTED_GTH_FAMILY",
     "build_default_h2_local_ionic_potential",
+    "build_default_h2_nonlocal_ionic_action",
     "evaluate_atomic_local_potential",
+    "evaluate_atomic_nonlocal_action",
+    "evaluate_atomic_projector_field",
     "evaluate_local_ionic_potential",
+    "evaluate_nonlocal_ionic_action",
     "load_case_gth_pseudo_data",
     "load_gth_pseudo_data",
     "load_gth_pseudo_data_for_elements",
