@@ -1,9 +1,17 @@
 """Configuration helpers for benchmark defaults and runtime setup."""
 
+from .defaults import CO_AUDIT_CASE
+from .defaults import CO_BOND_LENGTH_BOHR
+from .defaults import H2O_AUDIT_CASE
+from .defaults import H2O_HOH_ANGLE_DEGREES
+from .defaults import H2O_OH_BOND_LENGTH_BOHR
 from .defaults import H2_BASIS_CONVERGENCE_BASES
 from .defaults import H2_BASIS_CONVERGENCE_PROTOCOL_DESCRIPTION
 from .defaults import H2_BENCHMARK_CASE
 from .defaults import H2_BOND_LENGTH_BOHR
+from .defaults import MINIMAL_NONLOCAL_AUDIT_CASES
+from .defaults import N2_AUDIT_CASE
+from .defaults import N2_BOND_LENGTH_BOHR
 from .defaults import PYSCF_AUDIT_DEFAULT_CASE
 from .model import AtomSpec
 from .model import BenchmarkCase
@@ -21,15 +29,23 @@ from .runtime import require_jax
 __all__ = [
     "AtomSpec",
     "BenchmarkCase",
-    "MoleculeGeometry",
-    "ReferenceModelSettings",
-    "ScfSettings",
-    "SpinStateSpec",
+    "CO_AUDIT_CASE",
+    "CO_BOND_LENGTH_BOHR",
+    "H2O_AUDIT_CASE",
+    "H2O_HOH_ANGLE_DEGREES",
+    "H2O_OH_BOND_LENGTH_BOHR",
     "H2_BASIS_CONVERGENCE_BASES",
     "H2_BASIS_CONVERGENCE_PROTOCOL_DESCRIPTION",
     "H2_BENCHMARK_CASE",
     "H2_BOND_LENGTH_BOHR",
+    "MINIMAL_NONLOCAL_AUDIT_CASES",
+    "MoleculeGeometry",
+    "N2_AUDIT_CASE",
+    "N2_BOND_LENGTH_BOHR",
     "PYSCF_AUDIT_DEFAULT_CASE",
+    "ReferenceModelSettings",
+    "ScfSettings",
+    "SpinStateSpec",
     "JAX_X64_DEFAULT",
     "SCIENTIFIC_DTYPE_NAME",
     "configure_jax_runtime",

@@ -6,6 +6,7 @@ from importlib import import_module
 
 import numpy as np
 
+from isogrid.audit.local_hamiltonian_h2_trial_audit import build_symmetric_h2_trial_orbital
 from isogrid.grid import build_default_h2_grid_geometry
 from isogrid.ks import apply_static_ks_hamiltonian
 from isogrid.ks import build_singlet_like_spin_densities
@@ -14,13 +15,11 @@ from isogrid.pseudo import evaluate_atomic_nonlocal_action
 from isogrid.pseudo import load_gth_pseudo_data
 from isogrid.xc import evaluate_lsda_terms
 
-from isogrid.audit.local_hamiltonian_h2_trial_audit import build_symmetric_h2_trial_orbital
-
 
 def test_nonlocal_lsda_and_static_ks_modules_import() -> None:
     nonlocal_module = import_module("isogrid.pseudo.nonlocal")
     lsda_module = import_module("isogrid.xc.lsda")
-    audit_module = import_module("isogrid.audit.static_ks_h2_trial_audit")
+    audit_module = import_module("isogrid.audit.static_ks_h2_hartree_audit")
 
     assert hasattr(nonlocal_module, "evaluate_nonlocal_ionic_action")
     assert hasattr(lsda_module, "evaluate_lsda_terms")
@@ -91,4 +90,5 @@ def test_static_ks_preserves_basic_h2_mirror_symmetry() -> None:
     )
 
     assert np.allclose(terms.total_action, terms.total_action[:, :, ::-1])
+    assert np.allclose(terms.hartree_action, terms.hartree_action[:, :, ::-1])
     assert np.allclose(terms.xc_action, terms.xc_action[:, :, ::-1])

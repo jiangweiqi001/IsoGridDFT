@@ -10,9 +10,11 @@ def test_import_isogrid() -> None:
 def test_import_default_h2_config() -> None:
     from isogrid.config import H2_BASIS_CONVERGENCE_BASES
     from isogrid.config import H2_BENCHMARK_CASE
+    from isogrid.config import MINIMAL_NONLOCAL_AUDIT_CASES
 
     assert H2_BENCHMARK_CASE.name == "h2_r1p4_bohr"
     assert H2_BASIS_CONVERGENCE_BASES[0] == "gth-szv"
+    assert set(MINIMAL_NONLOCAL_AUDIT_CASES) == {"H2", "N2", "CO", "H2O"}
 
 
 def test_import_grid_entrypoint() -> None:
@@ -33,6 +35,12 @@ def test_import_ops_entrypoint() -> None:
     from isogrid.ops import apply_kinetic_operator
 
     assert callable(apply_kinetic_operator)
+
+
+def test_import_poisson_entrypoint() -> None:
+    from isogrid.poisson import solve_hartree_potential
+
+    assert callable(solve_hartree_potential)
 
 
 def test_import_local_hamiltonian_entrypoint() -> None:
