@@ -37,6 +37,8 @@ That repaired H2 static local-chain result is now frozen as the current A-grid+p
 
 The next A-grid handoff has now reached the fixed-potential eigensolver on the repaired static local chain. That migration is auditable, but it is not yet numerically stable enough to replace the legacy fixed-potential path; nonlocal, eigensolver production use, and SCF still remain on their current non-monitor routes.
 
+The current focus is now an operator-level audit of the A-grid static-local fixed-potential path. The static local chain itself is established, but the A-grid fixed-potential eigensolver still fails and is being diagnosed before any SCF migration is attempted.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -72,6 +74,7 @@ They currently cover:
 - a formal H2 singlet A-grid fair-calibration audit for matching legacy box size and near-core resolution before comparing `T_s + E_loc,ion`
 - a formal H2 singlet A-grid local-GTH patch audit for near-core correction on the best fair A-grid baseline
 - a first H2 A-grid+patch fixed-potential eigensolver audit on the repaired static local chain
+- a dedicated H2 A-grid static-local operator audit for diagnosing the current fixed-potential eigensolver failure
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -148,5 +151,6 @@ python -m isogrid.audit.h2_monitor_grid_patch_local_audit
 python -m isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit
 python -m isogrid.audit.h2_hartree_poisson_comparison_audit
 python -m isogrid.audit.h2_monitor_grid_poisson_operator_audit
+python -m isogrid.audit.h2_monitor_grid_operator_audit
 ```
 

@@ -175,6 +175,50 @@ class H2FixedPotentialEigensolverRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2FixedPotentialOperatorRouteBaseline:
+    """Recorded operator-level audit result for one fixed-potential route."""
+
+    path_type: str
+    eigenvalue_ha: float
+    weighted_residual_norm: float
+    converged: bool
+    trial_rayleigh_ha: float
+    trial_kinetic_ha: float
+    trial_local_ionic_ha: float
+    trial_hartree_ha: float
+    trial_xc_ha: float
+    eigen_rayleigh_ha: float
+    eigen_kinetic_ha: float
+    eigen_local_ionic_ha: float
+    eigen_hartree_ha: float
+    eigen_xc_ha: float
+    self_adjoint_total_relative_difference: float
+    self_adjoint_kinetic_relative_difference: float
+    self_adjoint_local_relative_difference: float
+    patch_embedded_correction_mha: float | None
+    patch_embedding_energy_mismatch_ha: float | None
+
+
+@dataclass(frozen=True)
+class H2FixedPotentialOperatorRegressionBaseline:
+    """Recorded operator-level failure baseline for the A-grid static-local path."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_route: H2FixedPotentialOperatorRouteBaseline
+    monitor_unpatched_route: H2FixedPotentialOperatorRouteBaseline
+    monitor_patch_route: H2FixedPotentialOperatorRouteBaseline
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -402,7 +446,93 @@ H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE = H2FixedPotentialEigensolverRegressionB
 )
 
 
+H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE = H2FixedPotentialOperatorRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="legacy",
+        eigenvalue_ha=-0.205274654169,
+        weighted_residual_norm=2.892987694458e-04,
+        converged=True,
+        trial_rayleigh_ha=0.003887274419,
+        trial_kinetic_ha=0.997532314836,
+        trial_local_ionic_ha=-2.173678262801,
+        trial_hartree_ha=1.748670071699,
+        trial_xc_ha=-0.568636849315,
+        eigen_rayleigh_ha=-0.205308969426,
+        eigen_kinetic_ha=0.468898008999,
+        eigen_local_ionic_ha=-1.683453804287,
+        eigen_hartree_ha=1.407843104057,
+        eigen_xc_ha=-0.398596278195,
+        self_adjoint_total_relative_difference=7.775e-16,
+        self_adjoint_kinetic_relative_difference=0.0,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=None,
+        patch_embedding_energy_mismatch_ha=None,
+    ),
+    monitor_unpatched_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="monitor_a_grid",
+        eigenvalue_ha=-2.844168300574,
+        weighted_residual_norm=1.237350032968,
+        converged=False,
+        trial_rayleigh_ha=-0.018116838274,
+        trial_kinetic_ha=0.967122692573,
+        trial_local_ionic_ha=-2.182474756395,
+        trial_hartree_ha=1.765755769546,
+        trial_xc_ha=-0.568520543999,
+        eigen_rayleigh_ha=-1.642746017159,
+        eigen_kinetic_ha=-1.642701348259,
+        eigen_local_ionic_ha=-0.139440636607,
+        eigen_hartree_ha=0.139412025095,
+        eigen_xc_ha=-0.000016057387,
+        self_adjoint_total_relative_difference=8.906e-16,
+        self_adjoint_kinetic_relative_difference=1.596e-16,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=None,
+        patch_embedding_energy_mismatch_ha=None,
+    ),
+    monitor_patch_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        eigenvalue_ha=-6.574031909859,
+        weighted_residual_norm=3.334292145497,
+        converged=False,
+        trial_rayleigh_ha=0.020790723372,
+        trial_kinetic_ha=0.967122692573,
+        trial_local_ionic_ha=-2.143567194749,
+        trial_hartree_ha=1.765755769546,
+        trial_xc_ha=-0.568520543999,
+        eigen_rayleigh_ha=-3.375004168561,
+        eigen_kinetic_ha=-3.374908449316,
+        eigen_local_ionic_ha=-0.137471599383,
+        eigen_hartree_ha=0.137437670912,
+        eigen_xc_ha=-0.000061790774,
+        self_adjoint_total_relative_difference=1.448e-15,
+        self_adjoint_kinetic_relative_difference=1.596e-16,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=77.815,
+        patch_embedding_energy_mismatch_ha=0.0,
+    ),
+    diagnosis=(
+        "The failure does not look like a weighted self-adjointness bug. The dominant anomaly "
+        "appears in the A-grid kinetic contribution on the eigensolver-selected orbital, while "
+        "patch on/off only changes the already-bad eigenvalue moderately."
+    ),
+    note=(
+        "Failure regression baseline for the H2 fixed-potential static-local operator audit on "
+        "legacy, A-grid, and A-grid+patch routes. This baseline is for diagnosis, not acceptance."
+    ),
+)
+
+
 __all__ = [
+    "H2FixedPotentialOperatorRegressionBaseline",
+    "H2FixedPotentialOperatorRouteBaseline",
     "H2FixedPotentialEigensolverRegressionBaseline",
     "H2FixedPotentialEigensolverRouteBaseline",
     "H2HartreeTailRecheckPointBaseline",
@@ -414,6 +544,7 @@ __all__ = [
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
     "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
+    "H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
