@@ -309,3 +309,22 @@ def test_import_h2_orbital_shape_baseline() -> None:
     assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_trial_fix_k1_orbital.z_mirror_best_parity == "even"
     assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_trial_fix_k2_gap_ha == 6.270018720619117e-05
+
+
+def test_import_h2_monitor_grid_k2_subspace_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_k2_subspace_audit import (
+        run_h2_monitor_grid_k2_subspace_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_k2_subspace_audit)
+
+
+def test_import_h2_k2_subspace_baseline() -> None:
+    from isogrid.audit.baselines import H2_K2_SUBSPACE_AUDIT_BASELINE
+
+    assert H2_K2_SUBSPACE_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_K2_SUBSPACE_AUDIT_BASELINE.monitor_k2_gap_ha == 6.270018720619386e-05
+    assert (
+        H2_K2_SUBSPACE_AUDIT_BASELINE.monitor_bonding_rotation.rotated_second_orbital.centerline_sign_changes
+        == 68
+    )

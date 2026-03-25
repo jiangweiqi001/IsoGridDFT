@@ -49,6 +49,8 @@ That same kinetic trial-fix branch is now being validated one step downstream on
 
 The current very small follow-up audit focuses on the `k=2` orbital-shape question for that repaired A-grid+patch+trial-fix fixed-potential route, because the next gating item before any A-grid SCF dry-run is no longer raw convergence but whether the low-lying orbitals still look physically sane.
 
+That same follow-up has now narrowed one step further to a `k=2` near-degenerate subspace audit, because the remaining question is no longer whether the A-grid fixed-potential route converges, but whether its low-lying two-dimensional subspace can be organized into a physically interpretable bonding/antibonding-like basis before any SCF dry-run is attempted.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -92,6 +94,7 @@ They currently cover:
 - a first A-grid kinetic boundary/ghost trial-fix audit for checking whether the Green-identity gap collapses on the bad fixed-potential orbital
 - a follow-up H2 A-grid operator/eigensolver trial-fix comparison for checking whether the repaired kinetic closure also lifts the fixed-potential eigenvalues and residuals
 - a very small H2 orbital-shape audit for checking whether the repaired A-grid+patch+trial-fix `k=1/k=2` fixed-potential orbitals still have reasonable symmetry, node structure, and low boundary pollution before any SCF dry-run
+- a very small H2 `k=2` subspace audit for checking whether the repaired A-grid+patch+trial-fix near-degenerate pair can be rotated into a more interpretable bonding/antibonding-like basis before any SCF dry-run
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -174,5 +177,6 @@ python -m isogrid.audit.h2_monitor_grid_kinetic_form_audit
 python -m isogrid.audit.h2_monitor_grid_geometry_consistency_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit
 python -m isogrid.audit.h2_monitor_grid_orbital_shape_audit
+python -m isogrid.audit.h2_monitor_grid_k2_subspace_audit
 ```
 

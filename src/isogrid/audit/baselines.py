@@ -519,6 +519,70 @@ class H2OrbitalShapeRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2K2SubspaceOrbitalBaseline:
+    """Recorded k=2 subspace orbital summary."""
+
+    path_type: str
+    kinetic_version: str
+    orbital_label: str
+    eigenvalue_ha: float
+    residual_norm: float
+    z_mirror_best_mismatch: float
+    centerline_sign_changes: int
+    far_field_sign_changes: int
+    center_value: float
+    far_field_norm_fraction: float
+    boundary_layer_norm_fraction: float
+
+
+@dataclass(frozen=True)
+class H2K2SubspaceMatrixBaseline:
+    """Recorded 2x2 subspace matrix summary."""
+
+    label: str
+    matrix: tuple[tuple[float, float], tuple[float, float]]
+    eigenvalues: tuple[float, float]
+
+
+@dataclass(frozen=True)
+class H2K2SubspaceRotationBaseline:
+    """Recorded very small k=2 subspace rotation summary."""
+
+    rotation_label: str
+    rotation_matrix: tuple[tuple[float, float], tuple[float, float]]
+    raw_bonding_overlaps: tuple[float, float]
+    rotated_bonding_overlaps: tuple[float, float]
+    rotated_first_orbital: H2K2SubspaceOrbitalBaseline
+    rotated_second_orbital: H2K2SubspaceOrbitalBaseline
+    note: str
+
+
+@dataclass(frozen=True)
+class H2K2SubspaceRegressionBaseline:
+    """Recorded H2 k=2 subspace audit baseline."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_raw_eigenvalues_ha: tuple[float, float]
+    legacy_raw_orbitals: tuple[H2K2SubspaceOrbitalBaseline, H2K2SubspaceOrbitalBaseline]
+    monitor_raw_eigenvalues_ha: tuple[float, float]
+    monitor_raw_orbitals: tuple[H2K2SubspaceOrbitalBaseline, H2K2SubspaceOrbitalBaseline]
+    monitor_inversion_matrix: H2K2SubspaceMatrixBaseline
+    monitor_z_mirror_matrix: H2K2SubspaceMatrixBaseline
+    monitor_bonding_rotation: H2K2SubspaceRotationBaseline
+    legacy_k2_gap_ha: float
+    monitor_k2_gap_ha: float
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -1569,6 +1633,140 @@ H2_ORBITAL_SHAPE_AUDIT_BASELINE = H2OrbitalShapeRegressionBaseline(
 )
 
 
+H2_K2_SUBSPACE_AUDIT_BASELINE = H2K2SubspaceRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_raw_eigenvalues_ha=(-0.20529016296596161, 0.06286688164303063),
+    legacy_raw_orbitals=(
+        H2K2SubspaceOrbitalBaseline(
+            path_type="legacy",
+            kinetic_version="production",
+            orbital_label="raw_k2_orbital_0",
+            eigenvalue_ha=-0.20529016296596161,
+            residual_norm=6.0949266778088785e-05,
+            z_mirror_best_mismatch=1.2026507023916232e-13,
+            centerline_sign_changes=0,
+            far_field_sign_changes=0,
+            center_value=0.32599942912178453,
+            far_field_norm_fraction=0.00017807090829986114,
+            boundary_layer_norm_fraction=5.24272545370966e-05,
+        ),
+        H2K2SubspaceOrbitalBaseline(
+            path_type="legacy",
+            kinetic_version="production",
+            orbital_label="raw_k2_orbital_1",
+            eigenvalue_ha=0.06286688164303063,
+            residual_norm=0.000654810468883838,
+            z_mirror_best_mismatch=1.376798826073179e-08,
+            centerline_sign_changes=2,
+            far_field_sign_changes=0,
+            center_value=-0.07934285278634354,
+            far_field_norm_fraction=0.16377129456312522,
+            boundary_layer_norm_fraction=0.06142525766232676,
+        ),
+    ),
+    monitor_raw_eigenvalues_ha=(-0.1866584331584699, -0.1865957329712637),
+    monitor_raw_orbitals=(
+        H2K2SubspaceOrbitalBaseline(
+            path_type="monitor_a_grid_plus_patch",
+            kinetic_version="trial_fix",
+            orbital_label="raw_k2_orbital_0",
+            eigenvalue_ha=-0.1866584331584699,
+            residual_norm=0.00017486394700554094,
+            z_mirror_best_mismatch=5.505570380930582e-10,
+            centerline_sign_changes=0,
+            far_field_sign_changes=0,
+            center_value=-2.0764397553265664e-05,
+            far_field_norm_fraction=0.000256552436838866,
+            boundary_layer_norm_fraction=0.00013429772500605329,
+        ),
+        H2K2SubspaceOrbitalBaseline(
+            path_type="monitor_a_grid_plus_patch",
+            kinetic_version="trial_fix",
+            orbital_label="raw_k2_orbital_1",
+            eigenvalue_ha=-0.1865957329712637,
+            residual_norm=0.00017589071376628463,
+            z_mirror_best_mismatch=5.538463649706932e-10,
+            centerline_sign_changes=0,
+            far_field_sign_changes=0,
+            center_value=-0.4439333144909637,
+            far_field_norm_fraction=0.000256703747460823,
+            boundary_layer_norm_fraction=0.00013434470345349386,
+        ),
+    ),
+    monitor_inversion_matrix=H2K2SubspaceMatrixBaseline(
+        label="inversion",
+        matrix=((1.0000000000000018, 1.4256416159176753e-15), (1.4256439018312981e-15, 1.0000000000000016)),
+        eigenvalues=(1.0000000000000002, 1.000000000000003),
+    ),
+    monitor_z_mirror_matrix=H2K2SubspaceMatrixBaseline(
+        label="z_mirror",
+        matrix=((1.0000000000000018, 1.425638914759385e-15), (1.4256386831488135e-15, 1.0000000000000016)),
+        eigenvalues=(1.0000000000000002, 1.000000000000003),
+    ),
+    monitor_bonding_rotation=H2K2SubspaceRotationBaseline(
+        rotation_label="bonding_overlap_rotation",
+        rotation_matrix=(
+            (-0.7071744179213354, 0.7070391379814985),
+            (-0.7070391379814985, -0.7071744179213354),
+        ),
+        raw_bonding_overlaps=(-0.617933556193693, -0.6178153477119004),
+        rotated_bonding_overlaps=(0.8738064337932976, -3.058479094175603e-16),
+        rotated_first_orbital=H2K2SubspaceOrbitalBaseline(
+            path_type="monitor_a_grid_plus_patch",
+            kinetic_version="trial_fix",
+            orbital_label="rotated_k2_orbital_0",
+            eigenvalue_ha=-0.1866584331584699,
+            residual_norm=0.00017486394700554094,
+            z_mirror_best_mismatch=2.257931484599113e-12,
+            centerline_sign_changes=0,
+            far_field_sign_changes=0,
+            center_value=0.3138929120497134,
+            far_field_norm_fraction=0.00025666264565709355,
+            boundary_layer_norm_fraction=0.00013434535905920513,
+        ),
+        rotated_second_orbital=H2K2SubspaceOrbitalBaseline(
+            path_type="monitor_a_grid_plus_patch",
+            kinetic_version="trial_fix",
+            orbital_label="rotated_k2_orbital_1",
+            eigenvalue_ha=-0.1865957329712637,
+            residual_norm=0.00017589071376628463,
+            z_mirror_best_mismatch=7.809313367782012e-10,
+            centerline_sign_changes=68,
+            far_field_sign_changes=12,
+            center_value=0.3139236020292898,
+            far_field_norm_fraction=0.0002565935386425954,
+            boundary_layer_norm_fraction=0.00013429706940034205,
+        ),
+        note=(
+            "The chosen very small rotation maximizes frozen-bonding overlap inside the raw "
+            "A-grid k=2 subspace. It cleanly isolates one bonding-like state, but its orthogonal "
+            "complement becomes a strongly oscillatory even mode rather than a legacy-like "
+            "antibonding orbital."
+        ),
+    ),
+    legacy_k2_gap_ha=0.26815704460899226,
+    monitor_k2_gap_ha=6.270018720619386e-05,
+    diagnosis=(
+        "The A-grid+patch+trial-fix k=2 pair is still best interpreted as a near-degenerate mixed "
+        "subspace. Symmetry projection does not split it, and the simplest bonding-overlap rotation "
+        "yields one bonding-like state plus a highly oscillatory orthogonal complement, not a clean "
+        "legacy-like antibonding orbital. This is a subspace-shape warning, not a boundary-pollution "
+        "warning."
+    ),
+    note=(
+        "Very small H2 k=2 subspace baseline for the repaired A-grid+patch+trial-fix fixed-potential "
+        "route versus the legacy fixed-potential reference."
+    ),
+)
+
+
 __all__ = [
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
@@ -1582,6 +1780,10 @@ __all__ = [
     "H2KineticOperatorRegressionBaseline",
     "H2KineticOperatorRouteBaseline",
     "H2KineticOperatorSmoothFieldBaseline",
+    "H2K2SubspaceMatrixBaseline",
+    "H2K2SubspaceOrbitalBaseline",
+    "H2K2SubspaceRegressionBaseline",
+    "H2K2SubspaceRotationBaseline",
     "H2OrbitalShapeOrbitalBaseline",
     "H2OrbitalShapeRegressionBaseline",
     "H2FixedPotentialOperatorRegressionBaseline",
@@ -1602,6 +1804,7 @@ __all__ = [
     "H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE",
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
+    "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",
     "H2_KINETIC_FORM_AUDIT_BASELINE",
