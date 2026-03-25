@@ -23,6 +23,8 @@ The current monitor-grid work has now moved on to a fair resolution-calibration 
 
 The next A-grid step is now the first patch-assisted local-GTH near-core correction on top of the best fair H2 monitor-grid baseline. This still targets only `T_s + E_loc,ion`; nonlocal, Hartree, XC, and SCF remain on their current paths.
 
+The current A-grid patch work has now moved one step further into the static local-chain audit: `T_s + E_loc,ion + E_H + E_xc` can now be compared between the legacy grid, the raw A-grid, and the A-grid plus local-GTH patch correction. Nonlocal, eigensolver, and SCF still remain on their current paths.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -130,5 +132,6 @@ python -m isogrid.audit.h2_vs_pyscf_audit
 python -m isogrid.audit.h2_grid_convergence_audit
 python -m isogrid.audit.h2_monitor_grid_fair_calibration_audit
 python -m isogrid.audit.h2_monitor_grid_patch_local_audit
+python -m isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit
 ```
 

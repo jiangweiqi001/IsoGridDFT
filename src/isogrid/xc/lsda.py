@@ -15,8 +15,13 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from isogrid.grid import MonitorGridGeometry
+from isogrid.grid import StructuredGridGeometry
+from isogrid.ops import integrate_field
+
 SUPPORTED_LSDA_FUNCTIONAL = "lda,vwn"
 _NEGATIVE_DENSITY_TOLERANCE = 1.0e-14
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
@@ -151,3 +156,19 @@ def evaluate_lsda_potential(
         functional=functional,
     )
     return evaluation.v_xc_up, evaluation.v_xc_down
+
+
+def evaluate_lsda_energy(
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    grid_geometry: GridGeometryLike,
+    functional: str = SUPPORTED_LSDA_FUNCTIONAL,
+) -> float:
+    """Return `E_xc = int rho(r) eps_xc(r)` on either supported grid family."""
+
+    evaluation = evaluate_lsda_terms(
+        rho_up=rho_up,
+        rho_down=rho_down,
+        functional=functional,
+    )
+    return float(integrate_field(evaluation.energy_density, grid_geometry=grid_geometry))

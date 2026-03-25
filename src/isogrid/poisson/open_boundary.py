@@ -24,13 +24,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
+from isogrid.ops import apply_monitor_grid_laplacian_operator
 from isogrid.ops import integrate_field
 from isogrid.ops import validate_orbital_field
 
 _FOUR_PI = 4.0 * np.pi
 _JACOBI_DAMPING = 0.8
 _JACOBI_CHECK_INTERVAL = 25
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
@@ -95,7 +98,7 @@ def _boundary_mask(shape: tuple[int, int, int]) -> np.ndarray:
 
 
 def _compute_multipole_boundary_condition(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     rho: np.ndarray,
     multipole_order: int = 2,
     reference_center: tuple[float, float, float] | None = None,
@@ -107,7 +110,14 @@ def _compute_multipole_boundary_condition(
         )
 
     if reference_center is None:
-        reference_center = grid_geometry.spec.reference_center
+        if isinstance(grid_geometry, StructuredGridGeometry):
+            reference_center = grid_geometry.spec.reference_center
+        else:
+            reference_center = (
+                0.5 * (grid_geometry.spec.box_bounds[0][0] + grid_geometry.spec.box_bounds[0][1]),
+                0.5 * (grid_geometry.spec.box_bounds[1][0] + grid_geometry.spec.box_bounds[1][1]),
+                0.5 * (grid_geometry.spec.box_bounds[2][0] + grid_geometry.spec.box_bounds[2][1]),
+            )
 
     dx = grid_geometry.x_points - reference_center[0]
     dy = grid_geometry.y_points - reference_center[1]
@@ -202,6 +212,163 @@ def _interior_operator_coefficients(grid_geometry: StructuredGridGeometry) -> tu
         + az_plus[None, None, :]
     )
     return ax_minus, ax_plus, ay_minus, ay_plus, az_minus, az_plus, diagonal
+
+
+def _solve_monitor_with_scipy_bicgstab(
+    rhs: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+    interior_mask: np.ndarray,
+    tolerance: float,
+    max_iterations: int,
+) -> tuple[np.ndarray, int, float, str] | None:
+    try:
+        from scipy.sparse.linalg import LinearOperator
+        from scipy.sparse.linalg import bicgstab
+    except ImportError:
+        return None
+
+    shape = grid_geometry.spec.shape
+    interior_size = int(np.count_nonzero(interior_mask))
+    iteration_count = 0
+
+    def matvec(vector: np.ndarray) -> np.ndarray:
+        values = np.zeros(shape, dtype=np.float64)
+        values[interior_mask] = np.asarray(vector, dtype=np.float64)
+        action = -apply_monitor_grid_laplacian_operator(values, grid_geometry=grid_geometry)
+        return np.asarray(action[interior_mask], dtype=np.float64)
+
+    def callback(_vector: np.ndarray) -> None:
+        nonlocal iteration_count
+        iteration_count += 1
+
+    operator = LinearOperator((interior_size, interior_size), matvec=matvec, dtype=np.float64)
+    solution, info = bicgstab(
+        operator,
+        rhs[interior_mask],
+        x0=np.zeros(interior_size, dtype=np.float64),
+        rtol=tolerance,
+        atol=0.0,
+        maxiter=max_iterations,
+        callback=callback,
+    )
+    if info != 0:
+        return None
+
+    interior_solution = np.zeros(shape, dtype=np.float64)
+    interior_solution[interior_mask] = np.asarray(solution, dtype=np.float64)
+    residual_field = -apply_monitor_grid_laplacian_operator(
+        interior_solution,
+        grid_geometry=grid_geometry,
+    ) - rhs
+    residual_max = float(np.max(np.abs(residual_field[interior_mask])))
+    return interior_solution, iteration_count, residual_max, "scipy_bicgstab_monitor"
+
+
+def _monitor_diagonal_estimate(grid_geometry: MonitorGridGeometry) -> np.ndarray:
+    dx = _logical_spacing(grid_geometry.logical_x, axis_label="x")
+    dy = _logical_spacing(grid_geometry.logical_y, axis_label="y")
+    dz = _logical_spacing(grid_geometry.logical_z, axis_label="z")
+    inverse_metric = np.asarray(grid_geometry.inverse_metric_tensor, dtype=np.float64)
+    diagonal_estimate = 2.0 * (
+        inverse_metric[..., 0, 0] / (dx * dx)
+        + inverse_metric[..., 1, 1] / (dy * dy)
+        + inverse_metric[..., 2, 2] / (dz * dz)
+    )
+    return np.maximum(diagonal_estimate, 1.0e-8)
+
+
+def _solve_monitor_with_jacobi(
+    rhs: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+    interior_mask: np.ndarray,
+    tolerance: float,
+    max_iterations: int,
+) -> tuple[np.ndarray, int, float, str]:
+    values = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    diagonal = _monitor_diagonal_estimate(grid_geometry)
+    residual_max = np.inf
+
+    for iteration in range(1, max_iterations + 1):
+        residual = rhs + apply_monitor_grid_laplacian_operator(values, grid_geometry=grid_geometry)
+        updated = np.array(values, copy=True)
+        updated[interior_mask] = values[interior_mask] + _JACOBI_DAMPING * (
+            residual[interior_mask] / diagonal[interior_mask]
+        )
+        values = updated
+
+        if iteration % _JACOBI_CHECK_INTERVAL == 0 or iteration == max_iterations:
+            residual = rhs + apply_monitor_grid_laplacian_operator(values, grid_geometry=grid_geometry)
+            residual_max = float(np.max(np.abs(residual[interior_mask])))
+            if residual_max < tolerance:
+                return values, iteration, residual_max, "jacobi_monitor"
+
+    return values, max_iterations, residual_max, "jacobi_monitor_maxiter"
+
+
+def _solve_open_boundary_poisson_monitor(
+    grid_geometry: MonitorGridGeometry,
+    rho: np.ndarray,
+    multipole_order: int,
+    tolerance: float,
+    max_iterations: int,
+    solver: str,
+) -> OpenBoundaryPoissonResult:
+    density = validate_orbital_field(rho, grid_geometry=grid_geometry, name="rho").astype(np.float64)
+    boundary_condition = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=density,
+        multipole_order=multipole_order,
+    )
+    boundary_mask = _boundary_mask(grid_geometry.spec.shape)
+    interior_mask = ~boundary_mask
+    boundary_field = np.array(boundary_condition.boundary_values, copy=True)
+    boundary_field[interior_mask] = 0.0
+    rhs = _FOUR_PI * density - apply_monitor_grid_laplacian_operator(
+        boundary_field,
+        grid_geometry=grid_geometry,
+    )
+
+    interior_solution = None
+    solver_method = ""
+    iteration_count = 0
+    residual_max = np.inf
+
+    if solver in {"auto", "scipy_bicgstab"}:
+        scipy_result = _solve_monitor_with_scipy_bicgstab(
+            rhs=rhs,
+            grid_geometry=grid_geometry,
+            interior_mask=interior_mask,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+        )
+        if scipy_result is not None:
+            interior_solution, iteration_count, residual_max, solver_method = scipy_result
+
+    if interior_solution is None:
+        interior_solution, iteration_count, residual_max, solver_method = _solve_monitor_with_jacobi(
+            rhs=rhs,
+            grid_geometry=grid_geometry,
+            interior_mask=interior_mask,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+        )
+
+    potential = np.array(boundary_condition.boundary_values, copy=True)
+    potential[interior_mask] = interior_solution[interior_mask]
+    description = (
+        "Finite-domain Poisson solve on the monitor-driven A-grid with free-space "
+        "multipole Dirichlet boundary data. This is the first formal A-grid "
+        "open-boundary extension, not the final production solver."
+    )
+    return OpenBoundaryPoissonResult(
+        rho=density,
+        potential=potential,
+        boundary_condition=boundary_condition,
+        solver_method=solver_method,
+        solver_iterations=iteration_count,
+        residual_max=residual_max,
+        description=description,
+    )
 
 
 def _build_poisson_rhs(
@@ -313,7 +480,7 @@ def _solve_with_jacobi(
     return interior, max_iterations, residual_max, "jacobi_maxiter"
 
 
-def solve_open_boundary_poisson(
+def _solve_open_boundary_poisson_legacy(
     grid_geometry: StructuredGridGeometry,
     rho: np.ndarray,
     multipole_order: int = 2,
@@ -380,4 +547,39 @@ def solve_open_boundary_poisson(
         solver_iterations=iteration_count,
         residual_max=residual_max,
         description=description,
+    )
+
+
+def solve_open_boundary_poisson(
+    grid_geometry: GridGeometryLike,
+    rho: np.ndarray,
+    multipole_order: int = 2,
+    tolerance: float = 1.0e-8,
+    max_iterations: int = 400,
+    solver: str = "auto",
+) -> OpenBoundaryPoissonResult:
+    """Solve the first-stage finite-domain Poisson problem with open-boundary data."""
+
+    if solver not in {"auto", "scipy_bicgstab", "jacobi"}:
+        raise ValueError(
+            "The current open-boundary Poisson slice supports solver=`auto`, `scipy_bicgstab`, "
+            f"or `jacobi`; received `{solver}`."
+        )
+
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        return _solve_open_boundary_poisson_monitor(
+            grid_geometry=grid_geometry,
+            rho=rho,
+            multipole_order=multipole_order,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+            solver=solver,
+        )
+    return _solve_open_boundary_poisson_legacy(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=multipole_order,
+        tolerance=tolerance,
+        max_iterations=max_iterations,
+        solver=solver,
     )

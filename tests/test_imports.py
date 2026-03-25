@@ -129,3 +129,11 @@ def test_import_monitor_grid_patch_local_audit_entrypoint() -> None:
     )
 
     assert callable(run_h2_monitor_grid_patch_local_audit)
+
+
+def test_import_monitor_grid_patch_hartree_xc_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit import (
+        run_h2_monitor_grid_patch_hartree_xc_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_patch_hartree_xc_audit)

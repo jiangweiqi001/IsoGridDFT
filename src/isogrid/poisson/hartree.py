@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.ops import integrate_field
 from isogrid.ops import validate_orbital_field
@@ -14,6 +15,7 @@ from .open_boundary import OpenBoundaryPoissonResult
 from .open_boundary import solve_open_boundary_poisson
 
 _NEGATIVE_DENSITY_TOLERANCE = 1.0e-14
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
@@ -29,7 +31,7 @@ class HartreeEvaluation:
 
 def validate_density_field(
     rho: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     name: str = "rho",
 ) -> np.ndarray:
     """Validate a 3D density field on the current structured grid."""
@@ -43,7 +45,7 @@ def validate_density_field(
 
 
 def solve_hartree_potential(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     rho: np.ndarray,
     multipole_order: int = 2,
     tolerance: float = 1.0e-8,
@@ -64,7 +66,7 @@ def solve_hartree_potential(
 
 
 def _resolve_hartree_potential_array(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray,
 ) -> tuple[np.ndarray, OpenBoundaryPoissonResult | None]:
     if isinstance(hartree_potential, OpenBoundaryPoissonResult):
@@ -81,7 +83,7 @@ def _resolve_hartree_potential_array(
 
 def evaluate_hartree_energy(
     rho: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray,
 ) -> float:
     """Return the first-stage Hartree energy E_H = 1/2 int rho v_H."""
@@ -96,7 +98,7 @@ def evaluate_hartree_energy(
 
 def build_hartree_action(
     psi: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray,
 ) -> np.ndarray:
     """Return the Hartree action v_H * psi for one orbital field."""
@@ -111,7 +113,7 @@ def build_hartree_action(
 
 def evaluate_hartree_terms(
     psi: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     rho: np.ndarray,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
     multipole_order: int = 2,
