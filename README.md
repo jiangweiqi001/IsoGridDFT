@@ -25,6 +25,8 @@ The next A-grid step is now the first patch-assisted local-GTH near-core correct
 
 The current A-grid patch work has now moved one step further into the static local-chain audit: `T_s + E_loc,ion + E_H + E_xc` can now be compared between the legacy grid, the raw A-grid, and the A-grid plus local-GTH patch correction. Nonlocal, eigensolver, and SCF still remain on their current paths.
 
+The current focus has now shifted to a dedicated A-grid Hartree / open-boundary Poisson comparison audit, because the local-GTH patch already compresses the `E_loc,ion` gap while the remaining static-local mismatch is now dominated by `E_H`.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -133,5 +135,6 @@ python -m isogrid.audit.h2_grid_convergence_audit
 python -m isogrid.audit.h2_monitor_grid_fair_calibration_audit
 python -m isogrid.audit.h2_monitor_grid_patch_local_audit
 python -m isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit
+python -m isogrid.audit.h2_hartree_poisson_comparison_audit
 ```
 
