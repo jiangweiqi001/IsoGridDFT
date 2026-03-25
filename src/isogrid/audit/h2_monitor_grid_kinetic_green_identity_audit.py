@@ -1,7 +1,9 @@
 r"""Discrete Green-identity audit for the H2 monitor-grid kinetic path.
 
-This audit does not modify the production kinetic implementation. It checks the
-logical-cube Green identity behind the current monitor-grid kinetic operator
+This audit checks a trial-fix branch for the monitor-grid kinetic path. The
+production path is left intact; the audit only swaps the A-grid boundary/ghost
+handling to a centered zero-ghost closure and then rechecks the logical-cube
+Green identity
 
     T psi = -1/2 * (1/J) d_a [ F^a ]
     F^a = J g^{ab} d_b psi
@@ -30,11 +32,13 @@ from isogrid.config import H2_BENCHMARK_CASE
 from isogrid.grid import build_h2_local_patch_development_monitor_grid
 from isogrid.grid import MonitorGridGeometry
 from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
-from isogrid.ops import apply_monitor_grid_kinetic_operator
 from isogrid.ops import validate_orbital_field
+from isogrid.ops.kinetic import apply_monitor_grid_kinetic_operator_trial_boundary_fix
+from isogrid.ops.kinetic import compute_monitor_grid_contravariant_flux_components
 from isogrid.pseudo import LocalPotentialPatchParameters
 
 from .baselines import H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE
+from .baselines import H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE
 from .h2_monitor_grid_kinetic_operator_audit import _MONITOR_FINER_SHAPE
 from .h2_monitor_grid_kinetic_operator_audit import _build_monitor_grid
 from .h2_monitor_grid_kinetic_operator_audit import _build_smooth_field
@@ -141,29 +145,10 @@ def _flux_components(
     grid_geometry: MonitorGridGeometry,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     field = validate_orbital_field(orbital, grid_geometry=grid_geometry, name="orbital")
-    gradients = np.gradient(
+    flux_x, flux_y, flux_z = compute_monitor_grid_contravariant_flux_components(
         field,
-        grid_geometry.logical_x,
-        grid_geometry.logical_y,
-        grid_geometry.logical_z,
-        edge_order=2,
-    )
-    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.float64)
-    inverse_metric = np.asarray(grid_geometry.inverse_metric_tensor, dtype=np.float64)
-    flux_x = jacobian * (
-        inverse_metric[..., 0, 0] * gradients[0]
-        + inverse_metric[..., 0, 1] * gradients[1]
-        + inverse_metric[..., 0, 2] * gradients[2]
-    )
-    flux_y = jacobian * (
-        inverse_metric[..., 1, 0] * gradients[0]
-        + inverse_metric[..., 1, 1] * gradients[1]
-        + inverse_metric[..., 1, 2] * gradients[2]
-    )
-    flux_z = jacobian * (
-        inverse_metric[..., 2, 0] * gradients[0]
-        + inverse_metric[..., 2, 1] * gradients[1]
-        + inverse_metric[..., 2, 2] * gradients[2]
+        grid_geometry,
+        use_trial_boundary_fix=True,
     )
     return flux_x, flux_y, flux_z
 
@@ -319,7 +304,10 @@ def _evaluate_field(
     source_converged: bool | None,
 ) -> GreenIdentityFieldResult:
     field = validate_orbital_field(orbital, grid_geometry=grid_geometry, name=field_label)
-    kinetic_action = apply_monitor_grid_kinetic_operator(field, grid_geometry=grid_geometry)
+    kinetic_action = apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+        field,
+        grid_geometry=grid_geometry,
+    )
     operator_indicator = np.real(np.conjugate(field) * kinetic_action)
     gradient_indicator = _gradient_reference_density(field, grid_geometry)
     boundary_indicator, face_contributions, boundary_term = _boundary_term_proxy(field, grid_geometry)
@@ -407,17 +395,14 @@ def _diagnosis(result: H2MonitorGridKineticGreenIdentityAuditResult) -> str:
             and abs(bad_far.closure_weighted_contribution_mha) > 1_000.0
         ):
             return (
-                "The bad eigensolver orbital strongly supports a boundary-handling diagnosis. "
-                "Frozen and smooth fields satisfy the Green identity almost exactly, but the bad "
-                "orbital develops a large negative Delta K that is almost entirely a far-field "
-                "signal. An explicit boundary-flux term explains only part of that gap, while the "
-                "remaining closure defect is also dominated by the far-field boundary layer. The "
-                "finer-shape recheck makes both Delta K and the closure gap worse, which argues "
-                "more for a discrete boundary / ghost closure defect than for a simple resolution tail."
+                "The trial boundary-fix branch materially reduces the bad-orbital Green-identity "
+                "failure while leaving the frozen and smooth fields well behaved. The remaining "
+                "mismatch is still far-field dominated, so the boundary/ghost diagnosis survives, "
+                "but the prototype closure change is hitting the right symptom."
             )
     return (
-        "The Green-identity audit found a large bad-orbital mismatch, but the boundary proxy alone "
-        "does not yet fully explain it."
+        "The trial boundary-fix branch changes the Green-identity balance, but the bad-orbital "
+        "mismatch is not yet collapsed enough to call the issue solved."
     )
 
 
@@ -497,8 +482,9 @@ def run_h2_monitor_grid_kinetic_green_identity_audit(
         diagnosis="",
         note=(
             "This audit keeps the H2 singlet frozen density fixed and checks the discrete "
-            "Green identity K_op = K_grad + K_bdry on the monitor-grid kinetic path. It does "
-            "not modify the kinetic implementation."
+            "Green identity K_op = K_grad + K_bdry on the monitor-grid kinetic trial-fix path. "
+            "The production kinetic implementation remains available; this audit only exercises "
+            "the centered zero-ghost boundary-closure prototype."
         ),
     )
     return H2MonitorGridKineticGreenIdentityAuditResult(
@@ -560,6 +546,12 @@ def print_h2_monitor_grid_kinetic_green_identity_audit_summary(
     print("IsoGridDFT H2 kinetic Green-identity audit")
     print(f"note: {result.note}")
     print(f"geometry-consistency baseline diagnosis: {H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE.diagnosis}")
+    print(
+        "pre-fix bad-eigen baseline: "
+        f"Delta K={H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE.bad_eigen_baseline.delta_kinetic_mha:+.3f} mHa, "
+        f"K_bdry={H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE.bad_eigen_baseline.boundary_term_ha:+.12f} Ha, "
+        f"closure={H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE.bad_eigen_baseline.closure_mismatch_mha:+.3f} mHa"
+    )
     print()
     _print_field_result(result.frozen_trial_baseline)
     print()

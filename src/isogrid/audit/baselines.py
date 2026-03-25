@@ -1084,6 +1084,94 @@ H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE = H2KineticGreenIdentityRegressionBasel
 )
 
 
+H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE = H2KineticGreenIdentityRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    finer_shape=(75, 75, 91),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    frozen_trial_baseline=H2KineticGreenIdentityFieldBaseline(
+        shape_label="baseline",
+        field_label="frozen_trial_orbital",
+        operator_kinetic_ha=0.9671226925733343,
+        gradient_kinetic_ha=0.9671226925733338,
+        delta_kinetic_mha=4.440892098500626e-13,
+        boundary_term_ha=2.0911931031685546e-43,
+        closure_mismatch_mha=3.1485231088979044e-13,
+        far_field_delta_mha=-8.257387887505129e-25,
+        far_field_boundary_ha=2.0911931031685546e-43,
+        far_field_closure_mha=-8.257387887505129e-25,
+        source_eigenvalue_ha=None,
+        source_residual_norm=None,
+        source_converged=None,
+    ),
+    bad_eigen_baseline=H2KineticGreenIdentityFieldBaseline(
+        shape_label="baseline",
+        field_label="bad_eigensolver_orbital_k1",
+        operator_kinetic_ha=3.394498206320347,
+        gradient_kinetic_ha=3.8531390008473174,
+        delta_kinetic_mha=-458.64079452697035,
+        boundary_term_ha=0.9283910649165813,
+        closure_mismatch_mha=-1387.0318594435507,
+        far_field_delta_mha=-457.7407506769053,
+        far_field_boundary_ha=0.9283910649165814,
+        far_field_closure_mha=-1386.1318155934866,
+        source_eigenvalue_ha=-6.574031909859388,
+        source_residual_norm=3.3342921454967853,
+        source_converged=False,
+    ),
+    bad_eigen_finer_shape=H2KineticGreenIdentityFieldBaseline(
+        shape_label="finer-shape",
+        field_label="bad_eigensolver_orbital_k1",
+        operator_kinetic_ha=4.135089743442165,
+        gradient_kinetic_ha=4.347050665433583,
+        delta_kinetic_mha=-211.96092199141782,
+        boundary_term_ha=1.2641434744933913,
+        closure_mismatch_mha=-1476.1043964848081,
+        far_field_delta_mha=-210.86253376979448,
+        far_field_boundary_ha=1.2641434744933908,
+        far_field_closure_mha=-1475.0060082631855,
+        source_eigenvalue_ha=-7.556869846559655,
+        source_residual_norm=3.762909029925938,
+        source_converged=False,
+    ),
+    smooth_fields=(
+        H2KineticGreenIdentitySmoothFieldBaseline(
+            field_label="smooth_gaussian",
+            operator_kinetic_ha=0.6597481425992471,
+            gradient_kinetic_ha=0.6597481425992472,
+            delta_kinetic_mha=-1.1102230246251565e-13,
+            boundary_term_ha=1.1802469575905652e-24,
+            closure_mismatch_mha=3.252606517456514e-14,
+        ),
+        H2KineticGreenIdentitySmoothFieldBaseline(
+            field_label="smooth_cosine",
+            operator_kinetic_ha=0.05011510590928958,
+            gradient_kinetic_ha=0.05233941382407794,
+            delta_kinetic_mha=-2.224307914788358,
+            boundary_term_ha=1.9832026149313038e-18,
+            closure_mismatch_mha=-2.2243079147883624,
+        ),
+    ),
+    diagnosis=(
+        "The kinetic boundary/ghost trial fix materially reduces the bad-orbital Green-identity "
+        "failure: the baseline bad-eigen Delta K drops from -7228 mHa to -459 mHa and K_op "
+        "flips from strongly negative to positive. The remaining mismatch is still far-field "
+        "dominated, and the explicit boundary term only explains part of it, so the prototype "
+        "hits the main symptom but does not yet fully close the discrete boundary identity."
+    ),
+    note=(
+        "Discrete Green-identity trial-fix baseline for the H2 singlet frozen-density A-grid "
+        "kinetic audit after switching the monitor-grid boundary/ghost handling to a centered "
+        "zero-ghost prototype in kinetic.py."
+    ),
+)
+
+
 __all__ = [
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
@@ -1114,6 +1202,7 @@ __all__ = [
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
+    "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",
     "H2_KINETIC_FORM_AUDIT_BASELINE",
     "H2_KINETIC_OPERATOR_AUDIT_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",

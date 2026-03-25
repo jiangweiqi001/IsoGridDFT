@@ -162,36 +162,77 @@ def _validate_monitor_geometry(grid_geometry: MonitorGridGeometry) -> None:
         raise ValueError("Monitor-grid inverse metric tensor must be finite.")
 
 
-def apply_monitor_grid_laplacian_operator(
+def _axis_gradient_zero_ghost(
+    field: np.ndarray,
+    logical_coordinates: np.ndarray,
+    axis: int,
+) -> np.ndarray:
+    """Differentiate along one logical axis using a zero-ghost centered stencil.
+
+    This is an audit-side trial fix for the monitor-grid kinetic path. The
+    boundary node sees a zero ghost value beyond the physical box, while the
+    interior still uses the standard centered difference.
+    """
+
+    spacing = _logical_spacing(logical_coordinates, f"monitor-axis-{axis}")
+    moved = np.moveaxis(np.asarray(field), axis, 0)
+    gradient = np.empty_like(moved, dtype=np.result_type(moved.dtype, np.float64))
+
+    if moved.shape[0] < 2:
+        raise ValueError("Monitor-grid kinetic audit requires at least two points per axis.")
+
+    gradient[1:-1] = (moved[2:] - moved[:-2]) / (2.0 * spacing)
+    gradient[0] = (moved[1] - 0.0) / (2.0 * spacing)
+    gradient[-1] = (0.0 - moved[-2]) / (2.0 * spacing)
+    return np.moveaxis(gradient, 0, axis)
+
+
+def _monitor_grid_derivatives(
+    field: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+    *,
+    use_trial_boundary_fix: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    if use_trial_boundary_fix:
+        return (
+            _axis_gradient_zero_ghost(field, grid_geometry.logical_x, axis=0),
+            _axis_gradient_zero_ghost(field, grid_geometry.logical_y, axis=1),
+            _axis_gradient_zero_ghost(field, grid_geometry.logical_z, axis=2),
+        )
+    gradients = np.gradient(
+        field,
+        np.asarray(grid_geometry.logical_x, dtype=np.float64),
+        np.asarray(grid_geometry.logical_y, dtype=np.float64),
+        np.asarray(grid_geometry.logical_z, dtype=np.float64),
+        edge_order=2,
+    )
+    return gradients[0], gradients[1], gradients[2]
+
+
+def compute_monitor_grid_contravariant_flux_components(
     psi: np.ndarray,
     grid_geometry: MonitorGridGeometry,
-) -> np.ndarray:
-    """Apply the full curvilinear Laplacian on the 3D monitor grid.
+    *,
+    use_trial_boundary_fix: bool = False,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Build the monitor-grid contravariant fluxes J g^{ab} d_b psi.
 
-    This path uses
-
-        nabla^2 psi = (1/J) d/dxi_a [ J g^{ab} dpsi/dxi_b ]
-
-    on the uniform logical cube of the monitor grid.
+    The optional trial-fix branch keeps the same curvilinear kinetic form but
+    swaps the boundary derivative/ghost handling from NumPy's one-sided edge
+    rule to a centered zero-ghost stencil at the physical box boundary.
     """
 
     _validate_monitor_geometry(grid_geometry)
     field = validate_orbital_field(psi, grid_geometry=grid_geometry)
-    logical_x = np.asarray(grid_geometry.logical_x, dtype=np.float64)
-    logical_y = np.asarray(grid_geometry.logical_y, dtype=np.float64)
-    logical_z = np.asarray(grid_geometry.logical_z, dtype=np.float64)
     jacobian = np.asarray(grid_geometry.jacobian, dtype=np.result_type(field.dtype, np.float64))
     inverse_metric = np.asarray(
         grid_geometry.inverse_metric_tensor,
         dtype=np.result_type(field.dtype, np.float64),
     )
-
-    dpsi_dxi = np.gradient(
+    dpsi_dxi = _monitor_grid_derivatives(
         field,
-        logical_x,
-        logical_y,
-        logical_z,
-        edge_order=2,
+        grid_geometry,
+        use_trial_boundary_fix=use_trial_boundary_fix,
     )
     flux_x = jacobian * (
         inverse_metric[..., 0, 0] * dpsi_dxi[0]
@@ -208,10 +249,90 @@ def apply_monitor_grid_laplacian_operator(
         + inverse_metric[..., 2, 1] * dpsi_dxi[1]
         + inverse_metric[..., 2, 2] * dpsi_dxi[2]
     )
-    divergence = (
+    return flux_x, flux_y, flux_z
+
+
+def _monitor_grid_divergence_from_flux(
+    flux_x: np.ndarray,
+    flux_y: np.ndarray,
+    flux_z: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+    *,
+    use_trial_boundary_fix: bool,
+) -> np.ndarray:
+    if use_trial_boundary_fix:
+        return (
+            _axis_gradient_zero_ghost(flux_x, grid_geometry.logical_x, axis=0)
+            + _axis_gradient_zero_ghost(flux_y, grid_geometry.logical_y, axis=1)
+            + _axis_gradient_zero_ghost(flux_z, grid_geometry.logical_z, axis=2)
+        )
+    logical_x = np.asarray(grid_geometry.logical_x, dtype=np.float64)
+    logical_y = np.asarray(grid_geometry.logical_y, dtype=np.float64)
+    logical_z = np.asarray(grid_geometry.logical_z, dtype=np.float64)
+    return (
         np.gradient(flux_x, logical_x, axis=0, edge_order=2)
         + np.gradient(flux_y, logical_y, axis=1, edge_order=2)
         + np.gradient(flux_z, logical_z, axis=2, edge_order=2)
+    )
+
+
+def apply_monitor_grid_laplacian_operator(
+    psi: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+) -> np.ndarray:
+    """Apply the full curvilinear Laplacian on the 3D monitor grid.
+
+    This path uses
+
+        nabla^2 psi = (1/J) d/dxi_a [ J g^{ab} dpsi/dxi_b ]
+
+    on the uniform logical cube of the monitor grid.
+    """
+
+    _validate_monitor_geometry(grid_geometry)
+    field = validate_orbital_field(psi, grid_geometry=grid_geometry)
+    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.result_type(field.dtype, np.float64))
+    flux_x, flux_y, flux_z = compute_monitor_grid_contravariant_flux_components(
+        field,
+        grid_geometry,
+        use_trial_boundary_fix=False,
+    )
+    divergence = _monitor_grid_divergence_from_flux(
+        flux_x,
+        flux_y,
+        flux_z,
+        grid_geometry,
+        use_trial_boundary_fix=False,
+    )
+    return divergence / jacobian
+
+
+def apply_monitor_grid_laplacian_operator_trial_boundary_fix(
+    psi: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+) -> np.ndarray:
+    """Apply a trial monitor-grid Laplacian with zero-ghost boundary closure.
+
+    The curvilinear operator form is unchanged. The only prototype change is
+    that all logical-axis derivatives inside the A-grid kinetic path switch
+    from one-sided edge gradients to a centered zero-ghost stencil at the
+    physical box boundary.
+    """
+
+    _validate_monitor_geometry(grid_geometry)
+    field = validate_orbital_field(psi, grid_geometry=grid_geometry)
+    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.result_type(field.dtype, np.float64))
+    flux_x, flux_y, flux_z = compute_monitor_grid_contravariant_flux_components(
+        field,
+        grid_geometry,
+        use_trial_boundary_fix=True,
+    )
+    divergence = _monitor_grid_divergence_from_flux(
+        flux_x,
+        flux_y,
+        flux_z,
+        grid_geometry,
+        use_trial_boundary_fix=True,
     )
     return divergence / jacobian
 
@@ -223,6 +344,18 @@ def apply_monitor_grid_kinetic_operator(
     """Apply the first A-grid kinetic operator T = -1/2 Laplacian."""
 
     return -0.5 * apply_monitor_grid_laplacian_operator(psi=psi, grid_geometry=grid_geometry)
+
+
+def apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+    psi: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+) -> np.ndarray:
+    """Apply the trial A-grid kinetic operator with zero-ghost boundary closure."""
+
+    return -0.5 * apply_monitor_grid_laplacian_operator_trial_boundary_fix(
+        psi=psi,
+        grid_geometry=grid_geometry,
+    )
 
 
 def apply_laplacian_operator(psi: np.ndarray, grid_geometry: GridGeometryLike) -> np.ndarray:
