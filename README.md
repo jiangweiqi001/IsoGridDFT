@@ -13,6 +13,8 @@ IsoGridDFT is an adaptive real-space Kohn-Sham DFT project for isolated molecule
 
 The repository is still in the groundwork stage. A first minimal H2 single-point SCF closed loop now exists, but it is still a development implementation: the convergence strategy, accuracy, and broader benchmark coverage still need more audit work.
 
+The current single-center `sinh` grid should now be treated as a transitional baseline. The next planned phase is a redesign of the main grid representation toward an atom-centered monitor-driven structured grid, guided by the H2 error-localization audits.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
