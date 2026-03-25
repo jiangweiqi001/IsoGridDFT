@@ -33,6 +33,8 @@ That boundary-split / RHS consistency defect has now received a first targeted f
 
 With that monitor Poisson split fix in place, the H2 static local-chain audit has now been rerun on `legacy / A-grid / A-grid+patch`, while nonlocal, eigensolver, and SCF still remain on their current non-monitor paths.
 
+That repaired H2 static local-chain result is now frozen as the current A-grid+patch regression baseline, and the present follow-up is a very small Hartree tail recheck to see whether the remaining `E_H` offset behaves more like geometry/discretization tail than a surviving monitor-Poisson system bias.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

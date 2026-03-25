@@ -381,6 +381,19 @@ def print_h2_monitor_grid_patch_hartree_xc_summary(
         "  improvement vs unpatched A-grid [mHa]: "
         f"{result.best_patch_result.improvement_vs_unpatched_monitor_mha:+.3f}"
     )
+    print("formal frozen baseline:")
+    print("  route: monitor_a_grid_plus_patch @ radius_scale=0.75, grid_shape=(25, 25, 25), strength=1.30, neighbors=8")
+    print(
+        "  remaining component deltas vs legacy [mHa]: "
+        f"T_s={(result.best_patch_result.kinetic_energy - result.legacy_result.kinetic_energy) * 1000.0:+.3f}, "
+        f"E_loc,ion={(result.best_patch_result.local_ionic_energy - result.legacy_result.local_ionic_energy) * 1000.0:+.3f}, "
+        f"E_H={(result.best_patch_result.hartree_energy - result.legacy_result.hartree_energy) * 1000.0:+.3f}, "
+        f"E_xc={(result.best_patch_result.xc_energy - result.legacy_result.xc_energy) * 1000.0:+.3f}"
+    )
+    print(
+        "  net status vs legacy [mHa]: "
+        f"{result.best_patch_result.delta_vs_legacy_mha:+.3f}"
+    )
 
 
 def main() -> int:

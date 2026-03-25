@@ -93,10 +93,12 @@ def test_import_h2_grid_convergence_audit_entrypoint() -> None:
 
 def test_import_h2_regression_baseline() -> None:
     from isogrid.audit.baselines import H2_DEFAULT_PYSCF_REGRESSION_BASELINE
+    from isogrid.audit.baselines import H2_HARTREE_TAIL_RECHECK_BASELINE
     from isogrid.audit.baselines import H2_MONITOR_POISSON_REGRESSION_BASELINE
     from isogrid.audit.baselines import H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE
 
     assert H2_DEFAULT_PYSCF_REGRESSION_BASELINE.benchmark_name == "h2_r1p4_bohr"
+    assert H2_HARTREE_TAIL_RECHECK_BASELINE.baseline_point.point_label == "baseline"
     assert H2_MONITOR_POISSON_REGRESSION_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE.monitor_patch_improvement_vs_monitor_mha == 77.815
 
@@ -157,3 +159,11 @@ def test_import_h2_monitor_grid_poisson_operator_audit_entrypoint() -> None:
     )
 
     assert callable(run_h2_monitor_grid_poisson_operator_audit)
+
+
+def test_import_h2_hartree_tail_recheck_audit_entrypoint() -> None:
+    from isogrid.audit.h2_hartree_tail_recheck_audit import (
+        run_h2_hartree_tail_recheck_audit,
+    )
+
+    assert callable(run_h2_hartree_tail_recheck_audit)

@@ -106,6 +106,43 @@ class H2StaticLocalChainRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2HartreeTailRecheckPointBaseline:
+    """Recorded H2 Hartree tail-recheck point on the A-grid."""
+
+    point_label: str
+    shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    hartree_energy_ha: float
+    hartree_delta_vs_legacy_mha: float
+    hartree_delta_vs_baseline_mha: float
+    residual_rms: float
+    negative_interior_fraction: float
+    far_field_potential_mean_ha: float
+    far_field_residual_rms: float
+    centerline_far_field_potential_mean_ha: float
+
+
+@dataclass(frozen=True)
+class H2HartreeTailRecheckRegressionBaseline:
+    """Recorded very small H2 Hartree tail-recheck after the split fix."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_hartree_energy_ha: float
+    baseline_point: H2HartreeTailRecheckPointBaseline
+    finer_shape_point: H2HartreeTailRecheckPointBaseline
+    larger_box_point: H2HartreeTailRecheckPointBaseline
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -217,13 +254,78 @@ H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE = H2StaticLocalChainRegressionBaseline
 )
 
 
+H2_HARTREE_TAIL_RECHECK_BASELINE = H2HartreeTailRecheckRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_hartree_energy_ha=1.748670071699,
+    baseline_point=H2HartreeTailRecheckPointBaseline(
+        point_label="baseline",
+        shape=(67, 67, 81),
+        box_half_extents_bohr=(8.0, 8.0, 10.0),
+        hartree_energy_ha=1.765755769546,
+        hartree_delta_vs_legacy_mha=17.086,
+        hartree_delta_vs_baseline_mha=0.0,
+        residual_rms=5.64945879475746e-09,
+        negative_interior_fraction=0.0,
+        far_field_potential_mean_ha=0.203771260565,
+        far_field_residual_rms=1.4250923970591246e-09,
+        centerline_far_field_potential_mean_ha=0.281858261947,
+    ),
+    finer_shape_point=H2HartreeTailRecheckPointBaseline(
+        point_label="finer-shape",
+        shape=(75, 75, 91),
+        box_half_extents_bohr=(8.0, 8.0, 10.0),
+        hartree_energy_ha=1.763347405954,
+        hartree_delta_vs_legacy_mha=14.677,
+        hartree_delta_vs_baseline_mha=-2.408,
+        residual_rms=8.02802837283354e-09,
+        negative_interior_fraction=0.0,
+        far_field_potential_mean_ha=0.201446656961,
+        far_field_residual_rms=2.5096069859814528e-09,
+        centerline_far_field_potential_mean_ha=0.280005875175,
+    ),
+    larger_box_point=H2HartreeTailRecheckPointBaseline(
+        point_label="larger-box",
+        shape=(67, 67, 81),
+        box_half_extents_bohr=(9.0, 9.0, 11.0),
+        hartree_energy_ha=1.768774788860,
+        hartree_delta_vs_legacy_mha=20.105,
+        hartree_delta_vs_baseline_mha=3.019,
+        residual_rms=4.691294017224396e-09,
+        negative_interior_fraction=0.0,
+        far_field_potential_mean_ha=0.179902839022,
+        far_field_residual_rms=5.841016840151627e-10,
+        centerline_far_field_potential_mean_ha=0.279733456838,
+    ),
+    diagnosis=(
+        "The remaining +17 mHa Hartree offset looks more like an A-grid geometry / "
+        "resolution tail than a surviving monitor-Poisson split bug: a slightly finer "
+        "shape moves E_H in the right direction, while a slightly larger box does not."
+    ),
+    note=(
+        "Very small post-fix Hartree tail-recheck for the H2 singlet frozen density on the "
+        "A-grid+patch development baseline. Patch parameters stay frozen but patch does not "
+        "directly modify Hartree."
+    ),
+)
+
+
 __all__ = [
+    "H2HartreeTailRecheckPointBaseline",
+    "H2HartreeTailRecheckRegressionBaseline",
     "H2MonitorPoissonRegressionBaseline",
     "H2MonitorPoissonShapeRegressionPoint",
     "H2StaticLocalChainRegressionBaseline",
     "H2StaticLocalChainRouteBaseline",
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
+    "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]
