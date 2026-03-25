@@ -83,3 +83,15 @@ def test_import_h2_vs_pyscf_audit_entrypoint() -> None:
     from isogrid.audit.h2_vs_pyscf_audit import run_h2_vs_pyscf_audit
 
     assert callable(run_h2_vs_pyscf_audit)
+
+
+def test_import_h2_grid_convergence_audit_entrypoint() -> None:
+    from isogrid.audit.h2_grid_convergence_audit import run_h2_grid_convergence_audit
+
+    assert callable(run_h2_grid_convergence_audit)
+
+
+def test_import_h2_regression_baseline() -> None:
+    from isogrid.audit.baselines import H2_DEFAULT_PYSCF_REGRESSION_BASELINE
+
+    assert H2_DEFAULT_PYSCF_REGRESSION_BASELINE.benchmark_name == "h2_r1p4_bohr"

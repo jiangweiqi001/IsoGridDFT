@@ -24,6 +24,7 @@ What is present today:
 - a first fixed-potential static-KS eigensolver scaffold that extracts the lowest few orbitals under frozen density and frozen potentials
 - a first minimal H2 SCF single-point driver for the singlet and triplet candidates
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
+- a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
 - a `PySCF` basis-sequence audit script for reference-side convergence checks
 - placeholder and sanity tests for imports, audit modules, grid geometry, GTH potentials, Hartree, and the static KS slice
@@ -43,6 +44,8 @@ They currently cover:
 - a fixed-potential static-KS eigensolver audit on the default H2 structured grid
 - a minimal H2 SCF single-point audit for the singlet and triplet candidates
 - a quantitative H2 vs PySCF audit with a small parameter-sensitivity scan for error localization
+- a formal H2 singlet grid/domain convergence audit for separating resolution sensitivity from finite-box sensitivity
+- a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
 
@@ -112,5 +115,6 @@ python -m isogrid.audit.static_ks_h2_hartree_audit
 python -m isogrid.audit.fixed_potential_h2_eigensolver_audit
 python -m isogrid.audit.h2_scf_single_point_audit
 python -m isogrid.audit.h2_vs_pyscf_audit
+python -m isogrid.audit.h2_grid_convergence_audit
 ```
 
