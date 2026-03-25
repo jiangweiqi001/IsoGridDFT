@@ -17,6 +17,8 @@ The current single-center `sinh` grid should now be treated as a transitional ba
 
 The first monitor-driven main-grid core is now being implemented. The legacy single-center `sinh` grid remains available only as a baseline, while the new 3D monitor grid is not yet connected to the downstream physical operators.
 
+The first physical reconnect on the new A-grid is now focused on `T_s + E_loc,ion`, specifically to test whether the dominant H2 singlet grid error drops before the rest of the Hamiltonian is migrated.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

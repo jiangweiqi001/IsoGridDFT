@@ -1,4 +1,4 @@
-"""Local GTH pseudopotential evaluation on the structured adaptive grid."""
+"""Local GTH pseudopotential evaluation on legacy and monitor-driven grids."""
 
 from __future__ import annotations
 
@@ -11,13 +11,16 @@ import numpy as np
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.grid import build_default_h2_grid_geometry
+from isogrid.grid import build_default_h2_monitor_grid
 
 from .gth_data import load_case_gth_pseudo_data
 from .model import GTHPseudoData
 
 _ERF_VECTOR = np.vectorize(erf, otypes=[np.float64])
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
@@ -40,7 +43,7 @@ class LocalIonicPotentialEvaluation:
     """
 
     pseudo_family: str
-    grid_geometry: StructuredGridGeometry
+    grid_geometry: GridGeometryLike
     atom_contributions: tuple[AtomicLocalPotentialContribution, ...]
     total_local_potential: np.ndarray
 
@@ -74,12 +77,12 @@ def _local_polynomial_term(
     return gaussian * polynomial
 
 
-def evaluate_atomic_local_potential(
+def _evaluate_atomic_local_potential_on_grid(
     position: tuple[float, float, float],
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     pseudo_data: GTHPseudoData,
 ) -> np.ndarray:
-    """Evaluate one atom's local GTH potential on the structured grid."""
+    """Evaluate one atom's local GTH potential on one supported grid."""
 
     grid_unit = grid_geometry.spec.unit.lower()
     if grid_unit != 'bohr':
@@ -105,11 +108,64 @@ def evaluate_atomic_local_potential(
     return coulomb_term + polynomial_term
 
 
-def evaluate_local_ionic_potential(
+def evaluate_atomic_local_potential_on_legacy_grid(
+    position: tuple[float, float, float],
+    grid_geometry: StructuredGridGeometry,
+    pseudo_data: GTHPseudoData,
+) -> np.ndarray:
+    """Evaluate one atom's local GTH potential on the legacy structured grid."""
+
+    return _evaluate_atomic_local_potential_on_grid(
+        position=position,
+        grid_geometry=grid_geometry,
+        pseudo_data=pseudo_data,
+    )
+
+
+def evaluate_atomic_local_potential_on_monitor_grid(
+    position: tuple[float, float, float],
+    grid_geometry: MonitorGridGeometry,
+    pseudo_data: GTHPseudoData,
+) -> np.ndarray:
+    """Evaluate one atom's local GTH potential on the new A-grid.
+
+    This first A-grid local-GTH path uses only the main monitor grid. The patch
+    layer is intentionally not used yet; it will be the first follow-up layer
+    for near-core local-GTH corrections.
+    """
+
+    return _evaluate_atomic_local_potential_on_grid(
+        position=position,
+        grid_geometry=grid_geometry,
+        pseudo_data=pseudo_data,
+    )
+
+
+def evaluate_atomic_local_potential(
+    position: tuple[float, float, float],
+    grid_geometry: GridGeometryLike,
+    pseudo_data: GTHPseudoData,
+) -> np.ndarray:
+    """Evaluate one atom's local GTH potential on either supported grid family."""
+
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        return evaluate_atomic_local_potential_on_monitor_grid(
+            position=position,
+            grid_geometry=grid_geometry,
+            pseudo_data=pseudo_data,
+        )
+    return evaluate_atomic_local_potential_on_legacy_grid(
+        position=position,
+        grid_geometry=grid_geometry,
+        pseudo_data=pseudo_data,
+    )
+
+
+def evaluate_legacy_local_ionic_potential(
     case: BenchmarkCase,
     grid_geometry: StructuredGridGeometry,
 ) -> LocalIonicPotentialEvaluation:
-    """Evaluate the total local ionic GTH potential for one benchmark case."""
+    """Evaluate the total local ionic GTH potential on the legacy grid."""
 
     if case.geometry.unit.lower() != grid_geometry.spec.unit.lower():
         raise ValueError(
@@ -123,7 +179,7 @@ def evaluate_local_ionic_potential(
 
     for atom_index, atom in enumerate(case.geometry.atoms):
         pseudo_data = pseudo_data_by_element[atom.element]
-        local_potential = evaluate_atomic_local_potential(
+        local_potential = evaluate_atomic_local_potential_on_legacy_grid(
             position=atom.position,
             grid_geometry=grid_geometry,
             pseudo_data=pseudo_data,
@@ -147,6 +203,63 @@ def evaluate_local_ionic_potential(
     )
 
 
+def evaluate_monitor_grid_local_ionic_potential(
+    case: BenchmarkCase,
+    grid_geometry: MonitorGridGeometry,
+) -> LocalIonicPotentialEvaluation:
+    """Evaluate the total local ionic GTH potential on the new monitor-driven grid.
+
+    This is the first A-grid local-GTH slice. It is intentionally main-grid only
+    and does not yet use the auxiliary patch layer.
+    """
+
+    if case.geometry.unit.lower() != grid_geometry.spec.unit.lower():
+        raise ValueError(
+            "Benchmark geometry and grid geometry must use the same unit system; "
+            f"received `{case.geometry.unit}` and `{grid_geometry.spec.unit}`."
+        )
+
+    pseudo_data_by_element = load_case_gth_pseudo_data(case)
+    total_local_potential = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    atom_contributions = []
+
+    for atom_index, atom in enumerate(case.geometry.atoms):
+        pseudo_data = pseudo_data_by_element[atom.element]
+        local_potential = evaluate_atomic_local_potential_on_monitor_grid(
+            position=atom.position,
+            grid_geometry=grid_geometry,
+            pseudo_data=pseudo_data,
+        )
+        total_local_potential += local_potential
+        atom_contributions.append(
+            AtomicLocalPotentialContribution(
+                atom_index=atom_index,
+                element=atom.element,
+                position=atom.position,
+                pseudo_data=pseudo_data,
+                local_potential=local_potential,
+            )
+        )
+
+    return LocalIonicPotentialEvaluation(
+        pseudo_family=case.reference_model.pseudo,
+        grid_geometry=grid_geometry,
+        atom_contributions=tuple(atom_contributions),
+        total_local_potential=total_local_potential,
+    )
+
+
+def evaluate_local_ionic_potential(
+    case: BenchmarkCase,
+    grid_geometry: GridGeometryLike,
+) -> LocalIonicPotentialEvaluation:
+    """Evaluate the total local ionic GTH potential on either supported grid family."""
+
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        return evaluate_monitor_grid_local_ionic_potential(case=case, grid_geometry=grid_geometry)
+    return evaluate_legacy_local_ionic_potential(case=case, grid_geometry=grid_geometry)
+
+
 def build_default_h2_local_ionic_potential(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
     grid_geometry: StructuredGridGeometry | None = None,
@@ -156,3 +269,14 @@ def build_default_h2_local_ionic_potential(
     if grid_geometry is None:
         grid_geometry = build_default_h2_grid_geometry(case=case)
     return evaluate_local_ionic_potential(case=case, grid_geometry=grid_geometry)
+
+
+def build_default_h2_monitor_grid_local_ionic_potential(
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    grid_geometry: MonitorGridGeometry | None = None,
+) -> LocalIonicPotentialEvaluation:
+    """Evaluate the default H2 local ionic GTH potential on the A-grid."""
+
+    if grid_geometry is None:
+        grid_geometry = build_default_h2_monitor_grid()
+    return evaluate_monitor_grid_local_ionic_potential(case=case, grid_geometry=grid_geometry)
