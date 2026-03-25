@@ -472,6 +472,53 @@ class H2KineticGreenIdentityRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2OrbitalShapeOrbitalBaseline:
+    """Recorded shape/symmetry summary for one fixed-potential orbital."""
+
+    path_type: str
+    kinetic_version: str
+    orbital_label: str
+    eigenvalue_ha: float
+    residual_norm: float
+    converged: bool
+    inversion_best_parity: str
+    inversion_best_mismatch: float
+    z_mirror_best_parity: str
+    z_mirror_best_mismatch: float
+    centerline_sign_changes: int
+    far_field_sign_changes: int
+    node_positions_bohr: tuple[float, ...]
+    far_field_norm_fraction: float
+    boundary_layer_norm_fraction: float
+    far_field_max_abs_value: float
+    boundary_layer_max_abs_value: float
+
+
+@dataclass(frozen=True)
+class H2OrbitalShapeRegressionBaseline:
+    """Recorded fixed-potential orbital-shape baseline for H2."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_k1_orbital: H2OrbitalShapeOrbitalBaseline
+    legacy_k2_low_orbital: H2OrbitalShapeOrbitalBaseline
+    legacy_k2_high_orbital: H2OrbitalShapeOrbitalBaseline
+    monitor_trial_fix_k1_orbital: H2OrbitalShapeOrbitalBaseline
+    monitor_trial_fix_k2_first_orbital: H2OrbitalShapeOrbitalBaseline
+    monitor_trial_fix_k2_second_orbital: H2OrbitalShapeOrbitalBaseline
+    legacy_k2_gap_ha: float
+    monitor_trial_fix_k2_gap_ha: float
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -1382,6 +1429,146 @@ H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE = H2KineticGreenIdentityRegressionB
 )
 
 
+H2_ORBITAL_SHAPE_AUDIT_BASELINE = H2OrbitalShapeRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_k1_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="legacy",
+        kinetic_version="production",
+        orbital_label="k1",
+        eigenvalue_ha=-0.20527465416922755,
+        residual_norm=2.8929876944581593e-04,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=6.895105654464947e-08,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=5.4184637833479585e-08,
+        centerline_sign_changes=0,
+        far_field_sign_changes=0,
+        node_positions_bohr=(),
+        far_field_norm_fraction=0.00018165736444526356,
+        boundary_layer_norm_fraction=5.3152289305315985e-05,
+        far_field_max_abs_value=0.0018771107352923485,
+        boundary_layer_max_abs_value=0.0009420164827175654,
+    ),
+    legacy_k2_low_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="legacy",
+        kinetic_version="production",
+        orbital_label="k2_orbital_0",
+        eigenvalue_ha=-0.20529016296596161,
+        residual_norm=6.094926935830485e-05,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=2.882950060275491e-12,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=1.2026511261227441e-13,
+        centerline_sign_changes=0,
+        far_field_sign_changes=0,
+        node_positions_bohr=(),
+        far_field_norm_fraction=0.0001782105598979954,
+        boundary_layer_norm_fraction=5.203449064227384e-05,
+        far_field_max_abs_value=0.0018325927985254838,
+        boundary_layer_max_abs_value=0.0009196093858996899,
+    ),
+    legacy_k2_high_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="legacy",
+        kinetic_version="production",
+        orbital_label="k2_orbital_1",
+        eigenvalue_ha=0.06286688164303063,
+        residual_norm=6.54810468883838e-04,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=1.1253274631577421e-07,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=1.3767992212459453e-08,
+        centerline_sign_changes=2,
+        far_field_sign_changes=0,
+        node_positions_bohr=(-2.3282559031219483, 2.3282559031219483),
+        far_field_norm_fraction=0.1637710972490747,
+        boundary_layer_norm_fraction=0.06142466633151523,
+        far_field_max_abs_value=0.1670974972830774,
+        boundary_layer_max_abs_value=0.08656378070422546,
+    ),
+    monitor_trial_fix_k1_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        orbital_label="k1",
+        eigenvalue_ha=-0.18662718689698515,
+        residual_norm=1.483108390547803e-04,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=2.2848751569444183e-13,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=1.8778668416252935e-13,
+        centerline_sign_changes=0,
+        far_field_sign_changes=0,
+        node_positions_bohr=(),
+        far_field_norm_fraction=0.0002568543229815991,
+        boundary_layer_norm_fraction=0.0001339988515724429,
+        far_field_max_abs_value=0.0035255929885303545,
+        boundary_layer_max_abs_value=0.0015654296457986632,
+    ),
+    monitor_trial_fix_k2_first_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        orbital_label="k2_orbital_0",
+        eigenvalue_ha=-0.1866584331584699,
+        residual_norm=1.7486394700554094e-04,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=5.529166721212679e-10,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=5.505569527583639e-10,
+        centerline_sign_changes=0,
+        far_field_sign_changes=0,
+        node_positions_bohr=(),
+        far_field_norm_fraction=0.0002572071606617207,
+        boundary_layer_norm_fraction=0.0001343530814508898,
+        far_field_max_abs_value=0.0031744864671881393,
+        boundary_layer_max_abs_value=0.0014094329653375726,
+    ),
+    monitor_trial_fix_k2_second_orbital=H2OrbitalShapeOrbitalBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        orbital_label="k2_orbital_1",
+        eigenvalue_ha=-0.1865957329712637,
+        residual_norm=1.7589071376628463e-04,
+        converged=True,
+        inversion_best_parity="even",
+        inversion_best_mismatch=5.562350291804711e-10,
+        z_mirror_best_parity="even",
+        z_mirror_best_mismatch=5.538464428381761e-10,
+        centerline_sign_changes=0,
+        far_field_sign_changes=0,
+        node_positions_bohr=(),
+        far_field_norm_fraction=0.000256500309599944,
+        boundary_layer_norm_fraction=0.00013364462236141998,
+        far_field_max_abs_value=0.003876227869692682,
+        boundary_layer_max_abs_value=0.0017213598983194028,
+    ),
+    legacy_k2_gap_ha=0.26815704460899224,
+    monitor_trial_fix_k2_gap_ha=6.270018720619117e-05,
+    diagnosis=(
+        "The repaired A-grid fixed-potential path now produces a healthy-looking k=1 bonding-like "
+        "orbital with tiny symmetry mismatch and negligible boundary leakage, but its k=2 solve "
+        "returns a nearly degenerate even/even pair instead of a clear legacy-like antibonding "
+        "state. The immediate risk before any SCF dry-run is subspace mixing inside that k=2 pair, "
+        "not obvious boundary pollution."
+    ),
+    note=(
+        "Very small orbital-shape baseline for the H2 fixed-potential legacy route versus the "
+        "A-grid+patch+kinetic-trial-fix route. This is a morphology/symmetry audit only, not a "
+        "full physical validation."
+    ),
+)
+
+
 __all__ = [
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
@@ -1395,6 +1582,8 @@ __all__ = [
     "H2KineticOperatorRegressionBaseline",
     "H2KineticOperatorRouteBaseline",
     "H2KineticOperatorSmoothFieldBaseline",
+    "H2OrbitalShapeOrbitalBaseline",
+    "H2OrbitalShapeRegressionBaseline",
     "H2FixedPotentialOperatorRegressionBaseline",
     "H2FixedPotentialOperatorRouteBaseline",
     "H2FixedPotentialEigensolverRegressionBaseline",
@@ -1418,5 +1607,6 @@ __all__ = [
     "H2_KINETIC_FORM_AUDIT_BASELINE",
     "H2_KINETIC_OPERATOR_AUDIT_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
+    "H2_ORBITAL_SHAPE_AUDIT_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]

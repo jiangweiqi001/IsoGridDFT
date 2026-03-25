@@ -47,6 +47,8 @@ That kinetic audit has now advanced to a first trial-fix branch for A-grid bound
 
 That same kinetic trial-fix branch is now being validated one step downstream on the H2 fixed-potential operator and eigensolver audits. This is still an audit-only handoff: nonlocal and SCF remain off the A-grid path until the repaired fixed-potential route is numerically trustworthy.
 
+The current very small follow-up audit focuses on the `k=2` orbital-shape question for that repaired A-grid+patch+trial-fix fixed-potential route, because the next gating item before any A-grid SCF dry-run is no longer raw convergence but whether the low-lying orbitals still look physically sane.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -89,6 +91,7 @@ They currently cover:
 - a dedicated H2 A-grid discrete Green-identity audit for checking whether the bad kinetic mode is dominated by a boundary-term / closure mismatch
 - a first A-grid kinetic boundary/ghost trial-fix audit for checking whether the Green-identity gap collapses on the bad fixed-potential orbital
 - a follow-up H2 A-grid operator/eigensolver trial-fix comparison for checking whether the repaired kinetic closure also lifts the fixed-potential eigenvalues and residuals
+- a very small H2 orbital-shape audit for checking whether the repaired A-grid+patch+trial-fix `k=1/k=2` fixed-potential orbitals still have reasonable symmetry, node structure, and low boundary pollution before any SCF dry-run
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -170,5 +173,6 @@ python -m isogrid.audit.h2_monitor_grid_kinetic_operator_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_form_audit
 python -m isogrid.audit.h2_monitor_grid_geometry_consistency_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit
+python -m isogrid.audit.h2_monitor_grid_orbital_shape_audit
 ```
 

@@ -293,3 +293,19 @@ def test_import_h2_kinetic_green_identity_baseline() -> None:
         H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE.bad_eigen_baseline.delta_kinetic_mha
         == -458.64079452697035
     )
+
+
+def test_import_h2_monitor_grid_orbital_shape_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_orbital_shape_audit import (
+        run_h2_monitor_grid_orbital_shape_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_orbital_shape_audit)
+
+
+def test_import_h2_orbital_shape_baseline() -> None:
+    from isogrid.audit.baselines import H2_ORBITAL_SHAPE_AUDIT_BASELINE
+
+    assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_trial_fix_k1_orbital.z_mirror_best_parity == "even"
+    assert H2_ORBITAL_SHAPE_AUDIT_BASELINE.monitor_trial_fix_k2_gap_ha == 6.270018720619117e-05
