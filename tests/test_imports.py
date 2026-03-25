@@ -71,3 +71,15 @@ def test_import_fixed_potential_eigensolver_entrypoint() -> None:
     from isogrid.ks import solve_fixed_potential_eigenproblem
 
     assert callable(solve_fixed_potential_eigenproblem)
+
+
+def test_import_scf_driver_entrypoint() -> None:
+    from isogrid.scf import run_h2_minimal_scf
+
+    assert callable(run_h2_minimal_scf)
+
+
+def test_import_h2_vs_pyscf_audit_entrypoint() -> None:
+    from isogrid.audit.h2_vs_pyscf_audit import run_h2_vs_pyscf_audit
+
+    assert callable(run_h2_vs_pyscf_audit)

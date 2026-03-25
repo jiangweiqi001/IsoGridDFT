@@ -11,7 +11,7 @@ IsoGridDFT is an adaptive real-space Kohn-Sham DFT project for isolated molecule
 
 ## Current Status
 
-The repository is still in the groundwork stage. The real solver is not implemented yet: there is no production SCF driver, no self-consistent density update, and no accepted single-point closed loop yet.
+The repository is still in the groundwork stage. A first minimal H2 single-point SCF closed loop now exists, but it is still a development implementation: the convergence strategy, accuracy, and broader benchmark coverage still need more audit work.
 
 What is present today:
 
@@ -22,6 +22,8 @@ What is present today:
 - a first open-boundary Poisson and Hartree slice on the structured adaptive grid
 - a first static KS Hamiltonian slice that connects kinetic, GTH local ionic, GTH nonlocal ionic, Hartree, and LSDA local terms without SCF
 - a first fixed-potential static-KS eigensolver scaffold that extracts the lowest few orbitals under frozen density and frozen potentials
+- a first minimal H2 SCF single-point driver for the singlet and triplet candidates
+- a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
 - a `PySCF` basis-sequence audit script for reference-side convergence checks
 - placeholder and sanity tests for imports, audit modules, grid geometry, GTH potentials, Hartree, and the static KS slice
@@ -39,6 +41,8 @@ They currently cover:
 - a static-KS trial-orbital audit on the default H2 structured grid
 - a static-KS-with-Hartree audit on the default H2 structured grid
 - a fixed-potential static-KS eigensolver audit on the default H2 structured grid
+- a minimal H2 SCF single-point audit for the singlet and triplet candidates
+- a quantitative H2 vs PySCF audit with a small parameter-sensitivity scan for error localization
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
 
@@ -106,5 +110,7 @@ python -m isogrid.audit.local_hamiltonian_h2_trial_audit
 python -m isogrid.audit.static_ks_h2_trial_audit
 python -m isogrid.audit.static_ks_h2_hartree_audit
 python -m isogrid.audit.fixed_potential_h2_eigensolver_audit
+python -m isogrid.audit.h2_scf_single_point_audit
+python -m isogrid.audit.h2_vs_pyscf_audit
 ```
 
