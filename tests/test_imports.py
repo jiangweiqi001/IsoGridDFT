@@ -206,3 +206,21 @@ def test_import_h2_fixed_potential_operator_baseline() -> None:
         H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.monitor_patch_route.patch_embedded_correction_mha
         == 77.815
     )
+
+
+def test_import_h2_monitor_grid_kinetic_operator_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_kinetic_operator_audit import (
+        run_h2_monitor_grid_kinetic_operator_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_kinetic_operator_audit)
+
+
+def test_import_h2_kinetic_operator_baseline() -> None:
+    from isogrid.audit.baselines import H2_KINETIC_OPERATOR_AUDIT_BASELINE
+
+    assert H2_KINETIC_OPERATOR_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert (
+        H2_KINETIC_OPERATOR_AUDIT_BASELINE.monitor_patch_baseline_route.eigen_kinetic_ha
+        == -3.374908449316
+    )

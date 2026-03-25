@@ -39,6 +39,8 @@ The next A-grid handoff has now reached the fixed-potential eigensolver on the r
 
 The current focus is now an operator-level audit of the A-grid static-local fixed-potential path. The static local chain itself is established, but the A-grid fixed-potential eigensolver still fails and is being diagnosed before any SCF migration is attempted.
 
+The current diagnostic slice is now even narrower: the immediate question is whether the A-grid kinetic sub-operator itself is admitting pathological fixed-potential modes, while nonlocal, eigensolver production use, and SCF still remain off the A-grid path.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -75,6 +77,7 @@ They currently cover:
 - a formal H2 singlet A-grid local-GTH patch audit for near-core correction on the best fair A-grid baseline
 - a first H2 A-grid+patch fixed-potential eigensolver audit on the repaired static local chain
 - a dedicated H2 A-grid static-local operator audit for diagnosing the current fixed-potential eigensolver failure
+- a dedicated H2 A-grid kinetic-operator audit for diagnosing the current fixed-potential negative-kinetic failure mode
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -152,5 +155,6 @@ python -m isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit
 python -m isogrid.audit.h2_hartree_poisson_comparison_audit
 python -m isogrid.audit.h2_monitor_grid_poisson_operator_audit
 python -m isogrid.audit.h2_monitor_grid_operator_audit
+python -m isogrid.audit.h2_monitor_grid_kinetic_operator_audit
 ```
 

@@ -219,6 +219,54 @@ class H2FixedPotentialOperatorRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2KineticOperatorRouteBaseline:
+    """Recorded kinetic-operator audit result for one route and shape label."""
+
+    path_type: str
+    shape_label: str
+    frozen_kinetic_ha: float
+    eigen_kinetic_ha: float
+    eigenvalue_ha: float
+    eigensolver_residual_norm: float
+    kinetic_self_adjoint_relative_difference: float
+    eigen_negative_indicator_fraction: float
+    eigen_far_field_contribution_ha: float
+    eigen_center_contribution_ha: float
+    converged: bool
+
+
+@dataclass(frozen=True)
+class H2KineticOperatorSmoothFieldBaseline:
+    """Recorded kinetic probe result for one simple smooth field."""
+
+    field_label: str
+    legacy_kinetic_ha: float
+    monitor_kinetic_ha: float
+
+
+@dataclass(frozen=True)
+class H2KineticOperatorRegressionBaseline:
+    """Recorded kinetic-operator failure baseline on legacy and A-grid routes."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    finer_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_route: H2KineticOperatorRouteBaseline
+    monitor_unpatched_baseline_route: H2KineticOperatorRouteBaseline
+    monitor_patch_baseline_route: H2KineticOperatorRouteBaseline
+    monitor_patch_finer_shape_route: H2KineticOperatorRouteBaseline
+    smooth_fields: tuple[H2KineticOperatorSmoothFieldBaseline, ...]
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -530,7 +578,99 @@ H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE = H2FixedPotentialOperatorRegressionB
 )
 
 
+H2_KINETIC_OPERATOR_AUDIT_BASELINE = H2KineticOperatorRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    finer_shape=(75, 75, 91),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_route=H2KineticOperatorRouteBaseline(
+        path_type="legacy",
+        shape_label="baseline",
+        frozen_kinetic_ha=0.997532314836,
+        eigen_kinetic_ha=0.468898008999,
+        eigenvalue_ha=-0.205274654169,
+        eigensolver_residual_norm=2.892987694458e-04,
+        kinetic_self_adjoint_relative_difference=0.0,
+        eigen_negative_indicator_fraction=0.941764,
+        eigen_far_field_contribution_ha=-0.000036930131,
+        eigen_center_contribution_ha=0.005278427204,
+        converged=True,
+    ),
+    monitor_unpatched_baseline_route=H2KineticOperatorRouteBaseline(
+        path_type="monitor_a_grid",
+        shape_label="baseline",
+        frozen_kinetic_ha=0.967122692573,
+        eigen_kinetic_ha=-1.642701348259,
+        eigenvalue_ha=-2.844168300574,
+        eigensolver_residual_norm=1.237350032968,
+        kinetic_self_adjoint_relative_difference=1.596e-16,
+        eigen_negative_indicator_fraction=0.524445,
+        eigen_far_field_contribution_ha=-1.643335183718,
+        eigen_center_contribution_ha=0.000000449782,
+        converged=False,
+    ),
+    monitor_patch_baseline_route=H2KineticOperatorRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        shape_label="baseline",
+        frozen_kinetic_ha=0.967122692573,
+        eigen_kinetic_ha=-3.374908449316,
+        eigenvalue_ha=-6.574031909859,
+        eigensolver_residual_norm=3.334292145497,
+        kinetic_self_adjoint_relative_difference=1.596e-16,
+        eigen_negative_indicator_fraction=0.370689,
+        eigen_far_field_contribution_ha=-3.377973017068,
+        eigen_center_contribution_ha=0.000063639777,
+        converged=False,
+    ),
+    monitor_patch_finer_shape_route=H2KineticOperatorRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        shape_label="finer-shape",
+        frozen_kinetic_ha=0.974023111229,
+        eigen_kinetic_ha=-3.893655956329,
+        eigenvalue_ha=-7.556869846560,
+        eigensolver_residual_norm=3.762909029926,
+        kinetic_self_adjoint_relative_difference=3.177e-16,
+        eigen_negative_indicator_fraction=0.348648,
+        eigen_far_field_contribution_ha=-3.896350755891,
+        eigen_center_contribution_ha=0.000015145796,
+        converged=False,
+    ),
+    smooth_fields=(
+        H2KineticOperatorSmoothFieldBaseline(
+            field_label="gaussian",
+            legacy_kinetic_ha=0.671972140862,
+            monitor_kinetic_ha=0.659748142599,
+        ),
+        H2KineticOperatorSmoothFieldBaseline(
+            field_label="cosine",
+            legacy_kinetic_ha=0.050828543196,
+            monitor_kinetic_ha=0.050856046166,
+        ),
+    ),
+    diagnosis=(
+        "The kinetic failure does not look like a weighted self-adjointness bug. Smooth test "
+        "fields and the frozen trial orbital still give positive kinetic quotients, but the "
+        "A-grid eigensolver orbitals drive <psi|T|psi> strongly negative. The finer-shape "
+        "recheck makes the bad kinetic mode even deeper, so the dominant problem looks more "
+        "like an operator-form or geometry/kinetic consistency defect than a simple resolution tail."
+    ),
+    note=(
+        "Kinetic failure regression baseline for the H2 fixed-potential A-grid audit. This "
+        "baseline isolates T only and is intended for later operator repairs, not as an "
+        "acceptance target."
+    ),
+)
+
+
 __all__ = [
+    "H2KineticOperatorRegressionBaseline",
+    "H2KineticOperatorRouteBaseline",
+    "H2KineticOperatorSmoothFieldBaseline",
     "H2FixedPotentialOperatorRegressionBaseline",
     "H2FixedPotentialOperatorRouteBaseline",
     "H2FixedPotentialEigensolverRegressionBaseline",
@@ -546,6 +686,7 @@ __all__ = [
     "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
     "H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
+    "H2_KINETIC_OPERATOR_AUDIT_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]
