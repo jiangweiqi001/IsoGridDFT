@@ -121,3 +121,11 @@ def test_import_monitor_grid_fair_calibration_audit_entrypoint() -> None:
     )
 
     assert callable(run_h2_monitor_grid_fair_calibration_audit)
+
+
+def test_import_monitor_grid_patch_local_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_patch_local_audit import (
+        run_h2_monitor_grid_patch_local_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_patch_local_audit)

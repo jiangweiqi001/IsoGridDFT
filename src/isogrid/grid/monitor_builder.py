@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 from isogrid.config import BenchmarkCase
 from isogrid.config import CO_AUDIT_CASE
 from isogrid.config import H2O_AUDIT_CASE
@@ -16,6 +18,10 @@ from .monitor_model import NearCoreElementParameters
 _DEFAULT_LOGICAL_BOUNDS = ((0.0, 1.0), (0.0, 1.0), (0.0, 1.0))
 _DEFAULT_MONITOR_SHAPE_DIATOMIC = (29, 29, 29)
 _DEFAULT_MONITOR_SHAPE_POLYATOMIC = (31, 31, 31)
+H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE = (67, 67, 81)
+H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR = (8.0, 8.0, 10.0)
+H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE = 4.0
+H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE = 0.70
 _GTH_MONITOR_SEED_DATA = {
     "H": {
         "ionic_charge": 1,
@@ -193,6 +199,33 @@ def build_monitor_grid_for_case(
         element_parameters=element_parameters,
     )
     return generate_monitor_grid_geometry(case=case, spec=spec)
+
+
+def build_h2_local_patch_development_element_parameters() -> dict[str, NearCoreElementParameters]:
+    """Return the current H2 A-grid development-point parameters for local-GTH patch work."""
+
+    base_parameters = build_default_near_core_element_parameters(H2_BENCHMARK_CASE)
+    return {
+        element: replace(
+            parameters,
+            near_core_radius=parameters.near_core_radius * H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE,
+            local_radius=parameters.local_radius * H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE,
+            kinetic_weight=parameters.kinetic_weight * H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE,
+            local_weight=parameters.local_weight * H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE,
+        )
+        for element, parameters in base_parameters.items()
+    }
+
+
+def build_h2_local_patch_development_monitor_grid() -> MonitorGridGeometry:
+    """Build the current best-fair H2 A-grid baseline used for local-GTH patch audits."""
+
+    return build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+        box_half_extents=H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR,
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
 
 
 def build_default_h2_monitor_grid() -> MonitorGridGeometry:

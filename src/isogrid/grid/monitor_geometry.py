@@ -297,12 +297,13 @@ def _build_patch_interfaces(
                 center=atom.position,
                 patch_radius=parameters.patch_radius,
                 purposes=("local_gth", "nonlocal_projector", "near_core_integration"),
+                implemented_purposes=("local_gth", "near_core_integration"),
                 relation_to_main_grid=(
                     "Patch geometry is anchored at the atom center and will sample main-grid "
                     "fields for local GTH / nonlocal projector / near-core integration tasks. "
                     "No global unknowns live on the patch in this first monitor-grid core."
                 ),
-                implemented=False,
+                implemented=True,
             )
         )
     return tuple(patches)

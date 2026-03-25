@@ -17,8 +17,14 @@ from .monitor_builder import build_default_h2_monitor_grid
 from .monitor_builder import build_default_h2o_monitor_grid
 from .monitor_builder import build_default_n2_monitor_grid
 from .monitor_builder import build_default_near_core_element_parameters
+from .monitor_builder import build_h2_local_patch_development_element_parameters
+from .monitor_builder import build_h2_local_patch_development_monitor_grid
 from .monitor_builder import build_monitor_grid_for_case
 from .monitor_builder import build_monitor_grid_spec_for_case
+from .monitor_builder import H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+from .monitor_builder import H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE
+from .monitor_builder import H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE
+from .monitor_builder import H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE
 from .monitor_geometry import build_reference_box_coordinates
 from .monitor_geometry import evaluate_global_monitor_field
 from .monitor_geometry import generate_monitor_grid_geometry
@@ -108,6 +114,10 @@ __all__ = [
     "H2_DEFAULT_GRID_SHAPE",
     "H2_DEFAULT_GRID_HALF_EXTENTS_BOHR",
     "H2_DEFAULT_GRID_STRETCH",
+    "H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR",
+    "H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE",
+    "H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE",
+    "H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE",
     "MonitorGridGeometry",
     "MonitorGridQualityReport",
     "MonitorGridSpec",
@@ -118,6 +128,8 @@ __all__ = [
     "build_default_co_monitor_grid",
     "build_default_h2_grid_geometry",
     "build_default_h2_grid_spec",
+    "build_h2_local_patch_development_element_parameters",
+    "build_h2_local_patch_development_monitor_grid",
     "build_default_h2_monitor_grid",
     "build_default_h2o_monitor_grid",
     "build_default_n2_monitor_grid",

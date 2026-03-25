@@ -52,6 +52,7 @@ class MonitorPatchInterface:
     patch_radius: float
     purposes: tuple[str, ...]
     relation_to_main_grid: str
+    implemented_purposes: tuple[str, ...] = ()
     implemented: bool = False
 
 
