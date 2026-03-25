@@ -10,6 +10,7 @@ from .gth_data import load_gth_pseudo_data
 from .gth_data import load_gth_pseudo_data_for_elements
 from .local import AtomicLocalPotentialContribution
 from .local import AtomicLocalPotentialPatchCorrection
+from .local import FrozenPatchLocalPotentialEmbedding
 from .local import LocalIonicPotentialEvaluation
 from .local import LocalIonicPotentialPatchEvaluation
 from .local import LocalPotentialPatchParameters
@@ -23,6 +24,7 @@ from .local import evaluate_legacy_local_ionic_potential
 from .local import evaluate_local_ionic_energy
 from .local import evaluate_local_ionic_potential
 from .local import evaluate_monitor_grid_local_ionic_potential
+from .local import evaluate_monitor_grid_local_ionic_potential_with_frozen_patch_field
 from .local import evaluate_monitor_grid_local_ionic_potential_with_patch
 from .model import GTHLocalTerm
 from .model import GTHNonlocalChannel
@@ -41,6 +43,7 @@ __all__ = [
     "AtomicLocalPotentialContribution",
     "AtomicLocalPotentialPatchCorrection",
     "AtomicNonlocalActionContribution",
+    "FrozenPatchLocalPotentialEmbedding",
     "GTH_DATA_SOURCE",
     "GTHLocalTerm",
     "GTHNonlocalChannel",
@@ -65,6 +68,7 @@ __all__ = [
     "evaluate_local_ionic_energy",
     "evaluate_local_ionic_potential",
     "evaluate_monitor_grid_local_ionic_potential",
+    "evaluate_monitor_grid_local_ionic_potential_with_frozen_patch_field",
     "evaluate_monitor_grid_local_ionic_potential_with_patch",
     "evaluate_nonlocal_ionic_action",
     "load_case_gth_pseudo_data",

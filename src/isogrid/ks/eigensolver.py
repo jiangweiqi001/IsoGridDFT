@@ -25,26 +25,31 @@ import numpy as np
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.ks.static_hamiltonian import apply_static_ks_hamiltonian
-from isogrid.ks.static_hamiltonian import build_total_density
+from isogrid.ops import apply_kinetic_operator
 from isogrid.ops import validate_orbital_field
 from isogrid.ops import weighted_l2_norm
 from isogrid.poisson import OpenBoundaryPoissonResult
 from isogrid.poisson import solve_hartree_potential
+from isogrid.pseudo import FrozenPatchLocalPotentialEmbedding
 from isogrid.pseudo import LocalIonicPotentialEvaluation
+from isogrid.pseudo import LocalPotentialPatchParameters
 from isogrid.pseudo import evaluate_local_ionic_potential
+from isogrid.pseudo import evaluate_monitor_grid_local_ionic_potential_with_frozen_patch_field
 from isogrid.xc import LSDAEvaluation
 from isogrid.xc import evaluate_lsda_terms
 
 _VALID_SPIN_CHANNELS = {"up", "down"}
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
 class FixedPotentialOperatorContext:
     """Frozen static-KS potential data used by the fixed-potential solver."""
 
-    grid_geometry: StructuredGridGeometry
+    grid_geometry: GridGeometryLike
     case: BenchmarkCase
     spin_channel: str
     rho_up: np.ndarray
@@ -55,6 +60,35 @@ class FixedPotentialOperatorContext:
     xc_potential: np.ndarray
     effective_local_potential: np.ndarray
     local_ionic_evaluation: LocalIonicPotentialEvaluation | None
+    hartree_poisson_result: OpenBoundaryPoissonResult | None
+    lsda_evaluation: LSDAEvaluation | None
+
+
+@dataclass(frozen=True)
+class FixedPotentialStaticLocalOperatorContext:
+    """Frozen static-local potential data used by the A-grid eigensolver path.
+
+    The current operator contains only
+
+        T + V_loc,ion + V_H + V_xc
+
+    with the density frozen externally. For monitor-grid patch work, the local
+    ionic potential may include a frozen patch embedding that reproduces the
+    current near-core local-GTH patch energy on the chosen frozen density.
+    """
+
+    grid_geometry: GridGeometryLike
+    case: BenchmarkCase
+    spin_channel: str
+    rho_up: np.ndarray
+    rho_down: np.ndarray
+    rho_total: np.ndarray
+    local_ionic_potential: np.ndarray
+    hartree_potential: np.ndarray
+    xc_potential: np.ndarray
+    effective_local_potential: np.ndarray
+    local_ionic_evaluation: LocalIonicPotentialEvaluation | None
+    frozen_patch_local_embedding: FrozenPatchLocalPotentialEmbedding | None
     hartree_poisson_result: OpenBoundaryPoissonResult | None
     lsda_evaluation: LSDAEvaluation | None
 
@@ -80,7 +114,7 @@ class FixedPotentialEigensolverResult:
     ritz_matrix: np.ndarray
     initial_guess_orbitals: np.ndarray
     final_basis_orbitals: np.ndarray
-    operator_context: FixedPotentialOperatorContext
+    operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext
 
 
 def _normalize_spin_channel(spin_channel: str) -> str:
@@ -93,9 +127,19 @@ def _normalize_spin_channel(spin_channel: str) -> str:
     return normalized
 
 
+def _build_total_density_on_grid(
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    grid_geometry: GridGeometryLike,
+) -> np.ndarray:
+    rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
+    rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
+    return np.asarray(rho_up_field + rho_down_field, dtype=np.float64)
+
+
 def validate_orbital_block(
     orbitals: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     name: str = "orbitals",
 ) -> np.ndarray:
     """Validate a block of orbitals stored as (k, nx, ny, nz)."""
@@ -117,7 +161,7 @@ def validate_orbital_block(
 
 def flatten_orbital_block(
     orbitals: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     """Flatten a block of orbitals into column-major (n_grid, k) form."""
 
@@ -127,7 +171,7 @@ def flatten_orbital_block(
 
 def reshape_orbital_columns(
     orbital_columns: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     """Reshape (n_grid, k) orbital columns back to (k, nx, ny, nz)."""
 
@@ -144,7 +188,7 @@ def reshape_orbital_columns(
 
 def weighted_overlap_matrix(
     orbitals: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     other: np.ndarray | None = None,
 ) -> np.ndarray:
     """Return the weighted block overlap matrix under the cell-volume metric."""
@@ -161,7 +205,7 @@ def weighted_overlap_matrix(
 
 def weighted_orbital_norms(
     orbitals: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     """Return the weighted norms of a block of orbitals."""
 
@@ -172,7 +216,7 @@ def weighted_orbital_norms(
 
 def weighted_orthonormalize_orbitals(
     orbitals: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     *,
     require_full_rank: bool = True,
     rank_tolerance: float = 1.0e-12,
@@ -211,7 +255,7 @@ def weighted_orthonormalize_orbitals(
 
 
 def _resolve_local_ionic_potential(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     case: BenchmarkCase,
     local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None,
 ) -> tuple[np.ndarray, LocalIonicPotentialEvaluation | None]:
@@ -231,7 +275,7 @@ def _resolve_local_ionic_potential(
 
 
 def _resolve_hartree_potential(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     rho_total: np.ndarray,
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None,
 ) -> tuple[np.ndarray, OpenBoundaryPoissonResult | None]:
@@ -254,7 +298,7 @@ def _resolve_hartree_potential(
 
 
 def _resolve_xc_potential(
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     rho_up: np.ndarray,
     rho_down: np.ndarray,
     spin_channel: str,
@@ -281,6 +325,53 @@ def _resolve_xc_potential(
     return potential, lsda_evaluation
 
 
+def _resolve_static_local_ionic_potential(
+    grid_geometry: GridGeometryLike,
+    case: BenchmarkCase,
+    rho_total: np.ndarray,
+    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None,
+    *,
+    use_monitor_patch: bool,
+    patch_parameters: LocalPotentialPatchParameters | None,
+) -> tuple[
+    np.ndarray,
+    LocalIonicPotentialEvaluation | None,
+    FrozenPatchLocalPotentialEmbedding | None,
+]:
+    if local_ionic_potential is not None:
+        if isinstance(local_ionic_potential, LocalIonicPotentialEvaluation):
+            return local_ionic_potential.total_local_potential, local_ionic_potential, None
+        return (
+            validate_orbital_field(
+                local_ionic_potential,
+                grid_geometry=grid_geometry,
+                name="local_ionic_potential",
+            ),
+            None,
+            None,
+        )
+
+    if isinstance(grid_geometry, MonitorGridGeometry) and use_monitor_patch:
+        embedding = evaluate_monitor_grid_local_ionic_potential_with_frozen_patch_field(
+            case=case,
+            grid_geometry=grid_geometry,
+            density_field=rho_total,
+            patch_parameters=patch_parameters,
+        )
+        return (
+            embedding.corrected_total_local_potential,
+            embedding.base_evaluation,
+            embedding,
+        )
+
+    local_field, local_evaluation = _resolve_local_ionic_potential(
+        grid_geometry=grid_geometry,
+        case=case,
+        local_ionic_potential=local_ionic_potential,
+    )
+    return local_field, local_evaluation, None
+
+
 def prepare_fixed_potential_static_ks_operator(
     grid_geometry: StructuredGridGeometry,
     rho_up: np.ndarray,
@@ -297,7 +388,7 @@ def prepare_fixed_potential_static_ks_operator(
     rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
     rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
     normalized_spin = _normalize_spin_channel(spin_channel)
-    rho_total = build_total_density(
+    rho_total = _build_total_density_on_grid(
         rho_up=rho_up_field,
         rho_down=rho_down_field,
         grid_geometry=grid_geometry,
@@ -375,6 +466,128 @@ def build_fixed_potential_static_ks_operator(
     return _operator
 
 
+def prepare_fixed_potential_static_local_operator(
+    grid_geometry: GridGeometryLike,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    spin_channel: str,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
+    hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
+    xc_functional: str | None = None,
+    *,
+    use_monitor_patch: bool = False,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+) -> FixedPotentialStaticLocalOperatorContext:
+    """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid.
+
+    This operator intentionally excludes nonlocal ionic action and any SCF
+    update. When `use_monitor_patch=True` on the monitor grid, the current
+    near-core local-GTH patch correction is embedded into a frozen local
+    potential field matched to the chosen frozen density.
+    """
+
+    rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
+    rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
+    normalized_spin = _normalize_spin_channel(spin_channel)
+    rho_total = _build_total_density_on_grid(
+        rho_up=rho_up_field,
+        rho_down=rho_down_field,
+        grid_geometry=grid_geometry,
+    )
+    local_field, local_evaluation, patch_embedding = _resolve_static_local_ionic_potential(
+        grid_geometry=grid_geometry,
+        case=case,
+        rho_total=rho_total,
+        local_ionic_potential=local_ionic_potential,
+        use_monitor_patch=use_monitor_patch,
+        patch_parameters=patch_parameters,
+    )
+    hartree_field, hartree_result = _resolve_hartree_potential(
+        grid_geometry=grid_geometry,
+        rho_total=rho_total,
+        hartree_potential=hartree_potential,
+    )
+    xc_field, lsda_evaluation = _resolve_xc_potential(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up_field,
+        rho_down=rho_down_field,
+        spin_channel=normalized_spin,
+        case=case,
+        xc_potential=xc_potential,
+        xc_functional=xc_functional,
+    )
+    return FixedPotentialStaticLocalOperatorContext(
+        grid_geometry=grid_geometry,
+        case=case,
+        spin_channel=normalized_spin,
+        rho_up=rho_up_field,
+        rho_down=rho_down_field,
+        rho_total=rho_total,
+        local_ionic_potential=local_field,
+        hartree_potential=hartree_field,
+        xc_potential=xc_field,
+        effective_local_potential=np.asarray(
+            local_field + hartree_field + xc_field,
+            dtype=np.float64,
+        ),
+        local_ionic_evaluation=local_evaluation,
+        frozen_patch_local_embedding=patch_embedding,
+        hartree_poisson_result=hartree_result,
+        lsda_evaluation=lsda_evaluation,
+    )
+
+
+def apply_fixed_potential_static_local_operator(
+    psi: np.ndarray,
+    operator_context: FixedPotentialStaticLocalOperatorContext,
+) -> np.ndarray:
+    """Apply the frozen static local Hamiltonian to one orbital field."""
+
+    field = validate_orbital_field(
+        psi,
+        grid_geometry=operator_context.grid_geometry,
+        name="psi",
+    )
+    kinetic_action = apply_kinetic_operator(
+        psi=field,
+        grid_geometry=operator_context.grid_geometry,
+    )
+    return np.asarray(
+        kinetic_action + operator_context.effective_local_potential * field,
+        dtype=np.float64,
+    )
+
+
+def build_fixed_potential_static_local_operator(
+    operator_context: FixedPotentialStaticLocalOperatorContext,
+):
+    """Return a callable frozen static-local operator wrapper."""
+
+    def _operator(psi: np.ndarray) -> np.ndarray:
+        return apply_fixed_potential_static_local_operator(
+            psi=psi,
+            operator_context=operator_context,
+        )
+
+    return _operator
+
+
+def apply_fixed_potential_static_local_block(
+    orbitals: np.ndarray,
+    operator_context: FixedPotentialStaticLocalOperatorContext,
+) -> np.ndarray:
+    """Apply the frozen static-local Hamiltonian to one orbital block."""
+
+    block = validate_orbital_block(orbitals, grid_geometry=operator_context.grid_geometry)
+    actions = [
+        apply_fixed_potential_static_local_operator(psi=orbital, operator_context=operator_context)
+        for orbital in block
+    ]
+    return np.asarray(actions)
+
+
 def apply_fixed_potential_static_ks_block(
     orbitals: np.ndarray,
     operator_context: FixedPotentialOperatorContext,
@@ -390,13 +603,23 @@ def apply_fixed_potential_static_ks_block(
 
 
 def _build_default_guess_orbitals(
-    operator_context: FixedPotentialOperatorContext,
+    operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
     count: int,
 ) -> np.ndarray:
     """Build deterministic, symmetry-friendly first-stage guess orbitals."""
 
     grid_geometry = operator_context.grid_geometry
-    center = np.asarray(grid_geometry.spec.reference_center, dtype=np.float64)
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        center = np.asarray(
+            (
+                0.5 * (grid_geometry.spec.box_bounds[0][0] + grid_geometry.spec.box_bounds[0][1]),
+                0.5 * (grid_geometry.spec.box_bounds[1][0] + grid_geometry.spec.box_bounds[1][1]),
+                0.5 * (grid_geometry.spec.box_bounds[2][0] + grid_geometry.spec.box_bounds[2][1]),
+            ),
+            dtype=np.float64,
+        )
+    else:
+        center = np.asarray(grid_geometry.spec.reference_center, dtype=np.float64)
     x_shift = grid_geometry.x_points - center[0]
     y_shift = grid_geometry.y_points - center[1]
     z_shift = grid_geometry.z_points - center[2]
@@ -444,7 +667,7 @@ def _build_default_guess_orbitals(
 
 
 def _build_initial_guess_block(
-    operator_context: FixedPotentialOperatorContext,
+    operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
     k: int,
     basis_size: int,
     initial_guess_orbitals: np.ndarray | None,
@@ -478,7 +701,7 @@ def _residual_norms(
     orbitals: np.ndarray,
     actions: np.ndarray,
     eigenvalues: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     """Return weighted residual norms ||H psi - eps psi||_W for one orbital block."""
 
@@ -506,7 +729,9 @@ def _require_scipy_iterative_solver():
 
 
 def _build_weighted_euclidean_operator(
-    operator_context: FixedPotentialOperatorContext,
+    *,
+    operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
+    block_apply,
 ):
     LinearOperator, _, _ = _require_scipy_iterative_solver()
     grid_geometry = operator_context.grid_geometry
@@ -524,10 +749,7 @@ def _build_weighted_euclidean_operator(
             inverse_sqrt_weights[:, None] * values,
             grid_geometry=grid_geometry,
         )
-        action_block = apply_fixed_potential_static_ks_block(
-            orbital_block,
-            operator_context=operator_context,
-        )
+        action_block = block_apply(orbital_block, operator_context=operator_context)
         action_columns = flatten_orbital_block(action_block, grid_geometry=grid_geometry)
         transformed = sqrt_weights[:, None] * action_columns
         return transformed[:, 0] if original_vector else transformed
@@ -541,30 +763,17 @@ def _build_weighted_euclidean_operator(
     return operator, sqrt_weights, inverse_sqrt_weights
 
 
-def solve_fixed_potential_eigenproblem(
-    grid_geometry: StructuredGridGeometry,
-    rho_up: np.ndarray,
-    rho_down: np.ndarray,
-    spin_channel: str,
+def _solve_weighted_fixed_potential_problem(
+    *,
+    operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
+    block_apply,
     k: int,
-    case: BenchmarkCase = H2_BENCHMARK_CASE,
-    initial_guess_orbitals: np.ndarray | None = None,
-    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
-    hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
-    xc_potential: np.ndarray | None = None,
-    xc_functional: str | None = None,
-    max_iterations: int = 400,
-    tolerance: float = 1.0e-3,
-    initial_subspace_size: int | None = None,
-    ncv: int | None = None,
+    initial_guess_orbitals: np.ndarray | None,
+    max_iterations: int,
+    tolerance: float,
+    initial_subspace_size: int | None,
+    ncv: int | None,
 ) -> FixedPotentialEigensolverResult:
-    """Solve the lowest few frozen-potential static-KS orbitals.
-
-    The current first-stage default route is SciPy's iterative symmetric Lanczos
-    solver `eigsh` applied to the weighted-similarity-transformed operator. This
-    is a formal fixed-potential scaffold, not the final JAX-native SCF solver.
-    """
-
     if k <= 0:
         raise ValueError(f"k must be positive; received {k}.")
     if max_iterations <= 0:
@@ -576,17 +785,7 @@ def solve_fixed_potential_eigenproblem(
     if initial_subspace_size < k:
         raise ValueError("initial_subspace_size must be at least k.")
 
-    operator_context = prepare_fixed_potential_static_ks_operator(
-        grid_geometry=grid_geometry,
-        rho_up=rho_up,
-        rho_down=rho_down,
-        spin_channel=spin_channel,
-        case=case,
-        local_ionic_potential=local_ionic_potential,
-        hartree_potential=hartree_potential,
-        xc_potential=xc_potential,
-        xc_functional=xc_functional,
-    )
+    grid_geometry = operator_context.grid_geometry
     initial_guess = _build_initial_guess_block(
         operator_context=operator_context,
         k=k,
@@ -598,6 +797,7 @@ def solve_fixed_potential_eigenproblem(
     del LinearOperator
     weighted_operator, sqrt_weights, inverse_sqrt_weights = _build_weighted_euclidean_operator(
         operator_context=operator_context,
+        block_apply=block_apply,
     )
 
     guess_columns = flatten_orbital_block(initial_guess, grid_geometry=grid_geometry)
@@ -643,10 +843,7 @@ def solve_fixed_potential_eigenproblem(
         inverse_sqrt_weights[:, None] * selected_vectors,
         grid_geometry=grid_geometry,
     )
-    actions = apply_fixed_potential_static_ks_block(
-        orbitals,
-        operator_context=operator_context,
-    )
+    actions = block_apply(orbitals, operator_context=operator_context)
     residual_norms = _residual_norms(
         orbitals,
         actions,
@@ -686,4 +883,105 @@ def solve_fixed_potential_eigenproblem(
         initial_guess_orbitals=np.asarray(initial_guess, dtype=np.float64),
         final_basis_orbitals=np.asarray(orbitals, dtype=np.float64),
         operator_context=operator_context,
+    )
+
+
+def solve_fixed_potential_eigenproblem(
+    grid_geometry: StructuredGridGeometry,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    spin_channel: str,
+    k: int,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    initial_guess_orbitals: np.ndarray | None = None,
+    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
+    hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
+    xc_functional: str | None = None,
+    max_iterations: int = 400,
+    tolerance: float = 1.0e-3,
+    initial_subspace_size: int | None = None,
+    ncv: int | None = None,
+) -> FixedPotentialEigensolverResult:
+    """Solve the lowest few frozen-potential static-KS orbitals.
+
+    The current first-stage default route is SciPy's iterative symmetric Lanczos
+    solver `eigsh` applied to the weighted-similarity-transformed operator. This
+    is a formal fixed-potential scaffold, not the final JAX-native SCF solver.
+    """
+
+    operator_context = prepare_fixed_potential_static_ks_operator(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up,
+        rho_down=rho_down,
+        spin_channel=spin_channel,
+        case=case,
+        local_ionic_potential=local_ionic_potential,
+        hartree_potential=hartree_potential,
+        xc_potential=xc_potential,
+        xc_functional=xc_functional,
+    )
+    return _solve_weighted_fixed_potential_problem(
+        operator_context=operator_context,
+        block_apply=apply_fixed_potential_static_ks_block,
+        k=k,
+        initial_guess_orbitals=initial_guess_orbitals,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+        initial_subspace_size=initial_subspace_size,
+        ncv=ncv,
+    )
+
+
+def solve_fixed_potential_static_local_eigenproblem(
+    grid_geometry: GridGeometryLike,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    spin_channel: str,
+    k: int,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    initial_guess_orbitals: np.ndarray | None = None,
+    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
+    hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
+    xc_functional: str | None = None,
+    max_iterations: int = 400,
+    tolerance: float = 1.0e-3,
+    initial_subspace_size: int | None = None,
+    ncv: int | None = None,
+    *,
+    use_monitor_patch: bool = False,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+) -> FixedPotentialEigensolverResult:
+    """Solve the lowest few frozen-potential orbitals of the static local chain.
+
+    This route intentionally contains only
+
+        T + V_loc,ion + V_H + V_xc
+
+    with frozen density-derived local terms and no nonlocal ionic action.
+    """
+
+    operator_context = prepare_fixed_potential_static_local_operator(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up,
+        rho_down=rho_down,
+        spin_channel=spin_channel,
+        case=case,
+        local_ionic_potential=local_ionic_potential,
+        hartree_potential=hartree_potential,
+        xc_potential=xc_potential,
+        xc_functional=xc_functional,
+        use_monitor_patch=use_monitor_patch,
+        patch_parameters=patch_parameters,
+    )
+    return _solve_weighted_fixed_potential_problem(
+        operator_context=operator_context,
+        block_apply=apply_fixed_potential_static_local_block,
+        k=k,
+        initial_guess_orbitals=initial_guess_orbitals,
+        max_iterations=max_iterations,
+        tolerance=tolerance,
+        initial_subspace_size=initial_subspace_size,
+        ncv=ncv,
     )

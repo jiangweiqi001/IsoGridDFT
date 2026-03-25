@@ -143,6 +143,38 @@ class H2HartreeTailRecheckRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2FixedPotentialEigensolverRouteBaseline:
+    """Recorded fixed-potential eigensolver result for one audit route."""
+
+    path_type: str
+    target_orbitals: int
+    eigenvalues_ha: tuple[float, ...]
+    max_residual_norm: float
+    max_orthogonality_error: float
+    converged: bool
+
+
+@dataclass(frozen=True)
+class H2FixedPotentialEigensolverRegressionBaseline:
+    """Recorded fixed-potential eigensolver audit on legacy and A-grid+patch."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    legacy_k2_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_k2_route: H2FixedPotentialEigensolverRouteBaseline
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -316,7 +348,63 @@ H2_HARTREE_TAIL_RECHECK_BASELINE = H2HartreeTailRecheckRegressionBaseline(
 )
 
 
+H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE = H2FixedPotentialEigensolverRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="legacy",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.20527465416922755,),
+        max_residual_norm=2.8929876944581593e-04,
+        max_orthogonality_error=1.1102230246251565e-15,
+        converged=True,
+    ),
+    monitor_patch_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-6.574031909859388,),
+        max_residual_norm=3.3342921454967853,
+        max_orthogonality_error=1.1102230246251565e-15,
+        converged=False,
+    ),
+    legacy_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="legacy",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.20529016296596161, 0.06286688164303063),
+        max_residual_norm=6.54810468883838e-04,
+        max_orthogonality_error=2.220446049250313e-15,
+        converged=True,
+    ),
+    monitor_patch_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-6.634541712761564, -6.219685689382547),
+        max_residual_norm=7.833230053900307,
+        max_orthogonality_error=6.661338147750939e-16,
+        converged=False,
+    ),
+    diagnosis=(
+        "The current A-grid+patch fixed-potential eigensolver path is not yet stable enough "
+        "to replace the legacy route. Patch embedding reproduces the frozen local-GTH energy "
+        "correction, but the monitor-grid static-local operator still yields overly deep "
+        "eigenvalues and O(1) residuals."
+    ),
+    note=(
+        "First fixed-potential eigensolver baseline on the repaired A-grid static local chain. "
+        "This baseline still excludes nonlocal ionic action and SCF."
+    ),
+)
+
+
 __all__ = [
+    "H2FixedPotentialEigensolverRegressionBaseline",
+    "H2FixedPotentialEigensolverRouteBaseline",
     "H2HartreeTailRecheckPointBaseline",
     "H2HartreeTailRecheckRegressionBaseline",
     "H2MonitorPoissonRegressionBaseline",
@@ -325,6 +413,7 @@ __all__ = [
     "H2StaticLocalChainRouteBaseline",
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
+    "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",

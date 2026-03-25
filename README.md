@@ -35,6 +35,8 @@ With that monitor Poisson split fix in place, the H2 static local-chain audit ha
 
 That repaired H2 static local-chain result is now frozen as the current A-grid+patch regression baseline, and the present follow-up is a very small Hartree tail recheck to see whether the remaining `E_H` offset behaves more like geometry/discretization tail than a surviving monitor-Poisson system bias.
 
+The next A-grid handoff has now reached the fixed-potential eigensolver on the repaired static local chain. That migration is auditable, but it is not yet numerically stable enough to replace the legacy fixed-potential path; nonlocal, eigensolver production use, and SCF still remain on their current non-monitor routes.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -69,6 +71,7 @@ They currently cover:
 - a formal H2 singlet grid/domain convergence audit for separating resolution sensitivity from finite-box sensitivity
 - a formal H2 singlet A-grid fair-calibration audit for matching legacy box size and near-core resolution before comparing `T_s + E_loc,ion`
 - a formal H2 singlet A-grid local-GTH patch audit for near-core correction on the best fair A-grid baseline
+- a first H2 A-grid+patch fixed-potential eigensolver audit on the repaired static local chain
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.

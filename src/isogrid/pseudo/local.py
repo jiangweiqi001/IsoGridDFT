@@ -111,6 +111,30 @@ class LocalIonicPotentialPatchEvaluation:
     total_patch_correction: float
 
 
+@dataclass(frozen=True)
+class FrozenPatchLocalPotentialEmbedding:
+    """Frozen-density embedding of the patch correction into a local potential.
+
+    The current near-core patch is defined as an energy correction, not as a
+    general density-functional derivative. For the fixed-potential eigensolver
+    audit we embed that correction into a frozen local potential field
+    `delta V_patch(r)` chosen so that
+
+        int rho_frozen(r) delta V_patch(r) dr = Delta E_loc^patch
+
+    on the current frozen density. This is suitable for fixed-potential audit
+    work only; it is not yet a general SCF-ready local-GTH potential correction.
+    """
+
+    base_evaluation: LocalIonicPotentialEvaluation
+    patch_evaluation: LocalIonicPotentialPatchEvaluation
+    corrected_total_local_potential: np.ndarray
+    correction_field: np.ndarray
+    atomic_scaling_factors: tuple[float, ...]
+    embedded_patch_correction_energy: float
+    embedding_energy_mismatch: float
+
+
 def _screened_coulomb_term(
     radial_distance: np.ndarray,
     ionic_charge: int,
@@ -565,6 +589,117 @@ def evaluate_monitor_grid_local_ionic_potential_with_patch(
         uncorrected_local_energy=float(uncorrected_local_energy),
         corrected_local_energy=float(uncorrected_local_energy + total_patch_correction),
         total_patch_correction=total_patch_correction,
+    )
+
+
+def _build_atomic_frozen_patch_correction_field(
+    atom_contribution: AtomicLocalPotentialContribution,
+    patch_correction: AtomicLocalPotentialPatchCorrection,
+    density_field: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+) -> tuple[np.ndarray, float]:
+    patch_radius = patch_correction.patch_radius_bohr
+    dx_main = grid_geometry.x_points - atom_contribution.position[0]
+    dy_main = grid_geometry.y_points - atom_contribution.position[1]
+    dz_main = grid_geometry.z_points - atom_contribution.position[2]
+    radial_main = np.sqrt(
+        dx_main * dx_main + dy_main * dy_main + dz_main * dz_main,
+        dtype=np.float64,
+    )
+    patch_mask = radial_main <= patch_radius
+    correction_field = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    correction_energy = float(patch_correction.correction_energy)
+    if not np.any(patch_mask) or abs(correction_energy) <= 1.0e-16:
+        return correction_field, 0.0
+
+    denominator = float(patch_correction.main_grid_patch_energy)
+    if abs(denominator) > 1.0e-14:
+        scaling = correction_energy / denominator
+        correction_field[patch_mask] = (
+            scaling * atom_contribution.local_potential[patch_mask]
+        )
+        return correction_field, float(scaling)
+
+    density_weight = float(
+        np.sum(
+            density_field[patch_mask] * grid_geometry.cell_volumes[patch_mask],
+            dtype=np.float64,
+        )
+    )
+    if density_weight <= 1.0e-16:
+        return correction_field, 0.0
+
+    constant_shift = correction_energy / density_weight
+    correction_field[patch_mask] = constant_shift
+    return correction_field, float(constant_shift)
+
+
+def evaluate_monitor_grid_local_ionic_potential_with_frozen_patch_field(
+    case: BenchmarkCase,
+    grid_geometry: MonitorGridGeometry,
+    density_field: np.ndarray,
+    *,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+    patch_evaluation: LocalIonicPotentialPatchEvaluation | None = None,
+    base_evaluation: LocalIonicPotentialEvaluation | None = None,
+) -> FrozenPatchLocalPotentialEmbedding:
+    """Embed the near-core patch correction into a frozen local potential field.
+
+    This helper is intentionally narrow in scope. It constructs a corrected
+    pointwise local potential only for fixed-density / fixed-potential audit
+    paths, while leaving the patch math itself unchanged.
+    """
+
+    density = validate_orbital_field(
+        density_field,
+        grid_geometry=grid_geometry,
+        name="density_field",
+    )
+    if patch_parameters is None:
+        patch_parameters = LocalPotentialPatchParameters()
+    if patch_evaluation is None:
+        patch_evaluation = evaluate_monitor_grid_local_ionic_potential_with_patch(
+            case=case,
+            grid_geometry=grid_geometry,
+            density_field=density,
+            patch_parameters=patch_parameters,
+            base_evaluation=base_evaluation,
+        )
+    base = patch_evaluation.base_evaluation
+    correction_field = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    atomic_scalings: list[float] = []
+    for atom_contribution, patch_correction in zip(
+        base.atom_contributions,
+        patch_evaluation.atomic_patch_corrections,
+        strict=True,
+    ):
+        atomic_field, scaling = _build_atomic_frozen_patch_correction_field(
+            atom_contribution=atom_contribution,
+            patch_correction=patch_correction,
+            density_field=density,
+            grid_geometry=grid_geometry,
+        )
+        correction_field += atomic_field
+        atomic_scalings.append(float(scaling))
+
+    corrected_total_local_potential = np.asarray(
+        base.total_local_potential + correction_field,
+        dtype=np.float64,
+    )
+    embedded_patch_correction_energy = float(
+        integrate_field(density * correction_field, grid_geometry=grid_geometry)
+    )
+    embedding_energy_mismatch = float(
+        embedded_patch_correction_energy - patch_evaluation.total_patch_correction
+    )
+    return FrozenPatchLocalPotentialEmbedding(
+        base_evaluation=base,
+        patch_evaluation=patch_evaluation,
+        corrected_total_local_potential=corrected_total_local_potential,
+        correction_field=correction_field,
+        atomic_scaling_factors=tuple(atomic_scalings),
+        embedded_patch_correction_energy=embedded_patch_correction_energy,
+        embedding_energy_mismatch=embedding_energy_mismatch,
     )
 
 

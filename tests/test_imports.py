@@ -73,6 +73,12 @@ def test_import_fixed_potential_eigensolver_entrypoint() -> None:
     assert callable(solve_fixed_potential_eigenproblem)
 
 
+def test_import_fixed_potential_static_local_eigensolver_entrypoint() -> None:
+    from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
+
+    assert callable(solve_fixed_potential_static_local_eigenproblem)
+
+
 def test_import_scf_driver_entrypoint() -> None:
     from isogrid.scf import run_h2_minimal_scf
 
@@ -167,3 +173,18 @@ def test_import_h2_hartree_tail_recheck_audit_entrypoint() -> None:
     )
 
     assert callable(run_h2_hartree_tail_recheck_audit)
+
+
+def test_import_h2_monitor_grid_fixed_potential_eigensolver_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_fixed_potential_eigensolver_audit import (
+        run_h2_monitor_grid_fixed_potential_eigensolver_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_fixed_potential_eigensolver_audit)
+
+
+def test_import_h2_fixed_potential_eigensolver_baseline() -> None:
+    from isogrid.audit.baselines import H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE
+
+    assert H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE.monitor_patch_k1_route.target_orbitals == 1
