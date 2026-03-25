@@ -73,6 +73,39 @@ class H2MonitorPoissonRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2StaticLocalChainRouteBaseline:
+    """Recorded static local-chain components for one H2 audit route."""
+
+    path_type: str
+    kinetic_energy_ha: float
+    local_ionic_energy_ha: float
+    hartree_energy_ha: float
+    xc_energy_ha: float
+    static_local_sum_ha: float
+
+
+@dataclass(frozen=True)
+class H2StaticLocalChainRegressionBaseline:
+    """Recorded post-fix H2 static local-chain audit on legacy and A-grid routes."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_route: H2StaticLocalChainRouteBaseline
+    monitor_route: H2StaticLocalChainRouteBaseline
+    monitor_patch_route: H2StaticLocalChainRouteBaseline
+    monitor_vs_legacy_delta_mha: float
+    monitor_patch_vs_legacy_delta_mha: float
+    monitor_patch_improvement_vs_monitor_mha: float
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -141,10 +174,56 @@ H2_MONITOR_POISSON_REGRESSION_BASELINE = H2MonitorPoissonRegressionBaseline(
 )
 
 
+H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE = H2StaticLocalChainRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_route=H2StaticLocalChainRouteBaseline(
+        path_type="legacy",
+        kinetic_energy_ha=1.995064629672,
+        local_ionic_energy_ha=-4.347356525602,
+        hartree_energy_ha=1.748670071699,
+        xc_energy_ha=-0.869107874980,
+        static_local_sum_ha=-1.472729699211,
+    ),
+    monitor_route=H2StaticLocalChainRouteBaseline(
+        path_type="monitor_a_grid",
+        kinetic_energy_ha=1.934245385147,
+        local_ionic_energy_ha=-4.364949512790,
+        hartree_energy_ha=1.765755769546,
+        xc_energy_ha=-0.868937109053,
+        static_local_sum_ha=-1.533885467150,
+    ),
+    monitor_patch_route=H2StaticLocalChainRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_energy_ha=1.934245385147,
+        local_ionic_energy_ha=-4.287134389497,
+        hartree_energy_ha=1.765755769546,
+        xc_energy_ha=-0.868937109053,
+        static_local_sum_ha=-1.456070343858,
+    ),
+    monitor_vs_legacy_delta_mha=-61.156,
+    monitor_patch_vs_legacy_delta_mha=16.659,
+    monitor_patch_improvement_vs_monitor_mha=77.815,
+    note=(
+        "Post-fix H2 static local-chain baseline after the monitor Poisson split repair. "
+        "This baseline still excludes nonlocal, eigensolver, and SCF."
+    ),
+)
+
+
 __all__ = [
     "H2MonitorPoissonRegressionBaseline",
     "H2MonitorPoissonShapeRegressionPoint",
+    "H2StaticLocalChainRegressionBaseline",
+    "H2StaticLocalChainRouteBaseline",
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
+    "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]

@@ -31,6 +31,8 @@ The next audit slice now drills one level deeper into the A-grid Poisson operato
 
 That boundary-split / RHS consistency defect has now received a first targeted fix on the monitor-grid Poisson path, and the current operator status should be read from the dedicated Poisson audit outputs rather than inferred from the older broken monitor-grid baseline.
 
+With that monitor Poisson split fix in place, the H2 static local-chain audit has now been rerun on `legacy / A-grid / A-grid+patch`, while nonlocal, eigensolver, and SCF still remain on their current non-monitor paths.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

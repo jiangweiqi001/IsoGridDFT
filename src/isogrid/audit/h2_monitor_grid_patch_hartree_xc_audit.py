@@ -307,6 +307,7 @@ def run_h2_monitor_grid_patch_hartree_xc_audit(
         note=(
             "This audit compares only the static local chain "
             "T_s + E_loc,ion + E_H + E_xc on H2 singlet. "
+            "The monitor-grid Hartree term now uses the repaired monitor Poisson split. "
             "The patch still corrects only the local-GTH near-core energy; "
             "nonlocal, eigensolver, and SCF remain on their current paths."
         ),
