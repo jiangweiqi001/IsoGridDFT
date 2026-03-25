@@ -29,6 +29,8 @@ The current focus has now shifted to a dedicated A-grid Hartree / open-boundary 
 
 The next audit slice now drills one level deeper into the A-grid Poisson operator itself: the current focus is to localize why the monitor-grid Hartree path develops negative far-field `v_H` values and a large `E_H` deficit even when the density integral, multipole boundary order, and solver residual all look well behaved.
 
+That boundary-split / RHS consistency defect has now received a first targeted fix on the monitor-grid Poisson path, and the current operator status should be read from the dedicated Poisson audit outputs rather than inferred from the older broken monitor-grid baseline.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

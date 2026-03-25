@@ -42,6 +42,37 @@ class H2PySCFRegressionBaseline:
     eigensolver_ncv: int
 
 
+@dataclass(frozen=True)
+class H2MonitorPoissonShapeRegressionPoint:
+    """Recorded A-grid shape-scan summary for the operator audit."""
+
+    shape: tuple[int, int, int]
+    hartree_energy_ha: float
+    residual_rms: float
+    negative_interior_fraction: float
+    center_potential_ha: float
+    delta_vs_baseline_mha: float
+
+
+@dataclass(frozen=True)
+class H2MonitorPoissonRegressionBaseline:
+    """Recorded H2 monitor-grid Poisson audit baseline after the split fix."""
+
+    benchmark_name: str
+    density_label: str
+    box_half_extents_bohr: tuple[float, float, float]
+    monitor_shape: tuple[int, int, int]
+    legacy_hartree_energy_ha: float
+    monitor_hartree_energy_ha: float
+    monitor_vs_legacy_delta_mha: float
+    monitor_negative_interior_fraction: float
+    monitor_full_residual_rms: float
+    legacy_far_field_centerline_v_ha: float
+    monitor_far_field_centerline_v_ha: float
+    shape_scan: tuple[H2MonitorPoissonShapeRegressionPoint, ...]
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -65,7 +96,55 @@ H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
 )
 
 
+H2_MONITOR_POISSON_REGRESSION_BASELINE = H2MonitorPoissonRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    monitor_shape=(67, 67, 81),
+    legacy_hartree_energy_ha=1.748670071699,
+    monitor_hartree_energy_ha=1.765755769546,
+    monitor_vs_legacy_delta_mha=17.086,
+    monitor_negative_interior_fraction=0.0,
+    monitor_full_residual_rms=5.649e-09,
+    legacy_far_field_centerline_v_ha=0.224739241566,
+    monitor_far_field_centerline_v_ha=0.223365547675,
+    shape_scan=(
+        H2MonitorPoissonShapeRegressionPoint(
+            shape=(59, 59, 71),
+            hartree_energy_ha=1.769172021332,
+            residual_rms=2.922e-09,
+            negative_interior_fraction=0.0,
+            center_potential_ha=2.457154825450,
+            delta_vs_baseline_mha=3.416,
+        ),
+        H2MonitorPoissonShapeRegressionPoint(
+            shape=(67, 67, 81),
+            hartree_energy_ha=1.765755769546,
+            residual_rms=5.649e-09,
+            negative_interior_fraction=0.0,
+            center_potential_ha=2.455055393670,
+            delta_vs_baseline_mha=0.0,
+        ),
+        H2MonitorPoissonShapeRegressionPoint(
+            shape=(75, 75, 91),
+            hartree_energy_ha=1.763347405954,
+            residual_rms=8.028e-09,
+            negative_interior_fraction=0.0,
+            center_potential_ha=2.454044482845,
+            delta_vs_baseline_mha=-2.408,
+        ),
+    ),
+    note=(
+        "Post-fix monitor-grid Poisson operator baseline after repairing the monitor "
+        "boundary-split / RHS sign consistency in open_boundary.py."
+    ),
+)
+
+
 __all__ = [
+    "H2MonitorPoissonRegressionBaseline",
+    "H2MonitorPoissonShapeRegressionPoint",
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
+    "H2_MONITOR_POISSON_REGRESSION_BASELINE",
 ]

@@ -93,8 +93,10 @@ def test_import_h2_grid_convergence_audit_entrypoint() -> None:
 
 def test_import_h2_regression_baseline() -> None:
     from isogrid.audit.baselines import H2_DEFAULT_PYSCF_REGRESSION_BASELINE
+    from isogrid.audit.baselines import H2_MONITOR_POISSON_REGRESSION_BASELINE
 
     assert H2_DEFAULT_PYSCF_REGRESSION_BASELINE.benchmark_name == "h2_r1p4_bohr"
+    assert H2_MONITOR_POISSON_REGRESSION_BASELINE.monitor_shape == (67, 67, 81)
 
 
 def test_import_monitor_grid_entrypoint() -> None:

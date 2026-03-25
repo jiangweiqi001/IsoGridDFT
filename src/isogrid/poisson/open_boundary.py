@@ -323,7 +323,22 @@ def _solve_open_boundary_poisson_monitor(
     interior_mask = ~boundary_mask
     boundary_field = np.array(boundary_condition.boundary_values, copy=True)
     boundary_field[interior_mask] = 0.0
-    rhs = _FOUR_PI * density - apply_monitor_grid_laplacian_operator(
+    # Split the full potential as v = u + b, where u vanishes on the boundary
+    # and b carries only the prescribed Dirichlet boundary values. The complete
+    # monitor-grid Poisson equation is
+    #
+    #     L(v) = -4 pi rho .
+    #
+    # With v = u + b and linearity of L, the interior unknown must satisfy
+    #
+    #     L(u) + L(b) = -4 pi rho
+    #     -L(u) = 4 pi rho + L(b) .
+    #
+    # The monitor path previously used 4 pi rho - L(b), which made the split
+    # inconsistent with the full operator identity and yielded
+    # L(v) + 4 pi rho ~= 2 L(b). Keep the solver/operator unchanged and repair
+    # only this RHS assembly sign.
+    rhs = _FOUR_PI * density + apply_monitor_grid_laplacian_operator(
         boundary_field,
         grid_geometry=grid_geometry,
     )

@@ -614,6 +614,20 @@ def _diagnosis(
     gaussian_monitor: PoissonOperatorRouteResult,
     shape_scan_results: tuple[MonitorShapeScanPoint, ...],
 ) -> str:
+    if (
+        h2_monitor.residual_summary.rms < 1.0e-6
+        and gaussian_monitor.residual_summary.rms < 1.0e-5
+        and h2_monitor.negative_interior_fraction < 1.0e-6
+        and gaussian_monitor.negative_interior_fraction < 1.0e-6
+    ):
+        return (
+            "The monitor-grid Poisson boundary split now looks internally consistent: the full "
+            "operator residual has collapsed to the same small scale as the solver-reported "
+            "residual, the far-field negative-potential pathology is gone for both the H2 frozen "
+            "density and the Gaussian sanity density, and the remaining H2 Hartree mismatch is "
+            "now a much smaller accuracy issue rather than a split-system sign failure."
+        )
+
     if h2_monitor.boundary_split_diagnostic is not None:
         split = h2_monitor.boundary_split_diagnostic
         if (
