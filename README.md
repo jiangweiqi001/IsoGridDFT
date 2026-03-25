@@ -27,6 +27,8 @@ The current A-grid patch work has now moved one step further into the static loc
 
 The current focus has now shifted to a dedicated A-grid Hartree / open-boundary Poisson comparison audit, because the local-GTH patch already compresses the `E_loc,ion` gap while the remaining static-local mismatch is now dominated by `E_H`.
 
+The next audit slice now drills one level deeper into the A-grid Poisson operator itself: the current focus is to localize why the monitor-grid Hartree path develops negative far-field `v_H` values and a large `E_H` deficit even when the density integral, multipole boundary order, and solver residual all look well behaved.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -136,5 +138,6 @@ python -m isogrid.audit.h2_monitor_grid_fair_calibration_audit
 python -m isogrid.audit.h2_monitor_grid_patch_local_audit
 python -m isogrid.audit.h2_monitor_grid_patch_hartree_xc_audit
 python -m isogrid.audit.h2_hartree_poisson_comparison_audit
+python -m isogrid.audit.h2_monitor_grid_poisson_operator_audit
 ```
 

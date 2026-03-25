@@ -145,3 +145,11 @@ def test_import_h2_hartree_poisson_comparison_audit_entrypoint() -> None:
     )
 
     assert callable(run_h2_hartree_poisson_comparison_audit)
+
+
+def test_import_h2_monitor_grid_poisson_operator_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_poisson_operator_audit import (
+        run_h2_monitor_grid_poisson_operator_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_poisson_operator_audit)
