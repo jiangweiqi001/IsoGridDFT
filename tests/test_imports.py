@@ -260,3 +260,21 @@ def test_import_h2_geometry_consistency_baseline() -> None:
         H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE.bad_eigen_baseline.delta_kinetic_mha
         == -7228.047450163502
     )
+
+
+def test_import_h2_monitor_grid_kinetic_green_identity_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit import (
+        run_h2_monitor_grid_kinetic_green_identity_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_kinetic_green_identity_audit)
+
+
+def test_import_h2_kinetic_green_identity_baseline() -> None:
+    from isogrid.audit.baselines import H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE
+
+    assert H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert (
+        H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE.bad_eigen_baseline.delta_kinetic_mha
+        == -7228.047450163502
+    )

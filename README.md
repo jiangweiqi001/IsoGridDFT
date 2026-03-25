@@ -41,6 +41,8 @@ The current focus is now an operator-level audit of the A-grid static-local fixe
 
 The current diagnostic slice is now even narrower: the immediate question is whether the A-grid kinetic sub-operator itself is admitting pathological fixed-potential modes, while nonlocal, eigensolver production use, and SCF still remain off the A-grid path.
 
+The current follow-up is now focused on the discrete Green identity behind that A-grid kinetic path, because the leading suspicion is no longer raw geometry storage but a boundary/closure mismatch between operator kinetic and gradient-form kinetic energy on bad fixed-potential modes.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -80,6 +82,7 @@ They currently cover:
 - a dedicated H2 A-grid kinetic-operator audit for diagnosing the current fixed-potential negative-kinetic failure mode
 - a production-vs-reference H2 A-grid kinetic-form audit for checking whether the current monitor-grid kinetic failure comes from the production flux form itself or from geometry/metric consistency shared by both discretizations
 - a dedicated H2 A-grid geometry-consistency audit for checking whether kinetic energy identity closes against `jacobian / inverse metric / cell volumes` on the same monitor geometry
+- a dedicated H2 A-grid discrete Green-identity audit for checking whether the bad kinetic mode is dominated by a boundary-term / closure mismatch
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -160,5 +163,6 @@ python -m isogrid.audit.h2_monitor_grid_operator_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_operator_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_form_audit
 python -m isogrid.audit.h2_monitor_grid_geometry_consistency_audit
+python -m isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit
 ```
 
