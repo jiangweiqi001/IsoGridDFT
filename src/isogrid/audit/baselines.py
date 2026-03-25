@@ -321,6 +321,62 @@ class H2KineticFormRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2GeometryConsistencyFieldBaseline:
+    """Recorded operator-vs-gradient kinetic identity for one field."""
+
+    field_label: str
+    shape_label: str
+    operator_kinetic_ha: float
+    gradient_reference_ha: float
+    delta_kinetic_mha: float
+    operator_tpsi_rms: float
+    gradient_indicator_rms: float
+    delta_indicator_rms: float
+    far_field_operator_contribution_ha: float
+    far_field_gradient_contribution_ha: float
+    far_field_delta_mha: float
+    source_eigenvalue_ha: float | None
+    source_residual_norm: float | None
+    source_converged: bool | None
+
+
+@dataclass(frozen=True)
+class H2GeometryConsistencySmoothFieldBaseline:
+    """Recorded geometry-consistency probe for one smooth field."""
+
+    field_label: str
+    operator_kinetic_ha: float
+    gradient_reference_ha: float
+    delta_kinetic_mha: float
+
+
+@dataclass(frozen=True)
+class H2GeometryConsistencyRegressionBaseline:
+    """Recorded geometry-consistency failure baseline on the A-grid."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    jacobian_reconstruction_relative_rms: float
+    inverse_metric_reconstruction_relative_rms: float
+    cell_volume_vs_jacobian_relative_rms: float
+    sqrt_det_metric_vs_jacobian_relative_rms: float
+    metric_inverse_identity_rms: float
+    legacy_frozen_kinetic_reference_ha: float
+    legacy_bad_eigen_kinetic_reference_ha: float
+    frozen_trial_baseline: H2GeometryConsistencyFieldBaseline
+    bad_eigen_baseline: H2GeometryConsistencyFieldBaseline
+    smooth_fields: tuple[H2GeometryConsistencySmoothFieldBaseline, ...]
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -810,7 +866,87 @@ H2_KINETIC_FORM_AUDIT_BASELINE = H2KineticFormRegressionBaseline(
 )
 
 
+H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE = H2GeometryConsistencyRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    jacobian_reconstruction_relative_rms=0.0,
+    inverse_metric_reconstruction_relative_rms=0.0,
+    cell_volume_vs_jacobian_relative_rms=8.898863206300374e-17,
+    sqrt_det_metric_vs_jacobian_relative_rms=8.512930925289784e-16,
+    metric_inverse_identity_rms=1.9351025908322702e-16,
+    legacy_frozen_kinetic_reference_ha=0.997532314836,
+    legacy_bad_eigen_kinetic_reference_ha=0.468898008999,
+    frozen_trial_baseline=H2GeometryConsistencyFieldBaseline(
+        field_label="frozen_trial_orbital",
+        shape_label="baseline",
+        operator_kinetic_ha=0.9671226925733339,
+        gradient_reference_ha=0.9671226925733338,
+        delta_kinetic_mha=1.1102230246251565e-13,
+        operator_tpsi_rms=0.037373265866581344,
+        gradient_indicator_rms=0.0038090118454572794,
+        delta_indicator_rms=0.012211935797465987,
+        far_field_operator_contribution_ha=-3.922194791252705e-28,
+        far_field_gradient_contribution_ha=4.335193096252534e-28,
+        far_field_delta_mha=-8.257387887505238e-25,
+        source_eigenvalue_ha=None,
+        source_residual_norm=None,
+        source_converged=None,
+    ),
+    bad_eigen_baseline=H2GeometryConsistencyFieldBaseline(
+        field_label="bad_eigensolver_orbital_k1",
+        shape_label="baseline",
+        operator_kinetic_ha=-3.374908449316184,
+        gradient_reference_ha=3.8531390008473174,
+        delta_kinetic_mha=-7228.047450163502,
+        operator_tpsi_rms=0.0480384363184959,
+        gradient_indicator_rms=0.03220564363391905,
+        delta_indicator_rms=0.0604694331445142,
+        far_field_operator_contribution_ha=-3.3779730170681517,
+        far_field_gradient_contribution_ha=3.849174389245284,
+        far_field_delta_mha=-7227.1474063134365,
+        source_eigenvalue_ha=-6.574031909859388,
+        source_residual_norm=3.3342921454967853,
+        source_converged=False,
+    ),
+    smooth_fields=(
+        H2GeometryConsistencySmoothFieldBaseline(
+            field_label="smooth_gaussian",
+            operator_kinetic_ha=0.659748142599247,
+            gradient_reference_ha=0.6597481425992471,
+            delta_kinetic_mha=-1.1102230246251565e-13,
+        ),
+        H2GeometryConsistencySmoothFieldBaseline(
+            field_label="smooth_cosine",
+            operator_kinetic_ha=0.05085604616554839,
+            gradient_reference_ha=0.05233941382379163,
+            delta_kinetic_mha=-1.4833676582432445,
+        ),
+    ),
+    diagnosis=(
+        "The stored monitor-grid geometry closes internally to machine precision, but the "
+        "bad eigensolver orbital breaks the kinetic-energy identity badly: operator kinetic "
+        "becomes strongly negative while the gradient-based reference stays positive, and the "
+        "mismatch is almost entirely a far-field contribution. This points more toward a "
+        "geometry/operator/boundary coupling defect than to a raw jacobian or inverse-metric "
+        "storage bug."
+    ),
+    note=(
+        "Geometry-consistency failure baseline for the H2 singlet frozen-density A-grid audit. "
+        "This baseline is diagnostic only and does not imply any geometry or kinetic fix yet."
+    ),
+)
+
+
 __all__ = [
+    "H2GeometryConsistencyFieldBaseline",
+    "H2GeometryConsistencyRegressionBaseline",
+    "H2GeometryConsistencySmoothFieldBaseline",
     "H2KineticFormRegressionBaseline",
     "H2KineticFormRouteBaseline",
     "H2KineticFormSmoothFieldBaseline",
@@ -831,6 +967,7 @@ __all__ = [
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
     "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
     "H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE",
+    "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_KINETIC_FORM_AUDIT_BASELINE",
     "H2_KINETIC_OPERATOR_AUDIT_BASELINE",

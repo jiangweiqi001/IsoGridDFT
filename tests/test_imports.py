@@ -242,3 +242,21 @@ def test_import_h2_kinetic_form_baseline() -> None:
         H2_KINETIC_FORM_AUDIT_BASELINE.bad_eigen_baseline.production_kinetic_ha
         == -3.374908449316184
     )
+
+
+def test_import_h2_monitor_grid_geometry_consistency_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_geometry_consistency_audit import (
+        run_h2_monitor_grid_geometry_consistency_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_geometry_consistency_audit)
+
+
+def test_import_h2_geometry_consistency_baseline() -> None:
+    from isogrid.audit.baselines import H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE
+
+    assert H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert (
+        H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE.bad_eigen_baseline.delta_kinetic_mha
+        == -7228.047450163502
+    )
