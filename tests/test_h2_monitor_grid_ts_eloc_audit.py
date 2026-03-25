@@ -53,6 +53,7 @@ def test_construct_ts_eloc_result_object() -> None:
         grid_shape=(29, 29, 29),
         box_half_extents_bohr=(8.0, 8.0, 10.0),
         min_spacing_estimate_bohr=0.12,
+        near_core_min_spacing_bohr=0.11,
         near_atom_spacing_bohr=0.28,
         far_field_spacing_bohr=0.44,
         min_jacobian=1.0,

@@ -113,3 +113,11 @@ def test_import_monitor_grid_ts_eloc_audit_entrypoint() -> None:
     from isogrid.audit.h2_monitor_grid_ts_eloc_audit import run_h2_monitor_grid_ts_eloc_audit
 
     assert callable(run_h2_monitor_grid_ts_eloc_audit)
+
+
+def test_import_monitor_grid_fair_calibration_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_fair_calibration_audit import (
+        run_h2_monitor_grid_fair_calibration_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_fair_calibration_audit)

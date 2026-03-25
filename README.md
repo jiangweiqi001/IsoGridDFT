@@ -19,6 +19,8 @@ The first monitor-driven main-grid core is now being implemented. The legacy sin
 
 The first physical reconnect on the new A-grid is now focused on `T_s + E_loc,ion`, specifically to test whether the dominant H2 singlet grid error drops before the rest of the Hamiltonian is migrated.
 
+The current monitor-grid work has now moved on to a fair resolution-calibration audit against the legacy grid, with the immediate goal of checking whether `T_s + E_loc,ion` improves once the A-grid is no longer allowed to be smaller or coarser near the H nuclei.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -51,6 +53,7 @@ They currently cover:
 - a minimal H2 SCF single-point audit for the singlet and triplet candidates
 - a quantitative H2 vs PySCF audit with a small parameter-sensitivity scan for error localization
 - a formal H2 singlet grid/domain convergence audit for separating resolution sensitivity from finite-box sensitivity
+- a formal H2 singlet A-grid fair-calibration audit for matching legacy box size and near-core resolution before comparing `T_s + E_loc,ion`
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -122,5 +125,6 @@ python -m isogrid.audit.fixed_potential_h2_eigensolver_audit
 python -m isogrid.audit.h2_scf_single_point_audit
 python -m isogrid.audit.h2_vs_pyscf_audit
 python -m isogrid.audit.h2_grid_convergence_audit
+python -m isogrid.audit.h2_monitor_grid_fair_calibration_audit
 ```
 

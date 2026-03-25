@@ -126,6 +126,7 @@ def build_monitor_grid_spec_for_case(
     *,
     shape: tuple[int, int, int] | None = None,
     box_half_extents: tuple[float, float, float] | None = None,
+    element_parameters: dict[str, NearCoreElementParameters] | None = None,
     harmonic_outer_iterations: int = 6,
     harmonic_inner_iterations: int = 180,
     harmonic_tolerance: float = 5.0e-5,
@@ -135,7 +136,8 @@ def build_monitor_grid_spec_for_case(
 ) -> MonitorGridSpec:
     """Build the first formal 3D monitor-grid spec for one case."""
 
-    element_parameters = build_default_near_core_element_parameters(case)
+    if element_parameters is None:
+        element_parameters = build_default_near_core_element_parameters(case)
     if shape is None:
         shape = (
             _DEFAULT_MONITOR_SHAPE_DIATOMIC
@@ -180,6 +182,7 @@ def build_monitor_grid_for_case(
     *,
     shape: tuple[int, int, int] | None = None,
     box_half_extents: tuple[float, float, float] | None = None,
+    element_parameters: dict[str, NearCoreElementParameters] | None = None,
 ) -> MonitorGridGeometry:
     """Build the full 3D monitor grid geometry for one configured case."""
 
@@ -187,6 +190,7 @@ def build_monitor_grid_for_case(
         case,
         shape=shape,
         box_half_extents=box_half_extents,
+        element_parameters=element_parameters,
     )
     return generate_monitor_grid_geometry(case=case, spec=spec)
 

@@ -32,6 +32,7 @@ class H2GridEnergyGeometrySummary:
     grid_shape: tuple[int, int, int]
     box_half_extents_bohr: tuple[float, float, float]
     min_spacing_estimate_bohr: float
+    near_core_min_spacing_bohr: float
     near_atom_spacing_bohr: float
     far_field_spacing_bohr: float
     min_jacobian: float
@@ -158,6 +159,27 @@ def _near_far_spacing_summary(
     )
 
 
+def _near_core_min_spacing(
+    case: BenchmarkCase,
+    grid_geometry: GridGeometryLike,
+    *,
+    cutoff_radius_bohr: float = 0.9,
+) -> float:
+    near_core_mask = np.zeros(grid_geometry.spec.shape, dtype=bool)
+    for atom in case.geometry.atoms:
+        dx = grid_geometry.x_points - atom.position[0]
+        dy = grid_geometry.y_points - atom.position[1]
+        dz = grid_geometry.z_points - atom.position[2]
+        radius = np.sqrt(dx * dx + dy * dy + dz * dz, dtype=np.float64)
+        near_core_mask |= radius <= cutoff_radius_bohr
+
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        spacing_measure = grid_geometry.spacing_measure
+    else:
+        spacing_measure = _spacing_measure_on_legacy_grid(grid_geometry)
+    return float(np.min(spacing_measure[near_core_mask]))
+
+
 def _jacobian_range(grid_geometry: GridGeometryLike) -> tuple[float, float]:
     if isinstance(grid_geometry, MonitorGridGeometry):
         jacobian = grid_geometry.jacobian
@@ -217,6 +239,7 @@ def _geometry_summary(
         grid_shape=grid_geometry.spec.shape,
         box_half_extents_bohr=_box_half_extents_bohr(grid_geometry),
         min_spacing_estimate_bohr=_min_spacing_estimate(grid_geometry),
+        near_core_min_spacing_bohr=_near_core_min_spacing(case, grid_geometry),
         near_atom_spacing_bohr=near_spacing,
         far_field_spacing_bohr=far_spacing,
         min_jacobian=min_jacobian,
@@ -357,6 +380,7 @@ def _print_grid_result(result: H2TsElocGridResult) -> None:
         f"{summary.box_half_extents_bohr[2]:.3f})"
     )
     print(f"  min spacing estimate [Bohr]: {summary.min_spacing_estimate_bohr:.6f}")
+    print(f"  near-core min spacing [Bohr]: {summary.near_core_min_spacing_bohr:.6f}")
     print(
         "  near/far spacing [Bohr]: "
         f"{summary.near_atom_spacing_bohr:.6f} / {summary.far_field_spacing_bohr:.6f}"
