@@ -37,6 +37,7 @@ def _probe() -> SelfAdjointnessProbe:
 def test_operator_route_result_fields_exist() -> None:
     route = H2StaticLocalOperatorRouteResult(
         path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
         grid_parameter_summary="shape=(67,67,81)",
         patch_parameter_summary=None,
         frozen_density_integral=2.0,
@@ -80,6 +81,7 @@ def test_operator_route_result_fields_exist() -> None:
 def test_operator_audit_result_fields_exist() -> None:
     route = H2StaticLocalOperatorRouteResult(
         path_type="legacy",
+        kinetic_version="production",
         grid_parameter_summary="legacy",
         patch_parameter_summary=None,
         frozen_density_integral=2.0,
@@ -99,11 +101,11 @@ def test_operator_audit_result_fields_exist() -> None:
     )
     result = H2MonitorGridOperatorAuditResult(
         legacy_result=route,
-        monitor_unpatched_result=route,
-        monitor_patch_result=route,
+        monitor_patch_production_result=route,
+        monitor_patch_trial_fix_result=route,
         diagnosis="operator-level diagnosis",
         note="audit note",
     )
 
-    assert result.monitor_patch_result.eigenvalue == -0.2
+    assert result.monitor_patch_trial_fix_result.eigenvalue == -0.2
     assert "operator-level" in result.diagnosis

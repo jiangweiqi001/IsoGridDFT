@@ -153,6 +153,7 @@ class H2FixedPotentialEigensolverRouteBaseline:
     max_residual_norm: float
     max_orthogonality_error: float
     converged: bool
+    kinetic_version: str = "production"
 
 
 @dataclass(frozen=True)
@@ -198,6 +199,48 @@ class H2FixedPotentialOperatorRouteBaseline:
     self_adjoint_local_relative_difference: float
     patch_embedded_correction_mha: float | None
     patch_embedding_energy_mismatch_ha: float | None
+    kinetic_version: str = "production"
+
+
+@dataclass(frozen=True)
+class H2FixedPotentialTrialFixOperatorRegressionBaseline:
+    """Recorded operator-level comparison after wiring in the kinetic trial fix."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_route: H2FixedPotentialOperatorRouteBaseline
+    monitor_patch_production_route: H2FixedPotentialOperatorRouteBaseline
+    monitor_patch_trial_fix_route: H2FixedPotentialOperatorRouteBaseline
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class H2FixedPotentialTrialFixEigensolverRegressionBaseline:
+    """Recorded fixed-potential eigensolver comparison after the kinetic trial fix."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    legacy_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_production_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_trial_fix_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    legacy_k2_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_production_k2_route: H2FixedPotentialEigensolverRouteBaseline
+    monitor_patch_trial_fix_k2_route: H2FixedPotentialEigensolverRouteBaseline
+    diagnosis: str
+    note: str
 
 
 @dataclass(frozen=True)
@@ -740,6 +783,173 @@ H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE = H2FixedPotentialOperatorRegressionB
 )
 
 
+H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE = H2FixedPotentialTrialFixOperatorRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="legacy",
+        eigenvalue_ha=-0.205274654169,
+        weighted_residual_norm=2.892987694458e-04,
+        converged=True,
+        trial_rayleigh_ha=0.003887274419,
+        trial_kinetic_ha=0.997532314836,
+        trial_local_ionic_ha=-2.173678262801,
+        trial_hartree_ha=1.748670071699,
+        trial_xc_ha=-0.568636849315,
+        eigen_rayleigh_ha=-0.205308969426,
+        eigen_kinetic_ha=0.468898008999,
+        eigen_local_ionic_ha=-1.683453804287,
+        eigen_hartree_ha=1.407843104057,
+        eigen_xc_ha=-0.398596278195,
+        self_adjoint_total_relative_difference=7.775e-16,
+        self_adjoint_kinetic_relative_difference=0.0,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=None,
+        patch_embedding_energy_mismatch_ha=None,
+        kinetic_version="production",
+    ),
+    monitor_patch_production_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        eigenvalue_ha=-6.574031909859388,
+        weighted_residual_norm=3.3342921454967853,
+        converged=False,
+        trial_rayleigh_ha=0.020790723371890127,
+        trial_kinetic_ha=0.9671226925733339,
+        trial_local_ionic_ha=-2.143567194749,
+        trial_hartree_ha=1.765755769546,
+        trial_xc_ha=-0.568520543999,
+        eigen_rayleigh_ha=-3.375004168561428,
+        eigen_kinetic_ha=-3.374908449316184,
+        eigen_local_ionic_ha=-0.137471599383,
+        eigen_hartree_ha=0.137437670912,
+        eigen_xc_ha=-0.000061790774,
+        self_adjoint_total_relative_difference=1.448e-15,
+        self_adjoint_kinetic_relative_difference=1.596e-16,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=77.815,
+        patch_embedding_energy_mismatch_ha=0.0,
+        kinetic_version="production",
+    ),
+    monitor_patch_trial_fix_route=H2FixedPotentialOperatorRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        eigenvalue_ha=-0.18662718689698515,
+        weighted_residual_norm=0.0001483108390547803,
+        converged=True,
+        trial_rayleigh_ha=0.020790723371890127,
+        trial_kinetic_ha=0.9671226925733339,
+        trial_local_ionic_ha=-2.143567194749,
+        trial_hartree_ha=1.765755769546,
+        trial_xc_ha=-0.568520543999,
+        eigen_rayleigh_ha=-0.18662718689697988,
+        eigen_kinetic_ha=0.4469647941700376,
+        eigen_local_ionic_ha=-1.6440610304184193,
+        eigen_hartree_ha=1.4006881504210158,
+        eigen_xc_ha=-0.3902191010696139,
+        self_adjoint_total_relative_difference=2.068854834241115e-16,
+        self_adjoint_kinetic_relative_difference=4.78838460645473e-16,
+        self_adjoint_local_relative_difference=0.0,
+        patch_embedded_correction_mha=77.815,
+        patch_embedding_energy_mismatch_ha=0.0,
+        kinetic_version="trial_fix",
+    ),
+    diagnosis=(
+        "The kinetic boundary/ghost trial-fix pulls the A-grid+patch operator-level audit back "
+        "toward the legacy regime: the k=1 eigenvalue rises from -6.57 Ha to -0.19 Ha and the "
+        "weighted residual collapses from O(1) to 1.48e-4. The dominant change is the kinetic "
+        "expectation on the eigensolver-selected orbital, which flips from strongly negative to "
+        "a physically plausible positive value."
+    ),
+    note=(
+        "Operator-level trial-fix regression baseline for the H2 frozen-density static-local "
+        "audit. This baseline is still diagnostic only and does not imply that the full A-grid "
+        "mainline is ready."
+    ),
+)
+
+
+H2_FIXED_POTENTIAL_EIGENSOLVER_TRIAL_FIX_BASELINE = H2FixedPotentialTrialFixEigensolverRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    legacy_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="legacy",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.20527465416922755,),
+        max_residual_norm=2.8929876944581593e-04,
+        max_orthogonality_error=1.1102230246251565e-15,
+        converged=True,
+        kinetic_version="production",
+    ),
+    monitor_patch_production_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-6.574031909859388,),
+        max_residual_norm=3.3342921454967853,
+        max_orthogonality_error=1.1102230246251565e-15,
+        converged=False,
+        kinetic_version="production",
+    ),
+    monitor_patch_trial_fix_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.18662718689698515,),
+        max_residual_norm=0.0001483108390547803,
+        max_orthogonality_error=3.3306690738754696e-16,
+        converged=True,
+        kinetic_version="trial_fix",
+    ),
+    legacy_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="legacy",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.20529016296596161, 0.06286688164303063),
+        max_residual_norm=6.54810468883838e-04,
+        max_orthogonality_error=2.220446049250313e-15,
+        converged=True,
+        kinetic_version="production",
+    ),
+    monitor_patch_production_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-6.634541712761564, -6.219685689382547),
+        max_residual_norm=7.833230053900307,
+        max_orthogonality_error=6.661338147750939e-16,
+        converged=False,
+        kinetic_version="production",
+    ),
+    monitor_patch_trial_fix_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.1866584331584699, -0.1865957329712637),
+        max_residual_norm=0.00017589071376628463,
+        max_orthogonality_error=1.4254871966453894e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+    ),
+    diagnosis=(
+        "The kinetic trial-fix branch is the first A-grid+patch fixed-potential route that "
+        "actually converges in this audit. k=1 rises from -6.57 Ha to -0.1866 Ha and the "
+        "residual collapses by roughly 4.45e-5 relative to the production branch. The "
+        "remaining caution is that the k=2 pair is nearly degenerate and still needs follow-up "
+        "before this route can be promoted beyond fixed-potential auditing."
+    ),
+    note=(
+        "Fixed-potential eigensolver trial-fix regression baseline for the H2 A-grid+patch "
+        "static-local chain after wiring in the kinetic boundary/ghost closure prototype."
+    ),
+)
+
+
 H2_KINETIC_OPERATOR_AUDIT_BASELINE = H2KineticOperatorRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     density_label="h2_singlet_frozen_density",
@@ -1198,7 +1408,9 @@ __all__ = [
     "H2PySCFRegressionBaseline",
     "H2_DEFAULT_PYSCF_REGRESSION_BASELINE",
     "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
+    "H2_FIXED_POTENTIAL_EIGENSOLVER_TRIAL_FIX_BASELINE",
     "H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE",
+    "H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE",
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",

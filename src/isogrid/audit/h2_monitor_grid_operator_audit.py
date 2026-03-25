@@ -34,6 +34,7 @@ from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
 from isogrid.ops import apply_kinetic_operator
 from isogrid.ops import validate_orbital_field
 from isogrid.ops import weighted_l2_norm
+from isogrid.ops.kinetic import apply_monitor_grid_kinetic_operator_trial_boundary_fix
 from isogrid.pseudo import LocalPotentialPatchParameters
 
 from .baselines import H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE
@@ -103,6 +104,7 @@ class H2StaticLocalOperatorRouteResult:
     """Operator-level audit result for one grid/path type."""
 
     path_type: str
+    kinetic_version: str
     grid_parameter_summary: str
     patch_parameter_summary: H2MonitorPatchParameterSummary | None
     frozen_density_integral: float
@@ -126,8 +128,8 @@ class H2MonitorGridOperatorAuditResult:
     """Top-level operator-level audit for legacy, A-grid, and A-grid+patch."""
 
     legacy_result: H2StaticLocalOperatorRouteResult
-    monitor_unpatched_result: H2StaticLocalOperatorRouteResult
-    monitor_patch_result: H2StaticLocalOperatorRouteResult
+    monitor_patch_production_result: H2StaticLocalOperatorRouteResult
+    monitor_patch_trial_fix_result: H2StaticLocalOperatorRouteResult
     diagnosis: str
     note: str
 
@@ -305,7 +307,16 @@ def _component_actions(
     operator_context: FixedPotentialStaticLocalOperatorContext,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     field = validate_orbital_field(psi, grid_geometry=operator_context.grid_geometry, name="psi")
-    kinetic_action = apply_kinetic_operator(field, grid_geometry=operator_context.grid_geometry)
+    if (
+        operator_context.kinetic_version == "trial_fix"
+        and isinstance(operator_context.grid_geometry, MonitorGridGeometry)
+    ):
+        kinetic_action = apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+            field,
+            grid_geometry=operator_context.grid_geometry,
+        )
+    else:
+        kinetic_action = apply_kinetic_operator(field, grid_geometry=operator_context.grid_geometry)
     local_action = operator_context.local_ionic_potential * field
     hartree_action = operator_context.hartree_potential * field
     xc_action = operator_context.xc_potential * field
@@ -386,13 +397,10 @@ def _prepare_operator_context(
     *,
     case: BenchmarkCase,
     path_type: str,
+    kinetic_version: str = "production",
 ) -> tuple[GridGeometryLike, np.ndarray, np.ndarray, np.ndarray, FixedPotentialStaticLocalOperatorContext]:
     if path_type == "legacy":
         grid_geometry = build_default_h2_grid_geometry(case=case)
-        use_monitor_patch = False
-        patch_parameters = None
-    elif path_type == "monitor_a_grid":
-        grid_geometry = build_h2_local_patch_development_monitor_grid()
         use_monitor_patch = False
         patch_parameters = None
     elif path_type == "monitor_a_grid_plus_patch":
@@ -411,6 +419,7 @@ def _prepare_operator_context(
         case=case,
         use_monitor_patch=use_monitor_patch,
         patch_parameters=patch_parameters,
+        kinetic_version=kinetic_version,
     )
     return grid_geometry, trial_orbital, rho_up, rho_down, operator_context
 
@@ -419,10 +428,12 @@ def _evaluate_route(
     *,
     case: BenchmarkCase,
     path_type: str,
+    kinetic_version: str = "production",
 ) -> H2StaticLocalOperatorRouteResult:
     grid_geometry, trial_orbital, rho_up, rho_down, operator_context = _prepare_operator_context(
         case=case,
         path_type=path_type,
+        kinetic_version=kinetic_version,
     )
     eigensolver_result = solve_fixed_potential_static_local_eigenproblem(
         grid_geometry=grid_geometry,
@@ -435,6 +446,7 @@ def _evaluate_route(
         ncv=20,
         use_monitor_patch=(path_type == "monitor_a_grid_plus_patch"),
         patch_parameters=_default_patch_parameters() if path_type == "monitor_a_grid_plus_patch" else None,
+        kinetic_version=kinetic_version,
     )
     eigen_orbital = eigensolver_result.orbitals[0]
     eigenvalue = float(eigensolver_result.eigenvalues[0])
@@ -447,6 +459,11 @@ def _evaluate_route(
         return apply_fixed_potential_static_local_operator(field, operator_context=operator_context)
 
     def _apply_kinetic(field: np.ndarray) -> np.ndarray:
+        if kinetic_version == "trial_fix" and isinstance(grid_geometry, MonitorGridGeometry):
+            return apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+                field,
+                grid_geometry=grid_geometry,
+            )
         return apply_kinetic_operator(field, grid_geometry=grid_geometry)
 
     def _apply_local(field: np.ndarray) -> np.ndarray:
@@ -467,6 +484,7 @@ def _evaluate_route(
 
     return H2StaticLocalOperatorRouteResult(
         path_type=path_type,
+        kinetic_version=kinetic_version,
         grid_parameter_summary=_grid_parameter_summary(path_type),
         patch_parameter_summary=patch_summary,
         frozen_density_integral=float(_weighted_inner_product(rho_up + rho_down, np.ones_like(rho_up), grid_geometry).real),
@@ -500,21 +518,38 @@ def _grid_parameter_summary(path_type: str) -> str:
 
 def _diagnosis(
     legacy_result: H2StaticLocalOperatorRouteResult,
-    monitor_unpatched_result: H2StaticLocalOperatorRouteResult,
-    monitor_patch_result: H2StaticLocalOperatorRouteResult,
+    monitor_patch_production_result: H2StaticLocalOperatorRouteResult,
+    monitor_patch_trial_fix_result: H2StaticLocalOperatorRouteResult,
 ) -> str:
-    patch_delta = monitor_patch_result.eigenvalue - monitor_unpatched_result.eigenvalue
+    residual_drop = (
+        monitor_patch_production_result.weighted_residual_norm
+        - monitor_patch_trial_fix_result.weighted_residual_norm
+    )
+    eigenvalue_lift = (
+        monitor_patch_trial_fix_result.eigenvalue
+        - monitor_patch_production_result.eigenvalue
+    )
     if (
-        abs(monitor_patch_result.self_adjoint_probe_total.relative_difference) < 1.0e-10
-        and abs(monitor_patch_result.self_adjoint_probe_kinetic.relative_difference) < 1.0e-10
+        abs(monitor_patch_trial_fix_result.self_adjoint_probe_total.relative_difference) < 1.0e-10
+        and abs(monitor_patch_trial_fix_result.self_adjoint_probe_kinetic.relative_difference) < 1.0e-10
+        and residual_drop > 0.1
+        and eigenvalue_lift > 0.1
     ):
-        if abs(patch_delta) < 5.0:
-            return (
-                "The failure does not currently look like a weighted self-adjointness bug. "
-                "Patch on/off changes the bad eigenvalue only moderately, so the deeper issue "
-                "looks more like the A-grid static-local operator itself being too attractive, "
-                "with the strongest suspicion on the A-grid kinetic/local balance rather than the patch embedding."
-            )
+        return (
+            "The kinetic trial-fix materially improves the A-grid static-local operator: "
+            "the bad k=1 eigenvalue moves upward and the weighted residual drops. The strongest "
+            "change remains in the kinetic expectation on the eigensolver-selected orbital, "
+            "which supports the earlier boundary/ghost-closure diagnosis."
+        )
+    if (
+        abs(monitor_patch_trial_fix_result.self_adjoint_probe_total.relative_difference) < 1.0e-10
+        and abs(monitor_patch_trial_fix_result.self_adjoint_probe_kinetic.relative_difference) < 1.0e-10
+    ):
+        return (
+            "The trial-fix branch preserves weighted self-adjointness but has not yet delivered "
+            "a decisive operator-level recovery. The A-grid static-local failure still appears "
+            "upstream of SCF and centered on the kinetic path."
+        )
     return (
         "The operator-level audit remains inconclusive at the diagnosis level, but the current "
         "A-grid failure is clearly upstream of SCF and persists even before nonlocal terms enter."
@@ -527,17 +562,30 @@ def run_h2_monitor_grid_operator_audit(
     """Run the H2 static-local operator-level audit on legacy and A-grid routes."""
 
     legacy_result = _evaluate_route(case=case, path_type="legacy")
-    monitor_unpatched_result = _evaluate_route(case=case, path_type="monitor_a_grid")
-    monitor_patch_result = _evaluate_route(case=case, path_type="monitor_a_grid_plus_patch")
+    monitor_patch_production_result = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="production",
+    )
+    monitor_patch_trial_fix_result = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+    )
     return H2MonitorGridOperatorAuditResult(
         legacy_result=legacy_result,
-        monitor_unpatched_result=monitor_unpatched_result,
-        monitor_patch_result=monitor_patch_result,
-        diagnosis=_diagnosis(legacy_result, monitor_unpatched_result, monitor_patch_result),
+        monitor_patch_production_result=monitor_patch_production_result,
+        monitor_patch_trial_fix_result=monitor_patch_trial_fix_result,
+        diagnosis=_diagnosis(
+            legacy_result,
+            monitor_patch_production_result,
+            monitor_patch_trial_fix_result,
+        ),
         note=(
             "This is an operator-level audit only. It keeps the H2 singlet frozen density fixed "
-            "and inspects the static-local operator T + V_loc,ion + V_H + V_xc on legacy, "
-            "A-grid, and A-grid+patch routes. Nonlocal and SCF are still absent."
+            "and inspects the static-local operator T + V_loc,ion + V_H + V_xc on legacy and "
+            "A-grid+patch routes with production versus kinetic-trial-fix branches. Nonlocal "
+            "and SCF are still absent."
         ),
     )
 
@@ -554,6 +602,7 @@ def _print_expectation(label: str, summary: WeightedExpectationSummary) -> None:
 
 def _print_route(result: H2StaticLocalOperatorRouteResult) -> None:
     print(f"path: {result.path_type}")
+    print(f"  kinetic version: {result.kinetic_version}")
     print(f"  grid summary: {result.grid_parameter_summary}")
     print(f"  frozen density integral: {result.frozen_density_integral:.12f}")
     print(f"  converged: {result.converged}")
@@ -619,27 +668,27 @@ def print_h2_monitor_grid_operator_audit_summary(
     print(
         "reference failure baseline: "
         f"legacy k=1={H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.legacy_route.eigenvalue_ha:+.12f} Ha, "
-        f"A-grid+patch k=1={H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.monitor_patch_route.eigenvalue_ha:+.12f} Ha"
+        f"A-grid+patch production k=1={H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.monitor_patch_route.eigenvalue_ha:+.12f} Ha"
     )
     print()
     _print_route(result.legacy_result)
     print()
-    _print_route(result.monitor_unpatched_result)
+    _print_route(result.monitor_patch_production_result)
     print()
-    _print_route(result.monitor_patch_result)
+    _print_route(result.monitor_patch_trial_fix_result)
     print()
-    print("patch on/off delta:")
+    print("trial-fix delta vs production:")
     print(
         "  eigenvalue [Ha]: "
-        f"{result.monitor_patch_result.eigenvalue - result.monitor_unpatched_result.eigenvalue:+.12f}"
+        f"{result.monitor_patch_trial_fix_result.eigenvalue - result.monitor_patch_production_result.eigenvalue:+.12f}"
     )
     print(
         "  weighted residual norm: "
-        f"{result.monitor_patch_result.weighted_residual_norm - result.monitor_unpatched_result.weighted_residual_norm:+.12e}"
+        f"{result.monitor_patch_trial_fix_result.weighted_residual_norm - result.monitor_patch_production_result.weighted_residual_norm:+.12e}"
     )
     print(
-        "  trial <V_loc> delta [Ha]: "
-        f"{result.monitor_patch_result.trial_expectation.local_ionic_expectation - result.monitor_unpatched_result.trial_expectation.local_ionic_expectation:+.12f}"
+        "  eigen <T> delta [Ha]: "
+        f"{result.monitor_patch_trial_fix_result.eigen_expectation.kinetic_expectation - result.monitor_patch_production_result.eigen_expectation.kinetic_expectation:+.12f}"
     )
     print(f"diagnosis: {result.diagnosis}")
 

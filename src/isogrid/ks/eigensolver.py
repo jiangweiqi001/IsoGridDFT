@@ -31,6 +31,7 @@ from isogrid.ks.static_hamiltonian import apply_static_ks_hamiltonian
 from isogrid.ops import apply_kinetic_operator
 from isogrid.ops import validate_orbital_field
 from isogrid.ops import weighted_l2_norm
+from isogrid.ops.kinetic import apply_monitor_grid_kinetic_operator_trial_boundary_fix
 from isogrid.poisson import OpenBoundaryPoissonResult
 from isogrid.poisson import solve_hartree_potential
 from isogrid.pseudo import FrozenPatchLocalPotentialEmbedding
@@ -42,6 +43,7 @@ from isogrid.xc import LSDAEvaluation
 from isogrid.xc import evaluate_lsda_terms
 
 _VALID_SPIN_CHANNELS = {"up", "down"}
+_VALID_STATIC_LOCAL_KINETIC_VERSIONS = {"production", "trial_fix"}
 GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
@@ -91,6 +93,7 @@ class FixedPotentialStaticLocalOperatorContext:
     frozen_patch_local_embedding: FrozenPatchLocalPotentialEmbedding | None
     hartree_poisson_result: OpenBoundaryPoissonResult | None
     lsda_evaluation: LSDAEvaluation | None
+    kinetic_version: str = "production"
 
 
 @dataclass(frozen=True)
@@ -135,6 +138,16 @@ def _build_total_density_on_grid(
     rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
     rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
     return np.asarray(rho_up_field + rho_down_field, dtype=np.float64)
+
+
+def _normalize_static_local_kinetic_version(kinetic_version: str) -> str:
+    normalized = kinetic_version.strip().lower()
+    if normalized not in _VALID_STATIC_LOCAL_KINETIC_VERSIONS:
+        raise ValueError(
+            "kinetic_version must be `production` or `trial_fix`; "
+            f"received `{kinetic_version}`."
+        )
+    return normalized
 
 
 def validate_orbital_block(
@@ -479,6 +492,7 @@ def prepare_fixed_potential_static_local_operator(
     *,
     use_monitor_patch: bool = False,
     patch_parameters: LocalPotentialPatchParameters | None = None,
+    kinetic_version: str = "production",
 ) -> FixedPotentialStaticLocalOperatorContext:
     """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid.
 
@@ -491,6 +505,7 @@ def prepare_fixed_potential_static_local_operator(
     rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
     rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
     normalized_spin = _normalize_spin_channel(spin_channel)
+    normalized_kinetic_version = _normalize_static_local_kinetic_version(kinetic_version)
     rho_total = _build_total_density_on_grid(
         rho_up=rho_up_field,
         rho_down=rho_down_field,
@@ -536,6 +551,7 @@ def prepare_fixed_potential_static_local_operator(
         frozen_patch_local_embedding=patch_embedding,
         hartree_poisson_result=hartree_result,
         lsda_evaluation=lsda_evaluation,
+        kinetic_version=normalized_kinetic_version,
     )
 
 
@@ -550,10 +566,19 @@ def apply_fixed_potential_static_local_operator(
         grid_geometry=operator_context.grid_geometry,
         name="psi",
     )
-    kinetic_action = apply_kinetic_operator(
-        psi=field,
-        grid_geometry=operator_context.grid_geometry,
-    )
+    if (
+        operator_context.kinetic_version == "trial_fix"
+        and isinstance(operator_context.grid_geometry, MonitorGridGeometry)
+    ):
+        kinetic_action = apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+            psi=field,
+            grid_geometry=operator_context.grid_geometry,
+        )
+    else:
+        kinetic_action = apply_kinetic_operator(
+            psi=field,
+            grid_geometry=operator_context.grid_geometry,
+        )
     return np.asarray(
         kinetic_action + operator_context.effective_local_potential * field,
         dtype=np.float64,
@@ -952,6 +977,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     *,
     use_monitor_patch: bool = False,
     patch_parameters: LocalPotentialPatchParameters | None = None,
+    kinetic_version: str = "production",
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -974,6 +1000,7 @@ def solve_fixed_potential_static_local_eigenproblem(
         xc_functional=xc_functional,
         use_monitor_patch=use_monitor_patch,
         patch_parameters=patch_parameters,
+        kinetic_version=kinetic_version,
     )
     return _solve_weighted_fixed_potential_problem(
         operator_context=operator_context,

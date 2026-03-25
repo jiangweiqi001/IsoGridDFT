@@ -51,6 +51,7 @@ class H2FixedPotentialRouteResult:
     """Resolved fixed-potential eigensolver audit result for one route."""
 
     path_type: str
+    kinetic_version: str
     grid_parameter_summary: str
     patch_parameter_summary: H2MonitorPatchParameterSummary | None
     target_orbitals: int
@@ -74,9 +75,11 @@ class H2MonitorGridFixedPotentialEigensolverAuditResult:
     """Top-level H2 fixed-potential audit on legacy and A-grid+patch routes."""
 
     legacy_k1_result: H2FixedPotentialRouteResult
-    monitor_patch_k1_result: H2FixedPotentialRouteResult
+    monitor_patch_production_k1_result: H2FixedPotentialRouteResult
+    monitor_patch_trial_fix_k1_result: H2FixedPotentialRouteResult
     legacy_k2_result: H2FixedPotentialRouteResult | None
-    monitor_patch_k2_result: H2FixedPotentialRouteResult | None
+    monitor_patch_production_k2_result: H2FixedPotentialRouteResult | None
+    monitor_patch_trial_fix_k2_result: H2FixedPotentialRouteResult | None
     note: str
 
 
@@ -142,6 +145,7 @@ def _evaluate_route(
     case: BenchmarkCase,
     path_type: str,
     k: int,
+    kinetic_version: str = "production",
 ) -> H2FixedPotentialRouteResult:
     if path_type == "legacy":
         grid_geometry = build_default_h2_grid_geometry(case=case)
@@ -169,6 +173,7 @@ def _evaluate_route(
         ncv=20,
         use_monitor_patch=use_monitor_patch,
         patch_parameters=patch_parameters,
+        kinetic_version=kinetic_version,
     )
     operator_context = result.operator_context
     if not isinstance(operator_context, FixedPotentialStaticLocalOperatorContext):
@@ -183,6 +188,7 @@ def _evaluate_route(
 
     return H2FixedPotentialRouteResult(
         path_type=path_type,
+        kinetic_version=kinetic_version,
         grid_parameter_summary=_grid_parameter_summary(path_type),
         patch_parameter_summary=patch_summary,
         target_orbitals=k,
@@ -211,17 +217,42 @@ def run_h2_monitor_grid_fixed_potential_eigensolver_audit(
     """Run the H2 fixed-potential eigensolver audit on legacy and A-grid+patch."""
 
     legacy_k1 = _evaluate_route(case=case, path_type="legacy", k=1)
-    monitor_patch_k1 = _evaluate_route(case=case, path_type="monitor_a_grid_plus_patch", k=1)
+    monitor_patch_k1 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=1,
+        kinetic_version="production",
+    )
+    monitor_patch_trial_fix_k1 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=1,
+        kinetic_version="trial_fix",
+    )
     legacy_k2 = _evaluate_route(case=case, path_type="legacy", k=2)
-    monitor_patch_k2 = _evaluate_route(case=case, path_type="monitor_a_grid_plus_patch", k=2)
+    monitor_patch_k2 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=2,
+        kinetic_version="production",
+    )
+    monitor_patch_trial_fix_k2 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=2,
+        kinetic_version="trial_fix",
+    )
     return H2MonitorGridFixedPotentialEigensolverAuditResult(
         legacy_k1_result=legacy_k1,
-        monitor_patch_k1_result=monitor_patch_k1,
+        monitor_patch_production_k1_result=monitor_patch_k1,
+        monitor_patch_trial_fix_k1_result=monitor_patch_trial_fix_k1,
         legacy_k2_result=legacy_k2,
-        monitor_patch_k2_result=monitor_patch_k2,
+        monitor_patch_production_k2_result=monitor_patch_k2,
+        monitor_patch_trial_fix_k2_result=monitor_patch_trial_fix_k2,
         note=(
             "This audit migrates only the static local chain "
-            "T + V_loc,ion + V_H + V_xc to the A-grid+patch fixed-potential eigensolver. "
+            "T + V_loc,ion + V_H + V_xc to the A-grid+patch fixed-potential eigensolver, "
+            "and now compares production versus kinetic-trial-fix branches. "
             "Nonlocal ionic action and SCF are still not on the A-grid path. "
             "The current static-local regression baseline and Hartree tail baseline remain "
             f"{H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE.monitor_patch_vs_legacy_delta_mha:+.3f} mHa "
@@ -235,6 +266,7 @@ def run_h2_monitor_grid_fixed_potential_eigensolver_audit(
 
 def _print_route_result(result: H2FixedPotentialRouteResult) -> None:
     print(f"path: {result.path_type}")
+    print(f"  kinetic version: {result.kinetic_version}")
     print(f"  grid summary: {result.grid_parameter_summary}")
     print(f"  target orbitals: {result.target_orbitals}")
     print(f"  solver: {result.solver_method}")
@@ -288,25 +320,33 @@ def print_h2_monitor_grid_fixed_potential_eigensolver_summary(
     print()
     _print_route_result(result.legacy_k1_result)
     print()
-    _print_route_result(result.monitor_patch_k1_result)
+    _print_route_result(result.monitor_patch_production_k1_result)
+    print()
+    _print_route_result(result.monitor_patch_trial_fix_k1_result)
     print()
     print("very small recheck (k=2):")
     _print_route_result(result.legacy_k2_result)
     print()
-    _print_route_result(result.monitor_patch_k2_result)
+    _print_route_result(result.monitor_patch_production_k2_result)
+    print()
+    _print_route_result(result.monitor_patch_trial_fix_k2_result)
     print()
     print("verdict:")
     print(
-        "  k=1 eigenvalue delta vs legacy [Ha]: "
-        f"{result.monitor_patch_k1_result.eigenvalues[0] - result.legacy_k1_result.eigenvalues[0]:+.12f}"
+        "  production k=1 eigenvalue delta vs legacy [Ha]: "
+        f"{result.monitor_patch_production_k1_result.eigenvalues[0] - result.legacy_k1_result.eigenvalues[0]:+.12f}"
     )
     print(
-        "  k=1 residual ratio vs legacy: "
-        f"{result.monitor_patch_k1_result.residual_norms[0] / result.legacy_k1_result.residual_norms[0]:.3e}"
+        "  trial-fix k=1 eigenvalue delta vs production [Ha]: "
+        f"{result.monitor_patch_trial_fix_k1_result.eigenvalues[0] - result.monitor_patch_production_k1_result.eigenvalues[0]:+.12f}"
+    )
+    print(
+        "  trial-fix k=1 residual ratio vs production: "
+        f"{result.monitor_patch_trial_fix_k1_result.residual_norms[0] / result.monitor_patch_production_k1_result.residual_norms[0]:.3e}"
     )
     print(
         "  current A-grid+patch fixed-potential path ready for A-grid SCF: "
-        f"{result.monitor_patch_k1_result.converged and result.monitor_patch_k2_result.converged}"
+        f"{result.monitor_patch_trial_fix_k1_result.converged and result.monitor_patch_trial_fix_k2_result.converged}"
     )
 
 

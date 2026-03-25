@@ -23,6 +23,7 @@ def test_h2_monitor_grid_fixed_potential_module_imports() -> None:
 def test_construct_h2_fixed_potential_route_result() -> None:
     route = H2FixedPotentialRouteResult(
         path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
         grid_parameter_summary="shape=(67,67,81), box=(8,8,10)",
         patch_parameter_summary=H2MonitorPatchParameterSummary(
             patch_radius_scale=0.75,

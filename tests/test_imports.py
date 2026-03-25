@@ -185,9 +185,14 @@ def test_import_h2_monitor_grid_fixed_potential_eigensolver_audit_entrypoint() -
 
 def test_import_h2_fixed_potential_eigensolver_baseline() -> None:
     from isogrid.audit.baselines import H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE
+    from isogrid.audit.baselines import H2_FIXED_POTENTIAL_EIGENSOLVER_TRIAL_FIX_BASELINE
 
     assert H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE.monitor_patch_k1_route.target_orbitals == 1
+    assert (
+        H2_FIXED_POTENTIAL_EIGENSOLVER_TRIAL_FIX_BASELINE.monitor_patch_trial_fix_k1_route.kinetic_version
+        == "trial_fix"
+    )
 
 
 def test_import_h2_monitor_grid_operator_audit_entrypoint() -> None:
@@ -200,11 +205,16 @@ def test_import_h2_monitor_grid_operator_audit_entrypoint() -> None:
 
 def test_import_h2_fixed_potential_operator_baseline() -> None:
     from isogrid.audit.baselines import H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE
+    from isogrid.audit.baselines import H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE
 
     assert H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
     assert (
         H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE.monitor_patch_route.patch_embedded_correction_mha
         == 77.815
+    )
+    assert (
+        H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE.monitor_patch_trial_fix_route.kinetic_version
+        == "trial_fix"
     )
 
 

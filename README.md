@@ -45,6 +45,8 @@ The current follow-up is now focused on the discrete Green identity behind that 
 
 That kinetic audit has now advanced to a first trial-fix branch for A-grid boundary/ghost closure. The production path is still preserved, and current conclusions should be read from the dedicated Green-identity audit before any broader A-grid eigensolver migration is trusted.
 
+That same kinetic trial-fix branch is now being validated one step downstream on the H2 fixed-potential operator and eigensolver audits. This is still an audit-only handoff: nonlocal and SCF remain off the A-grid path until the repaired fixed-potential route is numerically trustworthy.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -86,6 +88,7 @@ They currently cover:
 - a dedicated H2 A-grid geometry-consistency audit for checking whether kinetic energy identity closes against `jacobian / inverse metric / cell volumes` on the same monitor geometry
 - a dedicated H2 A-grid discrete Green-identity audit for checking whether the bad kinetic mode is dominated by a boundary-term / closure mismatch
 - a first A-grid kinetic boundary/ghost trial-fix audit for checking whether the Green-identity gap collapses on the bad fixed-potential orbital
+- a follow-up H2 A-grid operator/eigensolver trial-fix comparison for checking whether the repaired kinetic closure also lifts the fixed-potential eigenvalues and residuals
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
