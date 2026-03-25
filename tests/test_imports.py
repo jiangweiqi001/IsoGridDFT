@@ -224,3 +224,21 @@ def test_import_h2_kinetic_operator_baseline() -> None:
         H2_KINETIC_OPERATOR_AUDIT_BASELINE.monitor_patch_baseline_route.eigen_kinetic_ha
         == -3.374908449316
     )
+
+
+def test_import_h2_monitor_grid_kinetic_form_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_kinetic_form_audit import (
+        run_h2_monitor_grid_kinetic_form_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_kinetic_form_audit)
+
+
+def test_import_h2_kinetic_form_baseline() -> None:
+    from isogrid.audit.baselines import H2_KINETIC_FORM_AUDIT_BASELINE
+
+    assert H2_KINETIC_FORM_AUDIT_BASELINE.monitor_shape == (67, 67, 81)
+    assert (
+        H2_KINETIC_FORM_AUDIT_BASELINE.bad_eigen_baseline.production_kinetic_ha
+        == -3.374908449316184
+    )

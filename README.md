@@ -78,6 +78,7 @@ They currently cover:
 - a first H2 A-grid+patch fixed-potential eigensolver audit on the repaired static local chain
 - a dedicated H2 A-grid static-local operator audit for diagnosing the current fixed-potential eigensolver failure
 - a dedicated H2 A-grid kinetic-operator audit for diagnosing the current fixed-potential negative-kinetic failure mode
+- a production-vs-reference H2 A-grid kinetic-form audit for checking whether the current monitor-grid kinetic failure comes from the production flux form itself or from geometry/metric consistency shared by both discretizations
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -156,5 +157,6 @@ python -m isogrid.audit.h2_hartree_poisson_comparison_audit
 python -m isogrid.audit.h2_monitor_grid_poisson_operator_audit
 python -m isogrid.audit.h2_monitor_grid_operator_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_operator_audit
+python -m isogrid.audit.h2_monitor_grid_kinetic_form_audit
 ```
 

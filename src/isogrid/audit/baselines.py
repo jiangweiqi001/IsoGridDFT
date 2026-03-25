@@ -267,6 +267,60 @@ class H2KineticOperatorRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2KineticFormRouteBaseline:
+    """Recorded production-vs-reference kinetic-form result for one field."""
+
+    shape_label: str
+    orbital_label: str
+    production_kinetic_ha: float
+    reference_kinetic_ha: float
+    delta_kinetic_mha: float
+    production_tpsi_rms: float
+    reference_tpsi_rms: float
+    delta_tpsi_rms: float
+    centerline_midpoint_delta: float
+    far_field_delta_weighted_rms: float
+    eigensolver_eigenvalue_ha: float | None
+    eigensolver_residual_norm: float | None
+    eigensolver_converged: bool | None
+
+
+@dataclass(frozen=True)
+class H2KineticFormSmoothFieldBaseline:
+    """Recorded kinetic-form comparison for one smooth probe field."""
+
+    field_label: str
+    production_kinetic_ha: float
+    reference_kinetic_ha: float
+    delta_kinetic_mha: float
+
+
+@dataclass(frozen=True)
+class H2KineticFormRegressionBaseline:
+    """Recorded production-vs-reference kinetic-form failure baseline."""
+
+    benchmark_name: str
+    density_label: str
+    monitor_shape: tuple[int, int, int]
+    finer_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    frozen_trial_baseline: H2KineticFormRouteBaseline
+    bad_eigen_baseline: H2KineticFormRouteBaseline
+    bad_eigen_finer_shape: H2KineticFormRouteBaseline
+    smooth_fields: tuple[H2KineticFormSmoothFieldBaseline, ...]
+    production_self_adjoint_baseline_rel: float
+    reference_self_adjoint_baseline_rel: float
+    production_self_adjoint_finer_rel: float
+    reference_self_adjoint_finer_rel: float
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -667,7 +721,99 @@ H2_KINETIC_OPERATOR_AUDIT_BASELINE = H2KineticOperatorRegressionBaseline(
 )
 
 
+H2_KINETIC_FORM_AUDIT_BASELINE = H2KineticFormRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    density_label="h2_singlet_frozen_density",
+    monitor_shape=(67, 67, 81),
+    finer_shape=(75, 75, 91),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    frozen_trial_baseline=H2KineticFormRouteBaseline(
+        shape_label="baseline",
+        orbital_label="frozen_trial_orbital",
+        production_kinetic_ha=0.9671226925733339,
+        reference_kinetic_ha=0.972715190398377,
+        delta_kinetic_mha=-5.592497825043008,
+        production_tpsi_rms=0.037373265866581344,
+        reference_tpsi_rms=0.03784024467923909,
+        delta_tpsi_rms=0.0010572327875104722,
+        centerline_midpoint_delta=0.00615301727798101,
+        far_field_delta_weighted_rms=1.2632054416391796e-17,
+        eigensolver_eigenvalue_ha=None,
+        eigensolver_residual_norm=None,
+        eigensolver_converged=None,
+    ),
+    bad_eigen_baseline=H2KineticFormRouteBaseline(
+        shape_label="baseline",
+        orbital_label="bad_eigensolver_orbital_k1",
+        production_kinetic_ha=-3.374908449316184,
+        reference_kinetic_ha=-3.3748778659558227,
+        delta_kinetic_mha=-0.030583360361102763,
+        production_tpsi_rms=0.0480384363184959,
+        reference_tpsi_rms=0.048063093485328424,
+        delta_tpsi_rms=0.0012378229975185762,
+        centerline_midpoint_delta=0.004732665534982555,
+        far_field_delta_weighted_rms=2.8891658859320897e-07,
+        eigensolver_eigenvalue_ha=-6.574031909859388,
+        eigensolver_residual_norm=3.3342921454967853,
+        eigensolver_converged=False,
+    ),
+    bad_eigen_finer_shape=H2KineticFormRouteBaseline(
+        shape_label="finer-shape",
+        orbital_label="bad_eigensolver_orbital_k1",
+        production_kinetic_ha=-3.8936559563292596,
+        reference_kinetic_ha=-3.893653222200653,
+        delta_kinetic_mha=-0.0027341286066295822,
+        production_tpsi_rms=0.054723869131267505,
+        reference_tpsi_rms=0.054725680216826465,
+        delta_tpsi_rms=0.000394249654047961,
+        centerline_midpoint_delta=-0.0028285644728183595,
+        far_field_delta_weighted_rms=1.4755344898350383e-07,
+        eigensolver_eigenvalue_ha=-7.556869846559655,
+        eigensolver_residual_norm=3.762909029925938,
+        eigensolver_converged=False,
+    ),
+    smooth_fields=(
+        H2KineticFormSmoothFieldBaseline(
+            field_label="smooth_gaussian",
+            production_kinetic_ha=0.659748142599247,
+            reference_kinetic_ha=0.6638084614995698,
+            delta_kinetic_mha=-4.060318900322879,
+        ),
+        H2KineticFormSmoothFieldBaseline(
+            field_label="smooth_cosine",
+            production_kinetic_ha=0.05085604616554839,
+            reference_kinetic_ha=0.05085911164759871,
+            delta_kinetic_mha=-0.003065482050319812,
+        ),
+    ),
+    production_self_adjoint_baseline_rel=1.596128202151577e-16,
+    reference_self_adjoint_baseline_rel=9.576290326531951e-04,
+    production_self_adjoint_finer_rel=3.176772806680616e-16,
+    reference_self_adjoint_finer_rel=7.255873359351101e-04,
+    diagnosis=(
+        "Production and reference kinetic forms stay close on the same A-grid geometry: the "
+        "frozen trial orbital and smooth fields remain positive, while the bad eigensolver "
+        "orbital is strongly negative in both discretizations with only sub-mHa production/"
+        "reference differences. The finer-shape recheck makes that shared negative kinetic "
+        "mode deeper. This points away from a production-only flux/divergence bug and more "
+        "toward a geometry/metric consistency defect that both discretizations inherit on the "
+        "same monitor-grid geometry."
+    ),
+    note=(
+        "Kinetic-form failure baseline for production-vs-reference monitor-grid kinetic audits "
+        "on the fixed H2 singlet frozen density. This baseline is diagnostic only."
+    ),
+)
+
+
 __all__ = [
+    "H2KineticFormRegressionBaseline",
+    "H2KineticFormRouteBaseline",
+    "H2KineticFormSmoothFieldBaseline",
     "H2KineticOperatorRegressionBaseline",
     "H2KineticOperatorRouteBaseline",
     "H2KineticOperatorSmoothFieldBaseline",
@@ -686,6 +832,7 @@ __all__ = [
     "H2_FIXED_POTENTIAL_EIGENSOLVER_BASELINE",
     "H2_FIXED_POTENTIAL_OPERATOR_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
+    "H2_KINETIC_FORM_AUDIT_BASELINE",
     "H2_KINETIC_OPERATOR_AUDIT_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
