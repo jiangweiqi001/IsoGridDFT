@@ -95,3 +95,15 @@ def test_import_h2_regression_baseline() -> None:
     from isogrid.audit.baselines import H2_DEFAULT_PYSCF_REGRESSION_BASELINE
 
     assert H2_DEFAULT_PYSCF_REGRESSION_BASELINE.benchmark_name == "h2_r1p4_bohr"
+
+
+def test_import_monitor_grid_entrypoint() -> None:
+    from isogrid.grid import build_default_h2_monitor_grid
+
+    assert callable(build_default_h2_monitor_grid)
+
+
+def test_import_monitor_grid_audit_entrypoint() -> None:
+    from isogrid.audit.monitor_grid_audit import run_monitor_grid_audit
+
+    assert callable(run_monitor_grid_audit)

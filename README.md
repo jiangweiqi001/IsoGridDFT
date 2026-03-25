@@ -15,6 +15,8 @@ The repository is still in the groundwork stage. A first minimal H2 single-point
 
 The current single-center `sinh` grid should now be treated as a transitional baseline. The next planned phase is a redesign of the main grid representation toward an atom-centered monitor-driven structured grid, guided by the H2 error-localization audits.
 
+The first monitor-driven main-grid core is now being implemented. The legacy single-center `sinh` grid remains available only as a baseline, while the new 3D monitor grid is not yet connected to the downstream physical operators.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
