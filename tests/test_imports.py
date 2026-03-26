@@ -81,8 +81,10 @@ def test_import_fixed_potential_static_local_eigensolver_entrypoint() -> None:
 
 def test_import_scf_driver_entrypoint() -> None:
     from isogrid.scf import run_h2_minimal_scf
+    from isogrid.scf import run_h2_monitor_grid_scf_dry_run
 
     assert callable(run_h2_minimal_scf)
+    assert callable(run_h2_monitor_grid_scf_dry_run)
 
 
 def test_import_h2_vs_pyscf_audit_entrypoint() -> None:
@@ -328,3 +330,19 @@ def test_import_h2_k2_subspace_baseline() -> None:
         H2_K2_SUBSPACE_AUDIT_BASELINE.monitor_bonding_rotation.rotated_second_orbital.centerline_sign_changes
         == 68
     )
+
+
+def test_import_h2_monitor_grid_scf_dry_run_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_scf_dry_run_audit import (
+        run_h2_monitor_grid_scf_dry_run_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_scf_dry_run_audit)
+
+
+def test_import_h2_scf_dry_run_baseline() -> None:
+    from isogrid.audit.baselines import H2_SCF_DRY_RUN_BASELINE
+
+    assert H2_SCF_DRY_RUN_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.converged is False
+    assert H2_SCF_DRY_RUN_BASELINE.monitor_triplet_route.converged is True

@@ -34,11 +34,18 @@ import numpy as np
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+from isogrid.grid import H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE
+from isogrid.grid import H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE
+from isogrid.grid import H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE
+from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.grid import build_default_h2_grid_geometry
+from isogrid.grid import build_h2_local_patch_development_monitor_grid
 from isogrid.ks import FixedPotentialEigensolverResult
 from isogrid.ks import build_total_density
 from isogrid.ks import solve_fixed_potential_eigenproblem
+from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
 from isogrid.ks import validate_orbital_block
 from isogrid.ks import weighted_overlap_matrix
 from isogrid.ks import weighted_orthonormalize_orbitals
@@ -46,15 +53,19 @@ from isogrid.ops import apply_kinetic_operator
 from isogrid.ops import integrate_field
 from isogrid.ops import validate_orbital_field
 from isogrid.ops import weighted_l2_norm
+from isogrid.ops.kinetic import apply_monitor_grid_kinetic_operator_trial_boundary_fix
 from isogrid.poisson import evaluate_hartree_energy
 from isogrid.poisson import solve_hartree_potential
 from isogrid.pseudo import evaluate_local_ionic_potential
+from isogrid.pseudo import evaluate_monitor_grid_local_ionic_potential_with_patch
 from isogrid.pseudo import evaluate_nonlocal_ionic_action
+from isogrid.pseudo import LocalPotentialPatchParameters
 from isogrid.pseudo import load_case_gth_pseudo_data
 from isogrid.xc import evaluate_lsda_terms
 
 _SUPPORTED_CASE_NAME = H2_BENCHMARK_CASE.name
 _ZERO_BLOCK_DTYPE = np.float64
+GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
@@ -135,7 +146,51 @@ class H2ScfResult:
     solve_down: FixedPotentialEigensolverResult | None
 
 
-def _empty_orbital_block(grid_geometry: StructuredGridGeometry) -> np.ndarray:
+@dataclass(frozen=True)
+class H2ScfDryRunParameterSummary:
+    """Fixed parameter summary for the monitor-grid SCF dry-run."""
+
+    grid_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    weight_scale: float
+    radius_scale: float
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    includes_nonlocal: bool
+
+
+@dataclass(frozen=True)
+class H2StaticLocalScfDryRunResult:
+    """Result of the first H2 A-grid static-local SCF dry-run."""
+
+    path_type: str
+    kinetic_version: str
+    includes_nonlocal: bool
+    spin_state_label: str
+    spin: int
+    occupations: SpinOccupations
+    parameter_summary: H2ScfDryRunParameterSummary
+    converged: bool
+    iteration_count: int
+    history: tuple[ScfIterationRecord, ...]
+    energy_history: tuple[float, ...]
+    density_residual_history: tuple[float, ...]
+    eigenvalues_up: np.ndarray
+    eigenvalues_down: np.ndarray
+    orbitals_up: np.ndarray
+    orbitals_down: np.ndarray
+    rho_up: np.ndarray
+    rho_down: np.ndarray
+    energy: SinglePointEnergyComponents
+    lowest_eigenvalue: float | None
+    solve_up: FixedPotentialEigensolverResult | None
+    solve_down: FixedPotentialEigensolverResult | None
+
+
+def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
     return np.zeros((0,) + grid_geometry.spec.shape, dtype=_ZERO_BLOCK_DTYPE)
 
 
@@ -214,7 +269,7 @@ def resolve_h2_spin_occupations(
 def _expectation_value(
     orbital: np.ndarray,
     action: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> float:
     overlap = weighted_overlap_matrix(
         orbital,
@@ -228,7 +283,7 @@ def _sum_weighted_expectations(
     orbitals: np.ndarray,
     actions: np.ndarray,
     occupations: tuple[float, ...],
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> float:
     orbital_block = validate_orbital_block(orbitals, grid_geometry=grid_geometry, name="orbitals")
     action_block = validate_orbital_block(actions, grid_geometry=grid_geometry, name="actions")
@@ -247,7 +302,7 @@ def _sum_weighted_expectations(
 def _build_density_from_occupied_orbitals(
     orbitals: np.ndarray,
     occupations: tuple[float, ...],
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     if len(occupations) == 0:
         return np.zeros(grid_geometry.spec.shape, dtype=np.float64)
@@ -263,7 +318,7 @@ def _build_density_from_occupied_orbitals(
 def _renormalize_density(
     rho: np.ndarray,
     target_electrons: float,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     if target_electrons == 0.0:
         return np.zeros(grid_geometry.spec.shape, dtype=np.float64)
@@ -279,7 +334,7 @@ def _density_residual(
     rho_down_in: np.ndarray,
     rho_up_out: np.ndarray,
     rho_down_out: np.ndarray,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> float:
     up_norm = weighted_l2_norm(rho_up_out - rho_up_in, grid_geometry=grid_geometry)
     down_norm = weighted_l2_norm(rho_down_out - rho_down_in, grid_geometry=grid_geometry)
@@ -288,7 +343,7 @@ def _density_residual(
 
 def _build_h2_trial_orbitals(
     case: BenchmarkCase,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
 ) -> np.ndarray:
     atom_fields = []
     for atom in case.geometry.atoms:
@@ -321,7 +376,7 @@ def _build_h2_trial_orbitals(
 def build_h2_initial_density_guess(
     occupations: SpinOccupations,
     case: BenchmarkCase = H2_BENCHMARK_CASE,
-    grid_geometry: StructuredGridGeometry | None = None,
+    grid_geometry: GridGeometryLike | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Build the current minimal H2 initial density and orbital guesses."""
 
@@ -513,10 +568,187 @@ def evaluate_single_point_energy(
     )
 
 
+def _default_monitor_patch_parameters() -> LocalPotentialPatchParameters:
+    return LocalPotentialPatchParameters(
+        patch_radius_scale=0.75,
+        patch_grid_shape=(25, 25, 25),
+        correction_strength=1.30,
+        interpolation_neighbors=8,
+    )
+
+
+def _monitor_grid_scf_parameter_summary(
+    patch_parameters: LocalPotentialPatchParameters,
+    *,
+    kinetic_version: str,
+) -> H2ScfDryRunParameterSummary:
+    return H2ScfDryRunParameterSummary(
+        grid_shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+        box_half_extents_bohr=H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR,
+        weight_scale=H2_MONITOR_LOCAL_PATCH_BASELINE_WEIGHT_SCALE,
+        radius_scale=H2_MONITOR_LOCAL_PATCH_BASELINE_RADIUS_SCALE,
+        patch_radius_scale=float(patch_parameters.patch_radius_scale),
+        patch_grid_shape=patch_parameters.patch_grid_shape,
+        correction_strength=float(patch_parameters.correction_strength),
+        interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
+        kinetic_version=kinetic_version,
+        includes_nonlocal=False,
+    )
+
+
+def _apply_kinetic_for_static_local_energy(
+    orbital: np.ndarray,
+    grid_geometry: GridGeometryLike,
+    *,
+    kinetic_version: str,
+) -> np.ndarray:
+    if kinetic_version == "trial_fix" and isinstance(grid_geometry, MonitorGridGeometry):
+        return apply_monitor_grid_kinetic_operator_trial_boundary_fix(
+            orbital,
+            grid_geometry=grid_geometry,
+        )
+    return apply_kinetic_operator(orbital, grid_geometry=grid_geometry)
+
+
+def evaluate_static_local_single_point_energy(
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    orbitals_up: np.ndarray,
+    orbitals_down: np.ndarray,
+    occupations: SpinOccupations,
+    grid_geometry: GridGeometryLike,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    *,
+    use_monitor_patch: bool = False,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+    kinetic_version: str = "production",
+) -> SinglePointEnergyComponents:
+    """Evaluate the local-only single-point energy on either supported grid.
+
+    This helper intentionally contains only
+
+        T_s + E_loc,ion + E_H + E_xc + E_II
+
+    and sets the nonlocal contribution to zero. It is meant for the current
+    A-grid SCF dry-run and related local-only audits; it is not a replacement
+    for the full legacy total-energy path.
+    """
+
+    _validate_h2_case(case)
+    rho_up_field = _renormalize_density(
+        rho_up,
+        occupations.n_alpha,
+        grid_geometry=grid_geometry,
+    )
+    rho_down_field = _renormalize_density(
+        rho_down,
+        occupations.n_beta,
+        grid_geometry=grid_geometry,
+    )
+    rho_total = build_total_density(
+        rho_up=rho_up_field,
+        rho_down=rho_down_field,
+        grid_geometry=grid_geometry,
+    )
+
+    kinetic_up = (
+        np.asarray(
+            [
+                _apply_kinetic_for_static_local_energy(
+                    orbital,
+                    grid_geometry=grid_geometry,
+                    kinetic_version=kinetic_version,
+                )
+                for orbital in orbitals_up
+            ],
+            dtype=np.float64,
+        )
+        if occupations.n_alpha
+        else _empty_orbital_block(grid_geometry)
+    )
+    kinetic_down = (
+        np.asarray(
+            [
+                _apply_kinetic_for_static_local_energy(
+                    orbital,
+                    grid_geometry=grid_geometry,
+                    kinetic_version=kinetic_version,
+                )
+                for orbital in orbitals_down
+            ],
+            dtype=np.float64,
+        )
+        if occupations.n_beta
+        else _empty_orbital_block(grid_geometry)
+    )
+
+    kinetic = _sum_weighted_expectations(
+        orbitals_up,
+        kinetic_up,
+        occupations.occupations_up,
+        grid_geometry=grid_geometry,
+    ) + _sum_weighted_expectations(
+        orbitals_down,
+        kinetic_down,
+        occupations.occupations_down,
+        grid_geometry=grid_geometry,
+    )
+
+    if isinstance(grid_geometry, MonitorGridGeometry) and use_monitor_patch:
+        if patch_parameters is None:
+            patch_parameters = _default_monitor_patch_parameters()
+        patch_evaluation = evaluate_monitor_grid_local_ionic_potential_with_patch(
+            case=case,
+            grid_geometry=grid_geometry,
+            density_field=rho_total,
+            patch_parameters=patch_parameters,
+        )
+        local_ionic = float(patch_evaluation.corrected_local_energy)
+    else:
+        local_ionic_evaluation = evaluate_local_ionic_potential(
+            case=case,
+            grid_geometry=grid_geometry,
+        )
+        local_ionic = float(
+            integrate_field(
+                rho_total * local_ionic_evaluation.total_local_potential,
+                grid_geometry=grid_geometry,
+            )
+        )
+
+    hartree_result = solve_hartree_potential(
+        grid_geometry=grid_geometry,
+        rho=rho_total,
+    )
+    lsda_evaluation = evaluate_lsda_terms(
+        rho_up=rho_up_field,
+        rho_down=rho_down_field,
+        functional=case.reference_model.xc,
+    )
+
+    hartree = evaluate_hartree_energy(
+        rho=rho_total,
+        grid_geometry=grid_geometry,
+        hartree_potential=hartree_result,
+    )
+    xc = float(integrate_field(lsda_evaluation.energy_density, grid_geometry=grid_geometry))
+    ion_ion_repulsion = evaluate_ion_ion_repulsion(case=case)
+    total = kinetic + local_ionic + hartree + xc + ion_ion_repulsion
+    return SinglePointEnergyComponents(
+        kinetic=float(kinetic),
+        local_ionic=float(local_ionic),
+        nonlocal_ionic=0.0,
+        hartree=float(hartree),
+        xc=float(xc),
+        ion_ion_repulsion=float(ion_ion_repulsion),
+        total=float(total),
+    )
+
+
 def _check_density_electron_count(
     density: np.ndarray,
     target_electrons: float,
-    grid_geometry: StructuredGridGeometry,
+    grid_geometry: GridGeometryLike,
     name: str,
 ) -> None:
     actual = float(integrate_field(density, grid_geometry=grid_geometry))
@@ -731,6 +963,254 @@ def run_h2_minimal_scf(
         rho_up=np.asarray(rho_up, dtype=np.float64),
         rho_down=np.asarray(rho_down, dtype=np.float64),
         energy=final_energy,
+        solve_up=final_solve_up,
+        solve_down=final_solve_down,
+    )
+
+
+def run_h2_monitor_grid_scf_dry_run(
+    spin_label: str,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    grid_geometry: MonitorGridGeometry | None = None,
+    *,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+    max_iterations: int = 10,
+    mixing: float = 0.35,
+    density_tolerance: float = 5.0e-3,
+    energy_tolerance: float = 5.0e-5,
+    eigensolver_tolerance: float = 1.0e-3,
+    eigensolver_ncv: int = 20,
+    kinetic_version: str = "trial_fix",
+) -> H2StaticLocalScfDryRunResult:
+    """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
+
+    _validate_h2_case(case)
+    if grid_geometry is None:
+        grid_geometry = build_h2_local_patch_development_monitor_grid()
+    if patch_parameters is None:
+        patch_parameters = _default_monitor_patch_parameters()
+    if max_iterations <= 0:
+        raise ValueError("max_iterations must be positive.")
+    if not (0.0 < mixing <= 1.0):
+        raise ValueError("mixing must satisfy 0 < mixing <= 1.")
+    if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
+        raise ValueError("SCF tolerances must be positive.")
+
+    occupations = resolve_h2_spin_occupations(spin_label=spin_label, case=case)
+    rho_up, rho_down, guess_up, guess_down = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=case,
+        grid_geometry=grid_geometry,
+    )
+
+    history: list[ScfIterationRecord] = []
+    previous_energy_total: float | None = None
+    final_orbitals_up = guess_up
+    final_orbitals_down = guess_down
+    final_eigenvalues_up = np.zeros(occupations.n_alpha, dtype=np.float64)
+    final_eigenvalues_down = np.zeros(occupations.n_beta, dtype=np.float64)
+    final_solve_up: FixedPotentialEigensolverResult | None = None
+    final_solve_down: FixedPotentialEigensolverResult | None = None
+    final_energy = evaluate_static_local_single_point_energy(
+        rho_up=rho_up,
+        rho_down=rho_down,
+        orbitals_up=guess_up,
+        orbitals_down=guess_down,
+        occupations=occupations,
+        grid_geometry=grid_geometry,
+        case=case,
+        use_monitor_patch=True,
+        patch_parameters=patch_parameters,
+        kinetic_version=kinetic_version,
+    )
+    converged = False
+
+    for iteration in range(1, max_iterations + 1):
+        solve_up = None
+        solve_down = None
+
+        if occupations.n_alpha > 0:
+            solve_up = solve_fixed_potential_static_local_eigenproblem(
+                grid_geometry=grid_geometry,
+                rho_up=rho_up,
+                rho_down=rho_down,
+                spin_channel="up",
+                k=occupations.n_alpha,
+                case=case,
+                initial_guess_orbitals=guess_up,
+                tolerance=eigensolver_tolerance,
+                ncv=eigensolver_ncv,
+                use_monitor_patch=True,
+                patch_parameters=patch_parameters,
+                kinetic_version=kinetic_version,
+            )
+            orbitals_up = solve_up.orbitals
+        else:
+            orbitals_up = _empty_orbital_block(grid_geometry)
+
+        if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations):
+            orbitals_down = np.asarray(orbitals_up, dtype=np.float64)
+        elif occupations.n_beta > 0:
+            solve_down = solve_fixed_potential_static_local_eigenproblem(
+                grid_geometry=grid_geometry,
+                rho_up=rho_up,
+                rho_down=rho_down,
+                spin_channel="down",
+                k=occupations.n_beta,
+                case=case,
+                initial_guess_orbitals=guess_down,
+                tolerance=eigensolver_tolerance,
+                ncv=eigensolver_ncv,
+                use_monitor_patch=True,
+                patch_parameters=patch_parameters,
+                kinetic_version=kinetic_version,
+            )
+            orbitals_down = solve_down.orbitals
+        else:
+            orbitals_down = _empty_orbital_block(grid_geometry)
+
+        rho_up_out = _renormalize_density(
+            _build_density_from_occupied_orbitals(
+                orbitals_up,
+                occupations.occupations_up,
+                grid_geometry=grid_geometry,
+            ),
+            occupations.n_alpha,
+            grid_geometry=grid_geometry,
+        )
+        rho_down_out = _renormalize_density(
+            _build_density_from_occupied_orbitals(
+                orbitals_down,
+                occupations.occupations_down,
+                grid_geometry=grid_geometry,
+            ),
+            occupations.n_beta,
+            grid_geometry=grid_geometry,
+        )
+
+        _check_density_electron_count(rho_up_out, occupations.n_alpha, grid_geometry, "rho_up_out")
+        _check_density_electron_count(rho_down_out, occupations.n_beta, grid_geometry, "rho_down_out")
+
+        density_residual = _density_residual(
+            rho_up_in=rho_up,
+            rho_down_in=rho_down,
+            rho_up_out=rho_up_out,
+            rho_down_out=rho_down_out,
+            grid_geometry=grid_geometry,
+        )
+        energy = evaluate_static_local_single_point_energy(
+            rho_up=rho_up_out,
+            rho_down=rho_down_out,
+            orbitals_up=orbitals_up,
+            orbitals_down=orbitals_down,
+            occupations=occupations,
+            grid_geometry=grid_geometry,
+            case=case,
+            use_monitor_patch=True,
+            patch_parameters=patch_parameters,
+            kinetic_version=kinetic_version,
+        )
+        energy_change = None if previous_energy_total is None else energy.total - previous_energy_total
+
+        rho_up_mixed = _renormalize_density(
+            (1.0 - mixing) * rho_up + mixing * rho_up_out,
+            occupations.n_alpha,
+            grid_geometry=grid_geometry,
+        )
+        rho_down_mixed = _renormalize_density(
+            (1.0 - mixing) * rho_down + mixing * rho_down_out,
+            occupations.n_beta,
+            grid_geometry=grid_geometry,
+        )
+
+        history.append(
+            ScfIterationRecord(
+                iteration=iteration,
+                input_rho_up=np.asarray(rho_up, dtype=np.float64),
+                input_rho_down=np.asarray(rho_down, dtype=np.float64),
+                output_rho_up=np.asarray(rho_up_out, dtype=np.float64),
+                output_rho_down=np.asarray(rho_down_out, dtype=np.float64),
+                mixed_rho_up=np.asarray(rho_up_mixed, dtype=np.float64),
+                mixed_rho_down=np.asarray(rho_down_mixed, dtype=np.float64),
+                density_residual=float(density_residual),
+                energy=energy,
+                energy_change=None if energy_change is None else float(energy_change),
+                solve_up=_build_solve_summary(solve_up, "up", occupations.n_alpha),
+                solve_down=(
+                    _build_solve_summary(solve_up, "down", occupations.n_beta)
+                    if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations)
+                    else _build_solve_summary(solve_down, "down", occupations.n_beta)
+                ),
+            )
+        )
+
+        final_orbitals_up = orbitals_up
+        final_orbitals_down = orbitals_down
+        final_eigenvalues_up = (
+            np.asarray(solve_up.eigenvalues, dtype=np.float64)
+            if solve_up is not None
+            else np.zeros(0, dtype=np.float64)
+        )
+        final_eigenvalues_down = (
+            np.asarray(final_eigenvalues_up, dtype=np.float64)
+            if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations)
+            else np.asarray(solve_down.eigenvalues, dtype=np.float64)
+            if solve_down is not None
+            else np.zeros(0, dtype=np.float64)
+        )
+        final_solve_up = solve_up
+        final_solve_down = (
+            solve_up
+            if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations)
+            else solve_down
+        )
+        final_energy = energy
+
+        if density_residual < density_tolerance and (
+            energy_change is None or abs(energy_change) < energy_tolerance
+        ):
+            rho_up = rho_up_out
+            rho_down = rho_down_out
+            converged = True
+            break
+
+        rho_up = rho_up_mixed
+        rho_down = rho_down_mixed
+        guess_up = orbitals_up
+        guess_down = orbitals_down
+        previous_energy_total = energy.total
+
+    lowest_eigenvalue = None
+    if final_eigenvalues_up.size:
+        lowest_eigenvalue = float(final_eigenvalues_up[0])
+    if final_eigenvalues_down.size:
+        candidate = float(final_eigenvalues_down[0])
+        lowest_eigenvalue = candidate if lowest_eigenvalue is None else min(lowest_eigenvalue, candidate)
+
+    return H2StaticLocalScfDryRunResult(
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version=kinetic_version,
+        includes_nonlocal=False,
+        spin_state_label=occupations.label,
+        spin=occupations.spin,
+        occupations=occupations,
+        parameter_summary=_monitor_grid_scf_parameter_summary(
+            patch_parameters,
+            kinetic_version=kinetic_version,
+        ),
+        converged=converged,
+        iteration_count=len(history),
+        history=tuple(history),
+        energy_history=tuple(record.energy.total for record in history),
+        density_residual_history=tuple(record.density_residual for record in history),
+        eigenvalues_up=final_eigenvalues_up,
+        eigenvalues_down=final_eigenvalues_down,
+        orbitals_up=np.asarray(final_orbitals_up, dtype=np.float64),
+        orbitals_down=np.asarray(final_orbitals_down, dtype=np.float64),
+        rho_up=np.asarray(rho_up, dtype=np.float64),
+        rho_down=np.asarray(rho_down, dtype=np.float64),
+        energy=final_energy,
+        lowest_eigenvalue=lowest_eigenvalue,
         solve_up=final_solve_up,
         solve_down=final_solve_down,
     )

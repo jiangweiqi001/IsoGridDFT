@@ -51,6 +51,8 @@ The current very small follow-up audit focuses on the `k=2` orbital-shape questi
 
 That same follow-up has now narrowed one step further to a `k=2` near-degenerate subspace audit, because the remaining question is no longer whether the A-grid fixed-potential route converges, but whether its low-lying two-dimensional subspace can be organized into a physically interpretable bonding/antibonding-like basis before any SCF dry-run is attempted.
 
+The current next step has now become a first H2 SCF dry-run on the repaired A-grid+patch+kinetic-trial-fix line. This remains a local-only monitor-grid dry-run: nonlocal is still absent, and the current H2 verdict should be read from the dedicated SCF dry-run audit rather than from any claim of production readiness.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -95,6 +97,7 @@ They currently cover:
 - a follow-up H2 A-grid operator/eigensolver trial-fix comparison for checking whether the repaired kinetic closure also lifts the fixed-potential eigenvalues and residuals
 - a very small H2 orbital-shape audit for checking whether the repaired A-grid+patch+trial-fix `k=1/k=2` fixed-potential orbitals still have reasonable symmetry, node structure, and low boundary pollution before any SCF dry-run
 - a very small H2 `k=2` subspace audit for checking whether the repaired A-grid+patch+trial-fix near-degenerate pair can be rotated into a more interpretable bonding/antibonding-like basis before any SCF dry-run
+- a first H2 A-grid+patch+kinetic-trial-fix SCF dry-run audit for checking whether the new monitor-grid main line can actually sustain multi-step singlet/triplet SCF iteration without nonlocal
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.

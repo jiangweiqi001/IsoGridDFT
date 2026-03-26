@@ -583,6 +583,42 @@ class H2K2SubspaceRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2ScfDryRunRouteBaseline:
+    """Recorded H2 SCF dry-run result for one route and one spin state."""
+
+    path_type: str
+    spin_state_label: str
+    kinetic_version: str
+    includes_nonlocal: bool
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    lowest_eigenvalue_ha: float
+    final_density_residual: float
+    final_energy_change_ha: float
+
+
+@dataclass(frozen=True)
+class H2ScfDryRunRegressionBaseline:
+    """Recorded H2 SCF dry-run baseline for legacy and A-grid routes."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    legacy_singlet_route: H2ScfDryRunRouteBaseline
+    monitor_singlet_route: H2ScfDryRunRouteBaseline
+    legacy_triplet_route: H2ScfDryRunRouteBaseline | None
+    monitor_triplet_route: H2ScfDryRunRouteBaseline | None
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -1767,6 +1803,82 @@ H2_K2_SUBSPACE_AUDIT_BASELINE = H2K2SubspaceRegressionBaseline(
 )
 
 
+H2_SCF_DRY_RUN_BASELINE = H2ScfDryRunRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    legacy_singlet_route=H2ScfDryRunRouteBaseline(
+        path_type="legacy",
+        spin_state_label="singlet",
+        kinetic_version="production",
+        includes_nonlocal=True,
+        converged=True,
+        iteration_count=5,
+        final_total_energy_ha=-1.1461203815144159,
+        lowest_eigenvalue_ha=-0.3804835585677118,
+        final_density_residual=0.001750856831863596,
+        final_energy_change_ha=-1.7328473695954472e-06,
+    ),
+    monitor_singlet_route=H2ScfDryRunRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        spin_state_label="singlet",
+        kinetic_version="trial_fix",
+        includes_nonlocal=False,
+        converged=False,
+        iteration_count=20,
+        final_total_energy_ha=-0.13034787232113343,
+        lowest_eigenvalue_ha=-0.4530723625192544,
+        final_density_residual=0.337104348281785,
+        final_energy_change_ha=0.010836526571194716,
+    ),
+    legacy_triplet_route=H2ScfDryRunRouteBaseline(
+        path_type="legacy",
+        spin_state_label="triplet",
+        kinetic_version="production",
+        includes_nonlocal=True,
+        converged=True,
+        iteration_count=6,
+        final_total_energy_ha=-0.7660687190478731,
+        lowest_eigenvalue_ha=-0.6255731151927522,
+        final_density_residual=0.0022480823759300898,
+        final_energy_change_ha=-3.974051383526245e-06,
+    ),
+    monitor_triplet_route=H2ScfDryRunRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        spin_state_label="triplet",
+        kinetic_version="trial_fix",
+        includes_nonlocal=False,
+        converged=True,
+        iteration_count=18,
+        final_total_energy_ha=-1.2214418066604806,
+        lowest_eigenvalue_ha=-0.4168423341628571,
+        final_density_residual=0.004552787297010315,
+        final_energy_change_ha=6.047076691828579e-06,
+    ),
+    diagnosis=(
+        "The repaired A-grid+patch+trial-fix line is strong enough to sustain a genuine H2 "
+        "SCF dry-run, but it is not yet uniformly healthy across spin channels. The singlet "
+        "enters multi-step iteration and remains finite, yet settles into a persistent "
+        "two-cycle with O(10^-1) density residual instead of converging. The triplet route, "
+        "by contrast, converges in 18 steps under a very small protective damping change "
+        "(mixing=0.20, max_iterations=20). This is therefore a mixed dry-run baseline: the "
+        "new A-grid line no longer catastrophically blows up, but singlet stability is not "
+        "yet sufficient for an SCF handoff."
+    ),
+    note=(
+        "H2 SCF dry-run baseline for the repaired A-grid+patch+kinetic-trial-fix route. "
+        "The A-grid dry-run includes only T + V_loc,ion + V_H + V_xc, while the legacy route "
+        "still includes nonlocal ionic action. These numbers are therefore dry-run regression "
+        "markers, not final acceptance benchmarks."
+    ),
+)
+
+
 __all__ = [
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
@@ -1786,6 +1898,8 @@ __all__ = [
     "H2K2SubspaceRotationBaseline",
     "H2OrbitalShapeOrbitalBaseline",
     "H2OrbitalShapeRegressionBaseline",
+    "H2ScfDryRunRegressionBaseline",
+    "H2ScfDryRunRouteBaseline",
     "H2FixedPotentialOperatorRegressionBaseline",
     "H2FixedPotentialOperatorRouteBaseline",
     "H2FixedPotentialEigensolverRegressionBaseline",
@@ -1811,5 +1925,6 @@ __all__ = [
     "H2_KINETIC_OPERATOR_AUDIT_BASELINE",
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_ORBITAL_SHAPE_AUDIT_BASELINE",
+    "H2_SCF_DRY_RUN_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]
