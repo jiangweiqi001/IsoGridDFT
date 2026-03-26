@@ -152,6 +152,14 @@ It currently provides:
 
 It does not yet implement GGA, meta-GGA, hybrid functionals, or a standalone internal libxc replacement.
 
+## Current A-grid Status
+
+The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dry-run validation.
+
+- H2 triplet dry-run is already convergent on the local static chain
+- H2 singlet is currently under a small DIIS/Pulay prototype audit
+- nonlocal ionic action is still not migrated onto the A-grid path
+
 ## Minimal Setup
 
 ```bash
@@ -184,5 +192,6 @@ python -m isogrid.audit.h2_monitor_grid_geometry_consistency_audit
 python -m isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit
 python -m isogrid.audit.h2_monitor_grid_orbital_shape_audit
 python -m isogrid.audit.h2_monitor_grid_k2_subspace_audit
+python -m isogrid.audit.h2_monitor_grid_diis_scf_audit
 ```
 

@@ -363,3 +363,19 @@ def test_import_h2_singlet_stability_baseline() -> None:
     assert H2_SINGLET_STABILITY_BASELINE.baseline_route.detected_two_cycle is False
     assert H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.converged is False
     assert H2_SINGLET_STABILITY_BASELINE.diis_prototype_route.scheme_label == "diis-prototype"
+
+
+def test_import_h2_monitor_grid_diis_scf_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_diis_scf_audit import (
+        run_h2_monitor_grid_diis_scf_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_diis_scf_audit)
+
+
+def test_import_h2_diis_scf_baseline() -> None:
+    from isogrid.audit.baselines import H2_DIIS_SCF_BASELINE
+
+    assert H2_DIIS_SCF_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_DIIS_SCF_BASELINE.singlet.diis_prototype_route.diis_enabled is True
+    assert H2_DIIS_SCF_BASELINE.triplet.diis_prototype_route.converged is True

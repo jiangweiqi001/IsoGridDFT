@@ -661,6 +661,56 @@ class H2SingletStabilityRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2DiisScfRouteBaseline:
+    """Recorded A-grid DIIS SCF result for one spin state and one scheme."""
+
+    spin_state_label: str
+    scheme_label: str
+    kinetic_version: str
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
+    diis_used_iterations: tuple[int, ...]
+    diis_fallback_iterations: tuple[int, ...]
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    final_energy_change_ha: float | None
+    trajectory_verdict: str
+
+
+@dataclass(frozen=True)
+class H2DiisScfSpinBaseline:
+    """Recorded three-scheme A-grid DIIS SCF baseline for one spin state."""
+
+    spin_state_label: str
+    baseline_route: H2DiisScfRouteBaseline
+    smaller_mixing_route: H2DiisScfRouteBaseline
+    diis_prototype_route: H2DiisScfRouteBaseline
+
+
+@dataclass(frozen=True)
+class H2DiisScfRegressionBaseline:
+    """Recorded A-grid DIIS SCF audit baseline on singlet and triplet."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    singlet: H2DiisScfSpinBaseline
+    triplet: H2DiisScfSpinBaseline
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -2010,7 +2060,152 @@ H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
 )
 
 
+H2_DIIS_SCF_BASELINE = H2DiisScfRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    singlet=H2DiisScfSpinBaseline(
+        spin_state_label="singlet",
+        baseline_route=H2DiisScfRouteBaseline(
+            spin_state_label="singlet",
+            scheme_label="baseline",
+            kinetic_version="trial_fix",
+            diis_enabled=False,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(),
+            diis_fallback_iterations=(),
+            converged=False,
+            iteration_count=20,
+            final_total_energy_ha=-0.13034787232113343,
+            final_lowest_eigenvalue_ha=-0.4530723625192544,
+            final_density_residual=0.337104348281785,
+            final_energy_change_ha=0.010836526571194716,
+            trajectory_verdict="stable_not_converged",
+        ),
+        smaller_mixing_route=H2DiisScfRouteBaseline(
+            spin_state_label="singlet",
+            scheme_label="smaller-mixing",
+            kinetic_version="trial_fix",
+            diis_enabled=False,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(),
+            diis_fallback_iterations=(),
+            converged=False,
+            iteration_count=20,
+            final_total_energy_ha=-0.16491247803199938,
+            final_lowest_eigenvalue_ha=-0.3936762340394962,
+            final_density_residual=0.30825645760616305,
+            final_energy_change_ha=0.008438151037082342,
+            trajectory_verdict="stable_not_converged",
+        ),
+        diis_prototype_route=H2DiisScfRouteBaseline(
+            spin_state_label="singlet",
+            scheme_label="diis-prototype",
+            kinetic_version="trial_fix",
+            diis_enabled=True,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 16, 19, 20),
+            diis_fallback_iterations=(6, 13, 17, 18),
+            converged=False,
+            iteration_count=20,
+            final_total_energy_ha=-0.1731403750781818,
+            final_lowest_eigenvalue_ha=-0.3793841527894403,
+            final_density_residual=0.29358610500934057,
+            final_energy_change_ha=0.004076261207450749,
+            trajectory_verdict="slow_monotone_or_damped",
+        ),
+    ),
+    triplet=H2DiisScfSpinBaseline(
+        spin_state_label="triplet",
+        baseline_route=H2DiisScfRouteBaseline(
+            spin_state_label="triplet",
+            scheme_label="baseline",
+            kinetic_version="trial_fix",
+            diis_enabled=False,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(),
+            diis_fallback_iterations=(),
+            converged=True,
+            iteration_count=18,
+            final_total_energy_ha=-1.2214418066604806,
+            final_lowest_eigenvalue_ha=-0.4168423341628571,
+            final_density_residual=0.004552787297010315,
+            final_energy_change_ha=6.047076691828579e-06,
+            trajectory_verdict="converged",
+        ),
+        smaller_mixing_route=H2DiisScfRouteBaseline(
+            spin_state_label="triplet",
+            scheme_label="smaller-mixing",
+            kinetic_version="trial_fix",
+            diis_enabled=False,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(),
+            diis_fallback_iterations=(),
+            converged=False,
+            iteration_count=20,
+            final_total_energy_ha=-1.221256217234775,
+            final_lowest_eigenvalue_ha=-0.4090704203001049,
+            final_density_residual=0.026957478433928376,
+            final_energy_change_ha=-3.205091858449194e-05,
+            trajectory_verdict="slow_monotone_or_damped",
+        ),
+        diis_prototype_route=H2DiisScfRouteBaseline(
+            spin_state_label="triplet",
+            scheme_label="diis-prototype",
+            kinetic_version="trial_fix",
+            diis_enabled=True,
+            diis_warmup_iterations=3,
+            diis_history_length=4,
+            diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            diis_used_iterations=(3, 4, 6, 8),
+            diis_fallback_iterations=(5, 7),
+            converged=True,
+            iteration_count=8,
+            final_total_energy_ha=-1.2215069883120075,
+            final_lowest_eigenvalue_ha=-0.41931346686692206,
+            final_density_residual=0.0038475723808240677,
+            final_energy_change_ha=1.3193541439804335e-05,
+            trajectory_verdict="converged",
+        ),
+    ),
+    diagnosis=(
+        "On the repaired A-grid+patch+kinetic-trial-fix path, a small but formal Pulay/DIIS "
+        "prototype is enough to help, but not enough to finish the singlet job. For singlet, "
+        "DIIS improves the 20-step outcome relative to pure mixing=0.10: the final density "
+        "residual drops from about 0.308 to 0.294, the final energy becomes more negative, and "
+        "the trajectory looks more damped than the plain linear routes. But it still does not "
+        "meet the dry-run convergence thresholds. For triplet, DIIS is clearly healthy: it keeps "
+        "the route convergent and cuts the iteration count from 18 to 8 while reaching a slightly "
+        "lower final residual. So the current A-grid H2 SCF line is no longer blocked by gross "
+        "triplet instability, but singlet still cannot be called fully converged."
+    ),
+    note=(
+        "A-grid-only H2 DIIS SCF baseline on the repaired A-grid+patch+kinetic-trial-fix dry-run "
+        "path. The comparison is limited to baseline linear mixing=0.20, smaller linear mixing=0.10, "
+        "and a small warmup+DIIS prototype with history length 4. Nonlocal remains absent."
+    ),
+)
+
+
 __all__ = [
+    "H2DiisScfRegressionBaseline",
+    "H2DiisScfRouteBaseline",
+    "H2DiisScfSpinBaseline",
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
     "H2GeometryConsistencySmoothFieldBaseline",
@@ -2051,6 +2246,7 @@ __all__ = [
     "H2_FIXED_POTENTIAL_OPERATOR_TRIAL_FIX_BASELINE",
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
+    "H2_DIIS_SCF_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",

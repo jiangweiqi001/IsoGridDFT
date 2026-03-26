@@ -198,6 +198,7 @@ class H2StaticLocalScfDryRunResult:
     diis_residual_definition: str
     diis_used_iterations: tuple[int, ...]
     diis_history_sizes: tuple[int, ...]
+    diis_fallback_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     history: tuple[ScfIterationRecord, ...]
@@ -735,12 +736,19 @@ def _apply_monitor_grid_density_diis(
         rho_up_diis += float(coefficient) * entry.mixed_rho_up
         rho_down_diis += float(coefficient) * entry.mixed_rho_down
 
-    rho_up_diis = np.maximum(rho_up_diis, 0.0)
-    rho_down_diis = np.maximum(rho_down_diis, 0.0)
-    if float(integrate_field(rho_up_diis, grid_geometry=grid_geometry)) <= 0.0:
-        return None
-    if float(integrate_field(rho_down_diis, grid_geometry=grid_geometry)) <= 0.0:
-        return None
+    if n_alpha > 0:
+        rho_up_diis = np.maximum(rho_up_diis, 0.0)
+        if float(integrate_field(rho_up_diis, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_up_diis = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+
+    if n_beta > 0:
+        rho_down_diis = np.maximum(rho_down_diis, 0.0)
+        if float(integrate_field(rho_down_diis, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_down_diis = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
 
     return (
         _renormalize_density(rho_up_diis, n_alpha, grid_geometry=grid_geometry),
@@ -1180,6 +1188,7 @@ def run_h2_monitor_grid_scf_dry_run(
     diis_history: list[MonitorGridDiisHistoryEntry] = []
     diis_used_iterations: list[int] = []
     diis_history_sizes: list[int] = []
+    diis_fallback_iterations: list[int] = []
     final_energy = evaluate_static_local_single_point_energy(
         rho_up=rho_up,
         rho_down=rho_down,
@@ -1321,7 +1330,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 grid_geometry=grid_geometry,
             )
             cycle_breaker_triggered_iterations.append(iteration)
-        elif enable_diis and _is_h2_closed_shell_singlet(occupations):
+        elif enable_diis:
             diis_history.append(
                 MonitorGridDiisHistoryEntry(
                     mixed_rho_up=np.asarray(rho_up_mixed, dtype=np.float64),
@@ -1342,6 +1351,8 @@ def run_h2_monitor_grid_scf_dry_run(
                 if diis_candidate is not None:
                     rho_up_mixed, rho_down_mixed = diis_candidate
                     diis_used_iterations.append(iteration)
+                else:
+                    diis_fallback_iterations.append(iteration)
             diis_history_sizes.append(len(diis_history))
         else:
             diis_history_sizes.append(0)
@@ -1435,6 +1446,7 @@ def run_h2_monitor_grid_scf_dry_run(
         diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         diis_used_iterations=tuple(diis_used_iterations),
         diis_history_sizes=tuple(diis_history_sizes),
+        diis_fallback_iterations=tuple(diis_fallback_iterations),
         converged=converged,
         iteration_count=len(history),
         history=tuple(history),
