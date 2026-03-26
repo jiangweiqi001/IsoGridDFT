@@ -160,6 +160,8 @@ class H2ScfDryRunParameterSummary:
     interpolation_neighbors: int
     kinetic_version: str
     includes_nonlocal: bool
+    cycle_breaker_enabled: bool
+    cycle_breaker_weight: float
 
 
 @dataclass(frozen=True)
@@ -173,6 +175,9 @@ class H2StaticLocalScfDryRunResult:
     spin: int
     occupations: SpinOccupations
     parameter_summary: H2ScfDryRunParameterSummary
+    cycle_breaker_enabled: bool
+    cycle_breaker_weight: float
+    cycle_breaker_triggered_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     history: tuple[ScfIterationRecord, ...]
@@ -581,6 +586,8 @@ def _monitor_grid_scf_parameter_summary(
     patch_parameters: LocalPotentialPatchParameters,
     *,
     kinetic_version: str,
+    cycle_breaker_enabled: bool,
+    cycle_breaker_weight: float,
 ) -> H2ScfDryRunParameterSummary:
     return H2ScfDryRunParameterSummary(
         grid_shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
@@ -593,7 +600,41 @@ def _monitor_grid_scf_parameter_summary(
         interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
         kinetic_version=kinetic_version,
         includes_nonlocal=False,
+        cycle_breaker_enabled=bool(cycle_breaker_enabled),
+        cycle_breaker_weight=float(cycle_breaker_weight),
     )
+
+
+def _detect_monitor_grid_singlet_alternation(
+    history: list[ScfIterationRecord],
+    *,
+    rho_up_out: np.ndarray,
+    rho_down_out: np.ndarray,
+    energy_change: float | None,
+    grid_geometry: MonitorGridGeometry,
+) -> bool:
+    """Detect a weak even/odd alternation in the monitor-grid singlet dry-run."""
+
+    if len(history) < 2 or energy_change is None:
+        return False
+    previous_energy_change = history[-1].energy_change
+    if previous_energy_change is None or energy_change * previous_energy_change >= 0.0:
+        return False
+    distance_to_previous = _density_residual(
+        rho_up_in=history[-1].output_rho_up,
+        rho_down_in=history[-1].output_rho_down,
+        rho_up_out=rho_up_out,
+        rho_down_out=rho_down_out,
+        grid_geometry=grid_geometry,
+    )
+    distance_to_two_steps_ago = _density_residual(
+        rho_up_in=history[-2].output_rho_up,
+        rho_down_in=history[-2].output_rho_down,
+        rho_up_out=rho_up_out,
+        rho_down_out=rho_down_out,
+        grid_geometry=grid_geometry,
+    )
+    return bool(distance_to_two_steps_ago < 0.95 * distance_to_previous)
 
 
 def _apply_kinetic_for_static_local_energy(
@@ -981,6 +1022,8 @@ def run_h2_monitor_grid_scf_dry_run(
     eigensolver_tolerance: float = 1.0e-3,
     eigensolver_ncv: int = 20,
     kinetic_version: str = "trial_fix",
+    enable_cycle_breaker: bool = False,
+    cycle_breaker_weight: float = 0.5,
 ) -> H2StaticLocalScfDryRunResult:
     """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
 
@@ -993,6 +1036,8 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("max_iterations must be positive.")
     if not (0.0 < mixing <= 1.0):
         raise ValueError("mixing must satisfy 0 < mixing <= 1.")
+    if not (0.0 <= cycle_breaker_weight <= 1.0):
+        raise ValueError("cycle_breaker_weight must satisfy 0 <= cycle_breaker_weight <= 1.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
 
@@ -1011,6 +1056,7 @@ def run_h2_monitor_grid_scf_dry_run(
     final_eigenvalues_down = np.zeros(occupations.n_beta, dtype=np.float64)
     final_solve_up: FixedPotentialEigensolverResult | None = None
     final_solve_down: FixedPotentialEigensolverResult | None = None
+    cycle_breaker_triggered_iterations: list[int] = []
     final_energy = evaluate_static_local_single_point_energy(
         rho_up=rho_up,
         rho_down=rho_down,
@@ -1122,6 +1168,30 @@ def run_h2_monitor_grid_scf_dry_run(
             occupations.n_beta,
             grid_geometry=grid_geometry,
         )
+        if (
+            enable_cycle_breaker
+            and _is_h2_closed_shell_singlet(occupations)
+            and _detect_monitor_grid_singlet_alternation(
+                history,
+                rho_up_out=rho_up_out,
+                rho_down_out=rho_down_out,
+                energy_change=energy_change,
+                grid_geometry=grid_geometry,
+            )
+        ):
+            rho_up_mixed = _renormalize_density(
+                (1.0 - cycle_breaker_weight) * rho_up_mixed
+                + cycle_breaker_weight * history[-1].mixed_rho_up,
+                occupations.n_alpha,
+                grid_geometry=grid_geometry,
+            )
+            rho_down_mixed = _renormalize_density(
+                (1.0 - cycle_breaker_weight) * rho_down_mixed
+                + cycle_breaker_weight * history[-1].mixed_rho_down,
+                occupations.n_beta,
+                grid_geometry=grid_geometry,
+            )
+            cycle_breaker_triggered_iterations.append(iteration)
 
         history.append(
             ScfIterationRecord(
@@ -1197,7 +1267,12 @@ def run_h2_monitor_grid_scf_dry_run(
         parameter_summary=_monitor_grid_scf_parameter_summary(
             patch_parameters,
             kinetic_version=kinetic_version,
+            cycle_breaker_enabled=enable_cycle_breaker,
+            cycle_breaker_weight=cycle_breaker_weight,
         ),
+        cycle_breaker_enabled=bool(enable_cycle_breaker),
+        cycle_breaker_weight=float(cycle_breaker_weight),
+        cycle_breaker_triggered_iterations=tuple(cycle_breaker_triggered_iterations),
         converged=converged,
         iteration_count=len(history),
         history=tuple(history),

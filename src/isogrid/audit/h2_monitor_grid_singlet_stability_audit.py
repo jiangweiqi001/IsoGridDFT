@@ -7,20 +7,9 @@ This audit intentionally stays narrow:
 - no nonlocal migration
 - no DIIS / Broyden / level shifting
 
-The only comparison here is whether a more conservative linear mixing value
-changes the previously observed two-cycle singlet behavior.
-
-Note:
-    The current monitor-grid driver applies pure linear density mixing,
-
-        rho_next = (1 - alpha) * rho_in + alpha * rho_out
-
-    so an extra "simple damping" stage applied to the same density update would
-    be algebraically equivalent to using a smaller effective mixing factor.
-    This audit therefore compares only two genuinely distinct schemes:
-
-    - baseline: mixing = 0.20
-    - smaller-mixing: mixing = 0.10
+The only comparison here is whether a more conservative linear mixing value,
+plus one explicit history-2 cycle-breaker branch, changes the previously
+observed weak singlet two-cycle behavior.
 """
 
 from __future__ import annotations
@@ -42,6 +31,7 @@ _SINGLET_STABILITY_DENSITY_TOLERANCE = 5.0e-3
 _SINGLET_STABILITY_ENERGY_TOLERANCE = 5.0e-5
 _SINGLET_STABILITY_EIGENSOLVER_TOLERANCE = 1.0e-3
 _SINGLET_STABILITY_EIGENSOLVER_NCV = 20
+_SINGLET_STABILITY_CYCLE_BREAKER_WEIGHT = 0.50
 
 
 @dataclass(frozen=True)
@@ -57,6 +47,8 @@ class H2SingletStabilityParameterSummary:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
+    cycle_breaker_enabled: bool
+    cycle_breaker_weight: float
     mixing: float
     max_iterations: int
     density_tolerance: float
@@ -94,6 +86,9 @@ class H2SingletStabilityRouteResult:
     kinetic_version: str
     includes_nonlocal: bool
     parameter_summary: H2SingletStabilityParameterSummary
+    cycle_breaker_enabled: bool
+    cycle_breaker_weight: float
+    cycle_breaker_triggered_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -115,6 +110,7 @@ class H2SingletStabilityAuditResult:
 
     baseline_route: H2SingletStabilityRouteResult
     smaller_mixing_route: H2SingletStabilityRouteResult
+    cycle_breaker_route: H2SingletStabilityRouteResult
     note: str
 
 
@@ -134,6 +130,8 @@ def _parameter_summary(
         correction_strength=parameters.correction_strength,
         interpolation_neighbors=parameters.interpolation_neighbors,
         kinetic_version=parameters.kinetic_version,
+        cycle_breaker_enabled=parameters.cycle_breaker_enabled,
+        cycle_breaker_weight=parameters.cycle_breaker_weight,
         mixing=float(mixing),
         max_iterations=_SINGLET_STABILITY_MAX_ITERATIONS,
         density_tolerance=_SINGLET_STABILITY_DENSITY_TOLERANCE,
@@ -220,7 +218,7 @@ def _build_two_cycle_diagnostics(
         and residual_gap > 5.0 * residual_noise_floor
     )
     if detected_two_cycle:
-        verdict = "two_cycle"
+        verdict = "weak_two_cycle"
     elif abs(tail_residuals[-1] - tail_residuals[0]) < 5.0e-3:
         verdict = "stable_not_converged"
     elif tail_residuals[-1] > tail_residuals[0]:
@@ -263,6 +261,9 @@ def _build_route_result(
         kinetic_version=result.kinetic_version,
         includes_nonlocal=result.includes_nonlocal,
         parameter_summary=_parameter_summary(result, mixing=mixing),
+        cycle_breaker_enabled=result.cycle_breaker_enabled,
+        cycle_breaker_weight=result.cycle_breaker_weight,
+        cycle_breaker_triggered_iterations=result.cycle_breaker_triggered_iterations,
         converged=result.converged,
         iteration_count=result.iteration_count,
         final_total_energy_ha=float(result.energy.total),
@@ -296,6 +297,7 @@ def _run_monitor_singlet_scheme(
     *,
     scheme_label: str,
     mixing: float,
+    enable_cycle_breaker: bool,
     case: BenchmarkCase,
 ) -> H2SingletStabilityRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
@@ -308,6 +310,8 @@ def _run_monitor_singlet_scheme(
         eigensolver_tolerance=_SINGLET_STABILITY_EIGENSOLVER_TOLERANCE,
         eigensolver_ncv=_SINGLET_STABILITY_EIGENSOLVER_NCV,
         kinetic_version="trial_fix",
+        enable_cycle_breaker=enable_cycle_breaker,
+        cycle_breaker_weight=_SINGLET_STABILITY_CYCLE_BREAKER_WEIGHT,
     )
     return _build_route_result(scheme_label, mixing=mixing, result=result)
 
@@ -320,25 +324,35 @@ def run_h2_monitor_grid_singlet_stability_audit(
     baseline_route = _run_monitor_singlet_scheme(
         scheme_label="baseline",
         mixing=0.20,
+        enable_cycle_breaker=False,
         case=case,
     )
     smaller_mixing_route = _run_monitor_singlet_scheme(
         scheme_label="smaller-mixing",
         mixing=0.10,
+        enable_cycle_breaker=False,
+        case=case,
+    )
+    cycle_breaker_route = _run_monitor_singlet_scheme(
+        scheme_label="cycle-breaker",
+        mixing=0.10,
+        enable_cycle_breaker=True,
         case=case,
     )
     return H2SingletStabilityAuditResult(
         baseline_route=baseline_route,
         smaller_mixing_route=smaller_mixing_route,
+        cycle_breaker_route=cycle_breaker_route,
         note=(
             "This is a very small singlet-only stability audit on the current "
             "A-grid+patch+kinetic-trial-fix dry-run path. Nonlocal remains absent. "
-            "A separate damped-update branch is intentionally not added here, because "
-            "for the current pure linear density mixing driver a post-update "
-            "under-relaxation is algebraically equivalent to using a smaller "
-            "effective mixing factor. The audit also keeps the iteration budget "
-            "to 10 steps on purpose: the goal is to classify the observed singlet "
-            "oscillation mode, not to start a wider SCF tuning exercise."
+            "The only added stabilization prototype is a transparent history-2 "
+            "cycle-breaker on the A-grid singlet path: when the new output density "
+            "looks closer to the density from two steps ago than to the previous "
+            "step, the mixed density is averaged once more against the immediately "
+            "previous mixed density. The audit keeps the iteration budget to 10 "
+            "steps on purpose: the goal is to classify the singlet oscillation mode, "
+            "not to start a wider SCF tuning exercise."
         ),
     )
 
@@ -354,11 +368,17 @@ def print_h2_monitor_grid_singlet_stability_summary(
         "baseline reference: current frozen regression says monitor singlet dry-run "
         f"ended unconverged after {H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.iteration_count} iterations"
     )
-    for route in (result.baseline_route, result.smaller_mixing_route):
+    for route in (result.baseline_route, result.smaller_mixing_route, result.cycle_breaker_route):
         print()
         print(f"scheme: {route.scheme_label}")
         print(f"  converged: {route.converged}")
         print(f"  iterations: {route.iteration_count}")
+        print(
+            "  cycle-breaker: "
+            f"enabled={route.cycle_breaker_enabled}, "
+            f"weight={route.cycle_breaker_weight:.2f}, "
+            f"triggered={route.cycle_breaker_triggered_iterations}"
+        )
         print(f"  final total energy [Ha]: {route.final_total_energy_ha:.12f}")
         print(
             "  final lowest eigenvalue [Ha]: "

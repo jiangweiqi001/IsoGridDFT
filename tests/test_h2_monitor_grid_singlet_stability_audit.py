@@ -18,6 +18,8 @@ def test_construct_h2_singlet_stability_result() -> None:
         correction_strength=1.30,
         interpolation_neighbors=8,
         kinetic_version="trial_fix",
+        cycle_breaker_enabled=True,
+        cycle_breaker_weight=0.50,
         mixing=0.20,
         max_iterations=20,
         density_tolerance=5.0e-3,
@@ -38,7 +40,7 @@ def test_construct_h2_singlet_stability_result() -> None:
         even_odd_residual_gap=2.0e-4,
         even_residual_std=1.0e-5,
         odd_residual_std=1.0e-5,
-        verdict="two_cycle",
+        verdict="weak_two_cycle",
     )
     energy = SinglePointEnergyComponents(
         kinetic=1.0,
@@ -56,6 +58,9 @@ def test_construct_h2_singlet_stability_result() -> None:
         kinetic_version="trial_fix",
         includes_nonlocal=False,
         parameter_summary=parameters,
+        cycle_breaker_enabled=True,
+        cycle_breaker_weight=0.50,
+        cycle_breaker_triggered_iterations=(4, 6),
         converged=False,
         iteration_count=20,
         final_total_energy_ha=0.1,
@@ -73,9 +78,11 @@ def test_construct_h2_singlet_stability_result() -> None:
     result = H2SingletStabilityAuditResult(
         baseline_route=route,
         smaller_mixing_route=route,
+        cycle_breaker_route=route,
         note="audit",
     )
 
     assert result.baseline_route.two_cycle.detected_two_cycle is True
     assert result.baseline_route.final_lowest_eigenvalue_ha == -0.45
     assert result.smaller_mixing_route.energy_history_ha[-1] == 0.1
+    assert result.cycle_breaker_route.cycle_breaker_triggered_iterations == (4, 6)
