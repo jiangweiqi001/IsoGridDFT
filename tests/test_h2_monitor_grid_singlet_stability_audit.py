@@ -18,14 +18,16 @@ def test_construct_h2_singlet_stability_result() -> None:
         correction_strength=1.30,
         interpolation_neighbors=8,
         kinetic_version="trial_fix",
-        cycle_breaker_enabled=True,
-        cycle_breaker_weight=0.50,
         mixing=0.20,
         max_iterations=20,
         density_tolerance=5.0e-3,
         energy_tolerance=5.0e-5,
         eigensolver_tolerance=1.0e-3,
         eigensolver_ncv=20,
+        diis_enabled=True,
+        diis_warmup_iterations=3,
+        diis_history_length=4,
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
     )
     two_cycle = H2TwoCycleDiagnostics(
         detected_two_cycle=True,
@@ -58,9 +60,12 @@ def test_construct_h2_singlet_stability_result() -> None:
         kinetic_version="trial_fix",
         includes_nonlocal=False,
         parameter_summary=parameters,
-        cycle_breaker_enabled=True,
-        cycle_breaker_weight=0.50,
-        cycle_breaker_triggered_iterations=(4, 6),
+        diis_enabled=True,
+        diis_warmup_iterations=3,
+        diis_history_length=4,
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        diis_used_iterations=(4, 6),
+        diis_history_sizes=(1, 2, 3, 4),
         converged=False,
         iteration_count=20,
         final_total_energy_ha=0.1,
@@ -78,11 +83,11 @@ def test_construct_h2_singlet_stability_result() -> None:
     result = H2SingletStabilityAuditResult(
         baseline_route=route,
         smaller_mixing_route=route,
-        cycle_breaker_route=route,
+        diis_prototype_route=route,
         note="audit",
     )
 
     assert result.baseline_route.two_cycle.detected_two_cycle is True
     assert result.baseline_route.final_lowest_eigenvalue_ha == -0.45
     assert result.smaller_mixing_route.energy_history_ha[-1] == 0.1
-    assert result.cycle_breaker_route.cycle_breaker_triggered_iterations == (4, 6)
+    assert result.diis_prototype_route.diis_used_iterations == (4, 6)

@@ -5,11 +5,11 @@ This audit intentionally stays narrow:
 - H2 singlet only
 - current A-grid+patch+kinetic-trial-fix baseline only
 - no nonlocal migration
-- no DIIS / Broyden / level shifting
+- only one minimal DIIS prototype beyond linear mixing
 
 The only comparison here is whether a more conservative linear mixing value,
-plus one explicit history-2 cycle-breaker branch, changes the previously
-observed weak singlet two-cycle behavior.
+plus one explicit minimal DIIS branch, changes the previously observed weak
+singlet two-cycle behavior.
 """
 
 from __future__ import annotations
@@ -31,7 +31,8 @@ _SINGLET_STABILITY_DENSITY_TOLERANCE = 5.0e-3
 _SINGLET_STABILITY_ENERGY_TOLERANCE = 5.0e-5
 _SINGLET_STABILITY_EIGENSOLVER_TOLERANCE = 1.0e-3
 _SINGLET_STABILITY_EIGENSOLVER_NCV = 20
-_SINGLET_STABILITY_CYCLE_BREAKER_WEIGHT = 0.50
+_SINGLET_STABILITY_DIIS_WARMUP_ITERATIONS = 3
+_SINGLET_STABILITY_DIIS_HISTORY_LENGTH = 4
 
 
 @dataclass(frozen=True)
@@ -47,14 +48,16 @@ class H2SingletStabilityParameterSummary:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
-    cycle_breaker_enabled: bool
-    cycle_breaker_weight: float
     mixing: float
     max_iterations: int
     density_tolerance: float
     energy_tolerance: float
     eigensolver_tolerance: float
     eigensolver_ncv: int
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
 
 
 @dataclass(frozen=True)
@@ -86,9 +89,12 @@ class H2SingletStabilityRouteResult:
     kinetic_version: str
     includes_nonlocal: bool
     parameter_summary: H2SingletStabilityParameterSummary
-    cycle_breaker_enabled: bool
-    cycle_breaker_weight: float
-    cycle_breaker_triggered_iterations: tuple[int, ...]
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
+    diis_used_iterations: tuple[int, ...]
+    diis_history_sizes: tuple[int, ...]
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -110,7 +116,7 @@ class H2SingletStabilityAuditResult:
 
     baseline_route: H2SingletStabilityRouteResult
     smaller_mixing_route: H2SingletStabilityRouteResult
-    cycle_breaker_route: H2SingletStabilityRouteResult
+    diis_prototype_route: H2SingletStabilityRouteResult
     note: str
 
 
@@ -130,14 +136,16 @@ def _parameter_summary(
         correction_strength=parameters.correction_strength,
         interpolation_neighbors=parameters.interpolation_neighbors,
         kinetic_version=parameters.kinetic_version,
-        cycle_breaker_enabled=parameters.cycle_breaker_enabled,
-        cycle_breaker_weight=parameters.cycle_breaker_weight,
         mixing=float(mixing),
         max_iterations=_SINGLET_STABILITY_MAX_ITERATIONS,
         density_tolerance=_SINGLET_STABILITY_DENSITY_TOLERANCE,
         energy_tolerance=_SINGLET_STABILITY_ENERGY_TOLERANCE,
         eigensolver_tolerance=_SINGLET_STABILITY_EIGENSOLVER_TOLERANCE,
         eigensolver_ncv=_SINGLET_STABILITY_EIGENSOLVER_NCV,
+        diis_enabled=parameters.diis_enabled,
+        diis_warmup_iterations=parameters.diis_warmup_iterations,
+        diis_history_length=parameters.diis_history_length,
+        diis_residual_definition=parameters.diis_residual_definition,
     )
 
 
@@ -261,9 +269,12 @@ def _build_route_result(
         kinetic_version=result.kinetic_version,
         includes_nonlocal=result.includes_nonlocal,
         parameter_summary=_parameter_summary(result, mixing=mixing),
-        cycle_breaker_enabled=result.cycle_breaker_enabled,
-        cycle_breaker_weight=result.cycle_breaker_weight,
-        cycle_breaker_triggered_iterations=result.cycle_breaker_triggered_iterations,
+        diis_enabled=result.diis_enabled,
+        diis_warmup_iterations=result.diis_warmup_iterations,
+        diis_history_length=result.diis_history_length,
+        diis_residual_definition=result.diis_residual_definition,
+        diis_used_iterations=result.diis_used_iterations,
+        diis_history_sizes=result.diis_history_sizes,
         converged=result.converged,
         iteration_count=result.iteration_count,
         final_total_energy_ha=float(result.energy.total),
@@ -297,7 +308,7 @@ def _run_monitor_singlet_scheme(
     *,
     scheme_label: str,
     mixing: float,
-    enable_cycle_breaker: bool,
+    enable_diis: bool,
     case: BenchmarkCase,
 ) -> H2SingletStabilityRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
@@ -310,8 +321,9 @@ def _run_monitor_singlet_scheme(
         eigensolver_tolerance=_SINGLET_STABILITY_EIGENSOLVER_TOLERANCE,
         eigensolver_ncv=_SINGLET_STABILITY_EIGENSOLVER_NCV,
         kinetic_version="trial_fix",
-        enable_cycle_breaker=enable_cycle_breaker,
-        cycle_breaker_weight=_SINGLET_STABILITY_CYCLE_BREAKER_WEIGHT,
+        enable_diis=enable_diis,
+        diis_warmup_iterations=_SINGLET_STABILITY_DIIS_WARMUP_ITERATIONS,
+        diis_history_length=_SINGLET_STABILITY_DIIS_HISTORY_LENGTH,
     )
     return _build_route_result(scheme_label, mixing=mixing, result=result)
 
@@ -324,35 +336,35 @@ def run_h2_monitor_grid_singlet_stability_audit(
     baseline_route = _run_monitor_singlet_scheme(
         scheme_label="baseline",
         mixing=0.20,
-        enable_cycle_breaker=False,
+        enable_diis=False,
         case=case,
     )
     smaller_mixing_route = _run_monitor_singlet_scheme(
         scheme_label="smaller-mixing",
         mixing=0.10,
-        enable_cycle_breaker=False,
+        enable_diis=False,
         case=case,
     )
-    cycle_breaker_route = _run_monitor_singlet_scheme(
-        scheme_label="cycle-breaker",
+    diis_prototype_route = _run_monitor_singlet_scheme(
+        scheme_label="diis-prototype",
         mixing=0.10,
-        enable_cycle_breaker=True,
+        enable_diis=True,
         case=case,
     )
     return H2SingletStabilityAuditResult(
         baseline_route=baseline_route,
         smaller_mixing_route=smaller_mixing_route,
-        cycle_breaker_route=cycle_breaker_route,
+        diis_prototype_route=diis_prototype_route,
         note=(
             "This is a very small singlet-only stability audit on the current "
             "A-grid+patch+kinetic-trial-fix dry-run path. Nonlocal remains absent. "
-            "The only added stabilization prototype is a transparent history-2 "
-            "cycle-breaker on the A-grid singlet path: when the new output density "
-            "looks closer to the density from two steps ago than to the previous "
-            "step, the mixed density is averaged once more against the immediately "
-            "previous mixed density. The audit keeps the iteration budget to 10 "
-            "steps on purpose: the goal is to classify the singlet oscillation mode, "
-            "not to start a wider SCF tuning exercise."
+            "The only added stabilization prototype beyond linear mixing is a tiny "
+            "density-DIIS branch on the A-grid singlet path: after a short warmup, "
+            "it stores the last few mixed densities together with the fixed-point "
+            "density residual fields r = rho_out - rho_in and solves a small Pulay "
+            "system for the next mixed density. The audit keeps the iteration budget "
+            "to 10 steps on purpose: the goal is to classify the singlet stability "
+            "mode, not to start a wider SCF tuning exercise."
         ),
     )
 
@@ -368,16 +380,18 @@ def print_h2_monitor_grid_singlet_stability_summary(
         "baseline reference: current frozen regression says monitor singlet dry-run "
         f"ended unconverged after {H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.iteration_count} iterations"
     )
-    for route in (result.baseline_route, result.smaller_mixing_route, result.cycle_breaker_route):
+    for route in (result.baseline_route, result.smaller_mixing_route, result.diis_prototype_route):
         print()
         print(f"scheme: {route.scheme_label}")
         print(f"  converged: {route.converged}")
         print(f"  iterations: {route.iteration_count}")
         print(
-            "  cycle-breaker: "
-            f"enabled={route.cycle_breaker_enabled}, "
-            f"weight={route.cycle_breaker_weight:.2f}, "
-            f"triggered={route.cycle_breaker_triggered_iterations}"
+            "  diis: "
+            f"enabled={route.diis_enabled}, "
+            f"warmup={route.diis_warmup_iterations}, "
+            f"history_length={route.diis_history_length}, "
+            f"used_iterations={route.diis_used_iterations}, "
+            f"history_sizes={route.diis_history_sizes}"
         )
         print(f"  final total energy [Ha]: {route.final_total_energy_ha:.12f}")
         print(

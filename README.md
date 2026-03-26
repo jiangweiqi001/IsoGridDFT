@@ -53,7 +53,7 @@ That same follow-up has now narrowed one step further to a `k=2` near-degenerate
 
 The current next step has now become a first H2 SCF dry-run on the repaired A-grid+patch+kinetic-trial-fix line. This remains a local-only monitor-grid dry-run: nonlocal is still absent, and the current H2 verdict should be read from the dedicated SCF dry-run audit rather than from any claim of production readiness.
 
-The current follow-up on that monitor-grid SCF line is intentionally very small: H2 triplet dry-run already converges, while the singlet route is now under a dedicated stability audit to see whether its two-cycle oscillation can be suppressed by a more conservative linear mixing choice and one minimal history-2 cycle-breaker prototype before any broader SCF handoff is attempted.
+The current follow-up on that monitor-grid SCF line is intentionally very small: H2 triplet dry-run already converges, while the singlet route is now under a dedicated stability audit to see whether its two-cycle oscillation can be suppressed by a more conservative linear mixing choice and one minimal DIIS prototype before any broader SCF handoff is attempted.
 
 What is present today:
 
@@ -100,7 +100,7 @@ They currently cover:
 - a very small H2 orbital-shape audit for checking whether the repaired A-grid+patch+trial-fix `k=1/k=2` fixed-potential orbitals still have reasonable symmetry, node structure, and low boundary pollution before any SCF dry-run
 - a very small H2 `k=2` subspace audit for checking whether the repaired A-grid+patch+trial-fix near-degenerate pair can be rotated into a more interpretable bonding/antibonding-like basis before any SCF dry-run
 - a first H2 A-grid+patch+kinetic-trial-fix SCF dry-run audit for checking whether the new monitor-grid main line can actually sustain multi-step singlet/triplet SCF iteration without nonlocal
-- a dedicated H2 singlet stability audit for checking whether the current A-grid two-cycle can be suppressed by a very small conservative mixing change and a minimal history-2 cycle-breaker, without adding a larger SCF stabilization framework
+- a dedicated H2 singlet stability audit for checking whether the current A-grid two-cycle can be suppressed by a very small conservative mixing change and a minimal DIIS prototype, without adding a larger SCF stabilization framework
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.

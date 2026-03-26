@@ -162,6 +162,20 @@ class H2ScfDryRunParameterSummary:
     includes_nonlocal: bool
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
+
+
+@dataclass(frozen=True)
+class MonitorGridDiisHistoryEntry:
+    """Small DIIS history item for the monitor-grid singlet dry-run."""
+
+    mixed_rho_up: np.ndarray
+    mixed_rho_down: np.ndarray
+    residual_up: np.ndarray
+    residual_down: np.ndarray
 
 
 @dataclass(frozen=True)
@@ -178,6 +192,12 @@ class H2StaticLocalScfDryRunResult:
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
     cycle_breaker_triggered_iterations: tuple[int, ...]
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
+    diis_used_iterations: tuple[int, ...]
+    diis_history_sizes: tuple[int, ...]
     converged: bool
     iteration_count: int
     history: tuple[ScfIterationRecord, ...]
@@ -588,6 +608,9 @@ def _monitor_grid_scf_parameter_summary(
     kinetic_version: str,
     cycle_breaker_enabled: bool,
     cycle_breaker_weight: float,
+    diis_enabled: bool,
+    diis_warmup_iterations: int,
+    diis_history_length: int,
 ) -> H2ScfDryRunParameterSummary:
     return H2ScfDryRunParameterSummary(
         grid_shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
@@ -602,6 +625,10 @@ def _monitor_grid_scf_parameter_summary(
         includes_nonlocal=False,
         cycle_breaker_enabled=bool(cycle_breaker_enabled),
         cycle_breaker_weight=float(cycle_breaker_weight),
+        diis_enabled=bool(diis_enabled),
+        diis_warmup_iterations=int(diis_warmup_iterations),
+        diis_history_length=int(diis_history_length),
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
     )
 
 
@@ -635,6 +662,90 @@ def _detect_monitor_grid_singlet_alternation(
         grid_geometry=grid_geometry,
     )
     return bool(distance_to_two_steps_ago < 0.95 * distance_to_previous)
+
+
+def _density_residual_fields(
+    rho_up_in: np.ndarray,
+    rho_down_in: np.ndarray,
+    rho_up_out: np.ndarray,
+    rho_down_out: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    return (
+        np.asarray(rho_up_out - rho_up_in, dtype=np.float64),
+        np.asarray(rho_down_out - rho_down_in, dtype=np.float64),
+    )
+
+
+def _weighted_spin_density_dot(
+    left_up: np.ndarray,
+    left_down: np.ndarray,
+    right_up: np.ndarray,
+    right_down: np.ndarray,
+    *,
+    grid_geometry: GridGeometryLike,
+) -> float:
+    return float(
+        integrate_field(
+            left_up * right_up + left_down * right_down,
+            grid_geometry=grid_geometry,
+        )
+    )
+
+
+def _apply_monitor_grid_density_diis(
+    history: tuple[MonitorGridDiisHistoryEntry, ...],
+    *,
+    grid_geometry: MonitorGridGeometry,
+    n_alpha: int,
+    n_beta: int,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    history_length = len(history)
+    if history_length < 2:
+        return None
+
+    b_matrix = np.empty((history_length + 1, history_length + 1), dtype=np.float64)
+    b_matrix.fill(-1.0)
+    b_matrix[-1, -1] = 0.0
+    for row_index, row in enumerate(history):
+        for column_index, column in enumerate(history):
+            b_matrix[row_index, column_index] = _weighted_spin_density_dot(
+                row.residual_up,
+                row.residual_down,
+                column.residual_up,
+                column.residual_down,
+                grid_geometry=grid_geometry,
+            )
+
+    regularization_scale = max(float(np.max(np.abs(b_matrix[:-1, :-1]))), 1.0)
+    b_matrix[:-1, :-1] += 1.0e-12 * regularization_scale * np.eye(history_length, dtype=np.float64)
+    rhs = np.zeros(history_length + 1, dtype=np.float64)
+    rhs[-1] = -1.0
+    try:
+        coefficients = np.linalg.solve(b_matrix, rhs)[:-1]
+    except np.linalg.LinAlgError:
+        return None
+    if not np.all(np.isfinite(coefficients)):
+        return None
+    if float(np.max(np.abs(coefficients))) > 20.0:
+        return None
+
+    rho_up_diis = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    rho_down_diis = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+    for coefficient, entry in zip(coefficients, history, strict=True):
+        rho_up_diis += float(coefficient) * entry.mixed_rho_up
+        rho_down_diis += float(coefficient) * entry.mixed_rho_down
+
+    rho_up_diis = np.maximum(rho_up_diis, 0.0)
+    rho_down_diis = np.maximum(rho_down_diis, 0.0)
+    if float(integrate_field(rho_up_diis, grid_geometry=grid_geometry)) <= 0.0:
+        return None
+    if float(integrate_field(rho_down_diis, grid_geometry=grid_geometry)) <= 0.0:
+        return None
+
+    return (
+        _renormalize_density(rho_up_diis, n_alpha, grid_geometry=grid_geometry),
+        _renormalize_density(rho_down_diis, n_beta, grid_geometry=grid_geometry),
+    )
 
 
 def _apply_kinetic_for_static_local_energy(
@@ -1024,6 +1135,9 @@ def run_h2_monitor_grid_scf_dry_run(
     kinetic_version: str = "trial_fix",
     enable_cycle_breaker: bool = False,
     cycle_breaker_weight: float = 0.5,
+    enable_diis: bool = False,
+    diis_warmup_iterations: int = 3,
+    diis_history_length: int = 4,
 ) -> H2StaticLocalScfDryRunResult:
     """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
 
@@ -1038,6 +1152,12 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("mixing must satisfy 0 < mixing <= 1.")
     if not (0.0 <= cycle_breaker_weight <= 1.0):
         raise ValueError("cycle_breaker_weight must satisfy 0 <= cycle_breaker_weight <= 1.")
+    if enable_cycle_breaker and enable_diis:
+        raise ValueError("The minimal monitor-grid dry-run supports cycle-breaker or DIIS, not both.")
+    if diis_warmup_iterations < 0:
+        raise ValueError("diis_warmup_iterations must be non-negative.")
+    if diis_history_length < 2:
+        raise ValueError("diis_history_length must be at least 2.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
 
@@ -1057,6 +1177,9 @@ def run_h2_monitor_grid_scf_dry_run(
     final_solve_up: FixedPotentialEigensolverResult | None = None
     final_solve_down: FixedPotentialEigensolverResult | None = None
     cycle_breaker_triggered_iterations: list[int] = []
+    diis_history: list[MonitorGridDiisHistoryEntry] = []
+    diis_used_iterations: list[int] = []
+    diis_history_sizes: list[int] = []
     final_energy = evaluate_static_local_single_point_energy(
         rho_up=rho_up,
         rho_down=rho_down,
@@ -1157,6 +1280,12 @@ def run_h2_monitor_grid_scf_dry_run(
             kinetic_version=kinetic_version,
         )
         energy_change = None if previous_energy_total is None else energy.total - previous_energy_total
+        residual_up, residual_down = _density_residual_fields(
+            rho_up_in=rho_up,
+            rho_down_in=rho_down,
+            rho_up_out=rho_up_out,
+            rho_down_out=rho_down_out,
+        )
 
         rho_up_mixed = _renormalize_density(
             (1.0 - mixing) * rho_up + mixing * rho_up_out,
@@ -1192,6 +1321,30 @@ def run_h2_monitor_grid_scf_dry_run(
                 grid_geometry=grid_geometry,
             )
             cycle_breaker_triggered_iterations.append(iteration)
+        elif enable_diis and _is_h2_closed_shell_singlet(occupations):
+            diis_history.append(
+                MonitorGridDiisHistoryEntry(
+                    mixed_rho_up=np.asarray(rho_up_mixed, dtype=np.float64),
+                    mixed_rho_down=np.asarray(rho_down_mixed, dtype=np.float64),
+                    residual_up=residual_up,
+                    residual_down=residual_down,
+                )
+            )
+            if len(diis_history) > diis_history_length:
+                diis_history = diis_history[-diis_history_length:]
+            if iteration >= diis_warmup_iterations and len(diis_history) >= 2:
+                diis_candidate = _apply_monitor_grid_density_diis(
+                    tuple(diis_history),
+                    grid_geometry=grid_geometry,
+                    n_alpha=occupations.n_alpha,
+                    n_beta=occupations.n_beta,
+                )
+                if diis_candidate is not None:
+                    rho_up_mixed, rho_down_mixed = diis_candidate
+                    diis_used_iterations.append(iteration)
+            diis_history_sizes.append(len(diis_history))
+        else:
+            diis_history_sizes.append(0)
 
         history.append(
             ScfIterationRecord(
@@ -1269,10 +1422,19 @@ def run_h2_monitor_grid_scf_dry_run(
             kinetic_version=kinetic_version,
             cycle_breaker_enabled=enable_cycle_breaker,
             cycle_breaker_weight=cycle_breaker_weight,
+            diis_enabled=enable_diis,
+            diis_warmup_iterations=diis_warmup_iterations,
+            diis_history_length=diis_history_length,
         ),
         cycle_breaker_enabled=bool(enable_cycle_breaker),
         cycle_breaker_weight=float(cycle_breaker_weight),
         cycle_breaker_triggered_iterations=tuple(cycle_breaker_triggered_iterations),
+        diis_enabled=bool(enable_diis),
+        diis_warmup_iterations=int(diis_warmup_iterations),
+        diis_history_length=int(diis_history_length),
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        diis_used_iterations=tuple(diis_used_iterations),
+        diis_history_sizes=tuple(diis_history_sizes),
         converged=converged,
         iteration_count=len(history),
         history=tuple(history),

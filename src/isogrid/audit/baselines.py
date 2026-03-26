@@ -625,9 +625,11 @@ class H2SingletStabilityRouteBaseline:
 
     scheme_label: str
     kinetic_version: str
-    cycle_breaker_enabled: bool
-    cycle_breaker_weight: float
-    cycle_breaker_triggered_iterations: tuple[int, ...]
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
+    diis_used_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -654,7 +656,7 @@ class H2SingletStabilityRegressionBaseline:
     kinetic_version: str
     baseline_route: H2SingletStabilityRouteBaseline
     smaller_mixing_route: H2SingletStabilityRouteBaseline
-    cycle_breaker_route: H2SingletStabilityRouteBaseline
+    diis_prototype_route: H2SingletStabilityRouteBaseline
     diagnosis: str
     note: str
 
@@ -1931,9 +1933,11 @@ H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
     baseline_route=H2SingletStabilityRouteBaseline(
         scheme_label="baseline",
         kinetic_version="trial_fix",
-        cycle_breaker_enabled=False,
-        cycle_breaker_weight=0.50,
-        cycle_breaker_triggered_iterations=(),
+        diis_enabled=False,
+        diis_warmup_iterations=3,
+        diis_history_length=4,
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        diis_used_iterations=(),
         converged=False,
         iteration_count=10,
         final_total_energy_ha=-0.1408486512266819,
@@ -1948,9 +1952,11 @@ H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
     smaller_mixing_route=H2SingletStabilityRouteBaseline(
         scheme_label="smaller-mixing",
         kinetic_version="trial_fix",
-        cycle_breaker_enabled=False,
-        cycle_breaker_weight=0.50,
-        cycle_breaker_triggered_iterations=(),
+        diis_enabled=False,
+        diis_warmup_iterations=3,
+        diis_history_length=4,
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        diis_used_iterations=(),
         converged=False,
         iteration_count=10,
         final_total_energy_ha=-0.19604042867532245,
@@ -1962,22 +1968,24 @@ H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
         even_odd_energy_gap_ha=0.004581969684613829,
         even_odd_residual_gap=0.01157349178976752,
     ),
-    cycle_breaker_route=H2SingletStabilityRouteBaseline(
-        scheme_label="cycle-breaker",
+    diis_prototype_route=H2SingletStabilityRouteBaseline(
+        scheme_label="diis-prototype",
         kinetic_version="trial_fix",
-        cycle_breaker_enabled=True,
-        cycle_breaker_weight=0.50,
-        cycle_breaker_triggered_iterations=(4, 5, 8, 10),
+        diis_enabled=True,
+        diis_warmup_iterations=3,
+        diis_history_length=4,
+        diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        diis_used_iterations=(3, 4, 5, 7, 8, 9, 10),
         converged=False,
         iteration_count=10,
-        final_total_energy_ha=-0.1808758470794104,
-        final_lowest_eigenvalue_ha=-0.37813680648268544,
-        final_density_residual=0.31478022751950246,
-        final_energy_change_ha=0.04798395210001316,
+        final_total_energy_ha=-0.07906163475219974,
+        final_lowest_eigenvalue_ha=-0.5474502295844333,
+        final_density_residual=0.3585728293427899,
+        final_energy_change_ha=0.11667317822978585,
         detected_two_cycle=False,
         two_cycle_verdict="stable_not_converged",
-        even_odd_energy_gap_ha=0.016644084312013252,
-        even_odd_residual_gap=0.002572032974077487,
+        even_odd_energy_gap_ha=0.01829133687234341,
+        even_odd_residual_gap=0.0008350592949901148,
     ),
     diagnosis=(
         "Within a deliberately small 10-step audit budget, the repaired A-grid singlet route no "
@@ -1986,18 +1994,18 @@ H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
         "stable-but-not-converged over this short window. Reducing the mixing to 0.10 suppresses "
         "the sharper oscillatory behavior seen in the earlier 20-step dry-run baseline and turns "
         "the update into a visibly more damped trajectory with residual ~0.299 after 10 steps. "
-        "The history-2 cycle-breaker prototype does trigger several times, but in this first very "
-        "small audit it does not finish the job and is actually weaker than plain mixing=0.10: "
-        "the final residual rises back to ~0.315, the final energy rebounds upward, and the "
-        "trajectory remains stable-but-not-converged rather than crossing into clean convergence. "
-        "This baseline therefore still reads as a narrow singlet stability audit, not a full SCF fix."
+        "The minimal DIIS prototype, however, is not the missing silver bullet here: after a 3-step "
+        "warmup it activates repeatedly, but the final residual rebounds to ~0.359, the final energy "
+        "jumps back upward to about -0.079 Ha, and the lowest eigenvalue becomes overly deep again. "
+        "So the current singlet route is not simply 'one standard DIIS away' from convergence. "
+        "This remains a narrow stability baseline, not a full SCF fix."
     ),
     note=(
         "Very small singlet-only A-grid stability baseline on the current "
         "A-grid+patch+kinetic-trial-fix dry-run path. It compares baseline mixing=0.20, "
-        "smaller mixing=0.10, and one explicit history-2 cycle-breaker prototype on top of "
-        "mixing=0.10. The iteration budget is kept at 10 steps so this remains a narrow "
-        "stability audit rather than a wider SCF tuning pass."
+        "smaller mixing=0.10, and one minimal DIIS prototype on top of mixing=0.10. "
+        "The iteration budget is kept at 10 steps so this remains a narrow stability "
+        "audit rather than a wider SCF tuning pass."
     ),
 )
 

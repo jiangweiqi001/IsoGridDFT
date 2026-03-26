@@ -362,4 +362,4 @@ def test_import_h2_singlet_stability_baseline() -> None:
     assert H2_SINGLET_STABILITY_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_SINGLET_STABILITY_BASELINE.baseline_route.detected_two_cycle is False
     assert H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.converged is False
-    assert H2_SINGLET_STABILITY_BASELINE.cycle_breaker_route.scheme_label == "cycle-breaker"
+    assert H2_SINGLET_STABILITY_BASELINE.diis_prototype_route.scheme_label == "diis-prototype"
