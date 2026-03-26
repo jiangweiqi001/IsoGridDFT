@@ -68,6 +68,8 @@ class H2FixedPotentialRouteResult:
     patch_embedding_energy_mismatch: float | None
     patch_embedded_correction_mha: float | None
     centerline_samples: tuple[H2FixedPotentialCenterlineSample, ...]
+    use_jax_block_kernels: bool = False
+    wall_time_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -75,11 +77,11 @@ class H2MonitorGridFixedPotentialEigensolverAuditResult:
     """Top-level H2 fixed-potential audit on legacy and A-grid+patch routes."""
 
     legacy_k1_result: H2FixedPotentialRouteResult
-    monitor_patch_production_k1_result: H2FixedPotentialRouteResult
-    monitor_patch_trial_fix_k1_result: H2FixedPotentialRouteResult
+    monitor_patch_trial_fix_old_hotpath_k1_result: H2FixedPotentialRouteResult
+    monitor_patch_trial_fix_jax_hotpath_k1_result: H2FixedPotentialRouteResult
     legacy_k2_result: H2FixedPotentialRouteResult | None
-    monitor_patch_production_k2_result: H2FixedPotentialRouteResult | None
-    monitor_patch_trial_fix_k2_result: H2FixedPotentialRouteResult | None
+    monitor_patch_trial_fix_old_hotpath_k2_result: H2FixedPotentialRouteResult | None
+    monitor_patch_trial_fix_jax_hotpath_k2_result: H2FixedPotentialRouteResult | None
     note: str
 
 
@@ -146,6 +148,7 @@ def _evaluate_route(
     path_type: str,
     k: int,
     kinetic_version: str = "production",
+    use_jax_block_kernels: bool = False,
 ) -> H2FixedPotentialRouteResult:
     if path_type == "legacy":
         grid_geometry = build_default_h2_grid_geometry(case=case)
@@ -174,6 +177,7 @@ def _evaluate_route(
         use_monitor_patch=use_monitor_patch,
         patch_parameters=patch_parameters,
         kinetic_version=kinetic_version,
+        use_jax_block_kernels=use_jax_block_kernels,
     )
     operator_context = result.operator_context
     if not isinstance(operator_context, FixedPotentialStaticLocalOperatorContext):
@@ -196,12 +200,15 @@ def _evaluate_route(
         orbital_weighted_norms=weighted_orbital_norms(
             result.orbitals,
             grid_geometry=grid_geometry,
+            use_jax_block_kernels=use_jax_block_kernels,
         ),
         max_orthogonality_error=float(result.max_orthogonality_error),
         residual_norms=np.asarray(result.residual_norms, dtype=np.float64),
         converged=bool(result.converged),
         solver_method=result.solver_method,
         solver_note=result.solver_note,
+        use_jax_block_kernels=bool(result.use_jax_block_kernels),
+        wall_time_seconds=result.wall_time_seconds,
         frozen_density_integral=float(integrate_field(rho_total, grid_geometry=grid_geometry)),
         rho_up_integral=float(integrate_field(rho_up, grid_geometry=grid_geometry)),
         rho_down_integral=float(integrate_field(rho_down, grid_geometry=grid_geometry)),
@@ -217,42 +224,47 @@ def run_h2_monitor_grid_fixed_potential_eigensolver_audit(
     """Run the H2 fixed-potential eigensolver audit on legacy and A-grid+patch."""
 
     legacy_k1 = _evaluate_route(case=case, path_type="legacy", k=1)
-    monitor_patch_k1 = _evaluate_route(
-        case=case,
-        path_type="monitor_a_grid_plus_patch",
-        k=1,
-        kinetic_version="production",
-    )
-    monitor_patch_trial_fix_k1 = _evaluate_route(
+    monitor_patch_trial_fix_old_hotpath_k1 = _evaluate_route(
         case=case,
         path_type="monitor_a_grid_plus_patch",
         k=1,
         kinetic_version="trial_fix",
+        use_jax_block_kernels=False,
+    )
+    monitor_patch_trial_fix_jax_hotpath_k1 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=1,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
     )
     legacy_k2 = _evaluate_route(case=case, path_type="legacy", k=2)
-    monitor_patch_k2 = _evaluate_route(
-        case=case,
-        path_type="monitor_a_grid_plus_patch",
-        k=2,
-        kinetic_version="production",
-    )
-    monitor_patch_trial_fix_k2 = _evaluate_route(
+    monitor_patch_trial_fix_old_hotpath_k2 = _evaluate_route(
         case=case,
         path_type="monitor_a_grid_plus_patch",
         k=2,
         kinetic_version="trial_fix",
+        use_jax_block_kernels=False,
+    )
+    monitor_patch_trial_fix_jax_hotpath_k2 = _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=2,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
     )
     return H2MonitorGridFixedPotentialEigensolverAuditResult(
         legacy_k1_result=legacy_k1,
-        monitor_patch_production_k1_result=monitor_patch_k1,
-        monitor_patch_trial_fix_k1_result=monitor_patch_trial_fix_k1,
+        monitor_patch_trial_fix_old_hotpath_k1_result=monitor_patch_trial_fix_old_hotpath_k1,
+        monitor_patch_trial_fix_jax_hotpath_k1_result=monitor_patch_trial_fix_jax_hotpath_k1,
         legacy_k2_result=legacy_k2,
-        monitor_patch_production_k2_result=monitor_patch_k2,
-        monitor_patch_trial_fix_k2_result=monitor_patch_trial_fix_k2,
+        monitor_patch_trial_fix_old_hotpath_k2_result=monitor_patch_trial_fix_old_hotpath_k2,
+        monitor_patch_trial_fix_jax_hotpath_k2_result=monitor_patch_trial_fix_jax_hotpath_k2,
         note=(
             "This audit migrates only the static local chain "
             "T + V_loc,ion + V_H + V_xc to the A-grid+patch fixed-potential eigensolver, "
-            "and now compares production versus kinetic-trial-fix branches. "
+            "and now compares the old Python/SciPy block hot path against the new "
+            "JAX block hot path on top of the repaired kinetic-trial-fix branch. "
             "Nonlocal ionic action and SCF are still not on the A-grid path. "
             "The current static-local regression baseline and Hartree tail baseline remain "
             f"{H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE.monitor_patch_vs_legacy_delta_mha:+.3f} mHa "
@@ -267,11 +279,14 @@ def run_h2_monitor_grid_fixed_potential_eigensolver_audit(
 def _print_route_result(result: H2FixedPotentialRouteResult) -> None:
     print(f"path: {result.path_type}")
     print(f"  kinetic version: {result.kinetic_version}")
+    print(f"  jax block hot path: {result.use_jax_block_kernels}")
     print(f"  grid summary: {result.grid_parameter_summary}")
     print(f"  target orbitals: {result.target_orbitals}")
     print(f"  solver: {result.solver_method}")
     print(f"  converged: {result.converged}")
     print(f"  solver note: {result.solver_note}")
+    if result.wall_time_seconds is not None:
+        print(f"  wall time [s]: {result.wall_time_seconds:.6f}")
     print(f"  eigenvalues [Ha]: {result.eigenvalues.tolist()}")
     print(f"  weighted norms: {result.orbital_weighted_norms.tolist()}")
     print(f"  max orthogonality error: {result.max_orthogonality_error:.6e}")
@@ -320,33 +335,33 @@ def print_h2_monitor_grid_fixed_potential_eigensolver_summary(
     print()
     _print_route_result(result.legacy_k1_result)
     print()
-    _print_route_result(result.monitor_patch_production_k1_result)
+    _print_route_result(result.monitor_patch_trial_fix_old_hotpath_k1_result)
     print()
-    _print_route_result(result.monitor_patch_trial_fix_k1_result)
+    _print_route_result(result.monitor_patch_trial_fix_jax_hotpath_k1_result)
     print()
     print("very small recheck (k=2):")
     _print_route_result(result.legacy_k2_result)
     print()
-    _print_route_result(result.monitor_patch_production_k2_result)
+    _print_route_result(result.monitor_patch_trial_fix_old_hotpath_k2_result)
     print()
-    _print_route_result(result.monitor_patch_trial_fix_k2_result)
+    _print_route_result(result.monitor_patch_trial_fix_jax_hotpath_k2_result)
     print()
     print("verdict:")
     print(
-        "  production k=1 eigenvalue delta vs legacy [Ha]: "
-        f"{result.monitor_patch_production_k1_result.eigenvalues[0] - result.legacy_k1_result.eigenvalues[0]:+.12f}"
+        "  old hot path k=1 eigenvalue delta vs legacy [Ha]: "
+        f"{result.monitor_patch_trial_fix_old_hotpath_k1_result.eigenvalues[0] - result.legacy_k1_result.eigenvalues[0]:+.12f}"
     )
     print(
-        "  trial-fix k=1 eigenvalue delta vs production [Ha]: "
-        f"{result.monitor_patch_trial_fix_k1_result.eigenvalues[0] - result.monitor_patch_production_k1_result.eigenvalues[0]:+.12f}"
+        "  jax hot path k=1 eigenvalue delta vs old [Ha]: "
+        f"{result.monitor_patch_trial_fix_jax_hotpath_k1_result.eigenvalues[0] - result.monitor_patch_trial_fix_old_hotpath_k1_result.eigenvalues[0]:+.12f}"
     )
     print(
-        "  trial-fix k=1 residual ratio vs production: "
-        f"{result.monitor_patch_trial_fix_k1_result.residual_norms[0] / result.monitor_patch_production_k1_result.residual_norms[0]:.3e}"
+        "  jax hot path k=1 residual ratio vs old: "
+        f"{result.monitor_patch_trial_fix_jax_hotpath_k1_result.residual_norms[0] / result.monitor_patch_trial_fix_old_hotpath_k1_result.residual_norms[0]:.3e}"
     )
     print(
         "  current A-grid+patch fixed-potential path ready for A-grid SCF: "
-        f"{result.monitor_patch_trial_fix_k1_result.converged and result.monitor_patch_trial_fix_k2_result.converged}"
+        f"{result.monitor_patch_trial_fix_jax_hotpath_k1_result.converged and result.monitor_patch_trial_fix_jax_hotpath_k2_result.converged}"
     )
 
 

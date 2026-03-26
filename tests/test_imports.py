@@ -401,3 +401,19 @@ def test_import_h2_jax_kernel_consistency_baseline() -> None:
     assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.poisson.solver_method == "jax_cg_monitor"
     assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.local_hamiltonian.action_max_abs_diff == 4.440892098500626e-16
+
+
+def test_import_h2_jax_eigensolver_hotpath_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_eigensolver_hotpath_audit import (
+        run_h2_jax_eigensolver_hotpath_audit,
+    )
+
+    assert callable(run_h2_jax_eigensolver_hotpath_audit)
+
+
+def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_BASELINE
+
+    assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.old_k1_route.use_jax_block_kernels is False
+    assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.jax_k1_route.use_jax_block_kernels is True

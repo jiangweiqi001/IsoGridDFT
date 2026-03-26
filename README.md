@@ -57,6 +57,8 @@ The current follow-up on that monitor-grid SCF line is intentionally very small:
 
 The first JAX migration slice has now started as well, but it is intentionally narrow: only already-stable hot kernels are being moved first, namely weighted reductions / block linear algebra, the repaired monitor-grid Poisson CG hot path, and the local-only A-grid Hamiltonian matvec. Nonlocal, the SCF outer control flow, and the eigensolver outer iteration still remain on their current Python/SciPy auditable routes.
 
+That first JAX slice has now been pushed one step further into the fixed-potential eigensolver itself, but still only at the block hot path: `H @ psi_block`, weighted overlap / Gram, and block orthonormalization can now switch to JAX while the outer eigensolver iteration and SCF control logic remain in Python.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -68,6 +70,7 @@ What is present today:
 - a first fixed-potential static-KS eigensolver scaffold that extracts the lowest few orbitals under frozen density and frozen potentials
 - a first minimal H2 SCF single-point driver for the singlet and triplet candidates
 - a first JAX runtime layer plus a first batch of JAX hot kernels for weighted reductions, monitor-grid Poisson, and the local-only A-grid Hamiltonian apply, while keeping the audit and fallback layers intact
+- a first JAX handoff into the fixed-potential eigensolver block hot path, while keeping the outer eigensolver iteration and SCF control flow in Python
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
@@ -93,6 +96,7 @@ They currently cover:
 - a formal H2 singlet A-grid fair-calibration audit for matching legacy box size and near-core resolution before comparing `T_s + E_loc,ion`
 - a formal H2 singlet A-grid local-GTH patch audit for near-core correction on the best fair A-grid baseline
 - a first H2 A-grid+patch fixed-potential eigensolver audit on the repaired static local chain
+- a very small H2 JAX fixed-potential eigensolver hot-path audit for comparing the old Python/SciPy block kernels against the first JAX block-kernel handoff
 - a dedicated H2 A-grid static-local operator audit for diagnosing the current fixed-potential eigensolver failure
 - a dedicated H2 A-grid kinetic-operator audit for diagnosing the current fixed-potential negative-kinetic failure mode
 - a production-vs-reference H2 A-grid kinetic-form audit for checking whether the current monitor-grid kinetic failure comes from the production flux form itself or from geometry/metric consistency shared by both discretizations

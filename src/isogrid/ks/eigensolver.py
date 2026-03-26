@@ -20,6 +20,7 @@ production SCF eigensolver and does not update the density.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import time
 
 import numpy as np
 
@@ -118,6 +119,8 @@ class FixedPotentialEigensolverResult:
     initial_guess_orbitals: np.ndarray
     final_basis_orbitals: np.ndarray
     operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext
+    use_jax_block_kernels: bool = False
+    wall_time_seconds: float | None = None
 
 
 def _normalize_spin_channel(spin_channel: str) -> str:
@@ -203,8 +206,20 @@ def weighted_overlap_matrix(
     orbitals: np.ndarray,
     grid_geometry: GridGeometryLike,
     other: np.ndarray | None = None,
+    *,
+    use_jax_block_kernels: bool = False,
 ) -> np.ndarray:
     """Return the weighted block overlap matrix under the cell-volume metric."""
+
+    if use_jax_block_kernels and isinstance(grid_geometry, MonitorGridGeometry):
+        from isogrid.ops.reductions_jax import weighted_overlap_matrix_jax
+
+        overlap = weighted_overlap_matrix_jax(
+            orbitals,
+            grid_geometry.cell_volumes,
+            other=other,
+        )
+        return np.asarray(overlap, dtype=np.float64)
 
     left_columns = flatten_orbital_block(orbitals, grid_geometry=grid_geometry)
     if other is None:
@@ -219,10 +234,16 @@ def weighted_overlap_matrix(
 def weighted_orbital_norms(
     orbitals: np.ndarray,
     grid_geometry: GridGeometryLike,
+    *,
+    use_jax_block_kernels: bool = False,
 ) -> np.ndarray:
     """Return the weighted norms of a block of orbitals."""
 
-    overlap = weighted_overlap_matrix(orbitals, grid_geometry=grid_geometry)
+    overlap = weighted_overlap_matrix(
+        orbitals,
+        grid_geometry=grid_geometry,
+        use_jax_block_kernels=use_jax_block_kernels,
+    )
     diagonal = np.real_if_close(np.diag(overlap))
     return np.sqrt(np.clip(diagonal.astype(np.float64), 0.0, None))
 
@@ -233,12 +254,24 @@ def weighted_orthonormalize_orbitals(
     *,
     require_full_rank: bool = True,
     rank_tolerance: float = 1.0e-12,
+    use_jax_block_kernels: bool = False,
 ) -> np.ndarray:
     """Weighted-orthonormalize a block by SVD of sqrt(W) * Psi."""
 
     block = validate_orbital_block(orbitals, grid_geometry=grid_geometry)
     if block.shape[0] == 0:
         return block.copy()
+
+    if use_jax_block_kernels and isinstance(grid_geometry, MonitorGridGeometry):
+        from isogrid.ops.reductions_jax import weighted_orthonormalize_orbitals_jax
+
+        orthonormal = weighted_orthonormalize_orbitals_jax(
+            block,
+            grid_geometry.cell_volumes,
+            require_full_rank=require_full_rank,
+            rank_tolerance=rank_tolerance,
+        )
+        return np.asarray(orthonormal, dtype=np.float64)
 
     columns = flatten_orbital_block(block, grid_geometry=grid_geometry)
     sqrt_weights = np.sqrt(grid_geometry.cell_volumes.reshape(-1))[:, None]
@@ -613,6 +646,23 @@ def apply_fixed_potential_static_local_block(
     return np.asarray(actions)
 
 
+def apply_fixed_potential_static_local_block_jax_hotpath(
+    orbitals: np.ndarray,
+    operator_context: FixedPotentialStaticLocalOperatorContext,
+) -> np.ndarray:
+    """Apply the frozen static-local Hamiltonian block through the JAX hot path."""
+
+    from isogrid.ks.hamiltonian_local_jax import apply_fixed_potential_static_local_block_jax
+
+    return np.asarray(
+        apply_fixed_potential_static_local_block_jax(
+            orbitals,
+            operator_context=operator_context,
+        ),
+        dtype=np.float64,
+    )
+
+
 def apply_fixed_potential_static_ks_block(
     orbitals: np.ndarray,
     operator_context: FixedPotentialOperatorContext,
@@ -696,6 +746,8 @@ def _build_initial_guess_block(
     k: int,
     basis_size: int,
     initial_guess_orbitals: np.ndarray | None,
+    *,
+    use_jax_block_kernels: bool = False,
 ) -> np.ndarray:
     target_size = max(k, basis_size)
     default_guesses = _build_default_guess_orbitals(
@@ -714,6 +766,7 @@ def _build_initial_guess_block(
         combined_guess,
         grid_geometry=operator_context.grid_geometry,
         require_full_rank=False,
+        use_jax_block_kernels=use_jax_block_kernels,
     )
     if orthonormal_guess.shape[0] < k:
         raise ValueError(
@@ -757,6 +810,7 @@ def _build_weighted_euclidean_operator(
     *,
     operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
     block_apply,
+    use_jax_block_kernels: bool = False,
 ):
     LinearOperator, _, _ = _require_scipy_iterative_solver()
     grid_geometry = operator_context.grid_geometry
@@ -774,7 +828,17 @@ def _build_weighted_euclidean_operator(
             inverse_sqrt_weights[:, None] * values,
             grid_geometry=grid_geometry,
         )
-        action_block = block_apply(orbital_block, operator_context=operator_context)
+        if (
+            use_jax_block_kernels
+            and isinstance(operator_context, FixedPotentialStaticLocalOperatorContext)
+            and isinstance(grid_geometry, MonitorGridGeometry)
+        ):
+            action_block = apply_fixed_potential_static_local_block_jax_hotpath(
+                orbital_block,
+                operator_context=operator_context,
+            )
+        else:
+            action_block = block_apply(orbital_block, operator_context=operator_context)
         action_columns = flatten_orbital_block(action_block, grid_geometry=grid_geometry)
         transformed = sqrt_weights[:, None] * action_columns
         return transformed[:, 0] if original_vector else transformed
@@ -798,6 +862,7 @@ def _solve_weighted_fixed_potential_problem(
     tolerance: float,
     initial_subspace_size: int | None,
     ncv: int | None,
+    use_jax_block_kernels: bool = False,
 ) -> FixedPotentialEigensolverResult:
     if k <= 0:
         raise ValueError(f"k must be positive; received {k}.")
@@ -816,6 +881,7 @@ def _solve_weighted_fixed_potential_problem(
         k=k,
         basis_size=initial_subspace_size,
         initial_guess_orbitals=initial_guess_orbitals,
+        use_jax_block_kernels=use_jax_block_kernels,
     )
 
     LinearOperator, eigsh, ArpackNoConvergence = _require_scipy_iterative_solver()
@@ -823,6 +889,7 @@ def _solve_weighted_fixed_potential_problem(
     weighted_operator, sqrt_weights, inverse_sqrt_weights = _build_weighted_euclidean_operator(
         operator_context=operator_context,
         block_apply=block_apply,
+        use_jax_block_kernels=use_jax_block_kernels,
     )
 
     guess_columns = flatten_orbital_block(initial_guess, grid_geometry=grid_geometry)
@@ -836,6 +903,7 @@ def _solve_weighted_fixed_potential_problem(
 
     solver_note = "SciPy eigsh does not expose exact iteration counts; iteration_count is -1."
     converged = True
+    solve_start = time.perf_counter()
     try:
         eigenvalues, eigenvectors = eigsh(
             weighted_operator,
@@ -854,6 +922,7 @@ def _solve_weighted_fixed_potential_problem(
             "SciPy eigsh reached the iteration limit before full convergence; "
             "partial Ritz vectors are returned."
         )
+    wall_time_seconds = time.perf_counter() - solve_start
 
     if eigenvalues is None or eigenvectors is None or len(eigenvalues) < k:
         raise RuntimeError(
@@ -876,11 +945,20 @@ def _solve_weighted_fixed_potential_problem(
         grid_geometry=grid_geometry,
     )
     weighted_overlap = np.asarray(
-        weighted_overlap_matrix(orbitals, grid_geometry=grid_geometry),
+        weighted_overlap_matrix(
+            orbitals,
+            grid_geometry=grid_geometry,
+            use_jax_block_kernels=use_jax_block_kernels,
+        ),
         dtype=np.float64,
     )
     ritz_matrix = np.asarray(
-        weighted_overlap_matrix(orbitals, grid_geometry=grid_geometry, other=actions),
+        weighted_overlap_matrix(
+            orbitals,
+            grid_geometry=grid_geometry,
+            other=actions,
+            use_jax_block_kernels=use_jax_block_kernels,
+        ),
         dtype=np.float64,
     )
     ritz_matrix = 0.5 * (ritz_matrix + ritz_matrix.T)
@@ -908,6 +986,8 @@ def _solve_weighted_fixed_potential_problem(
         initial_guess_orbitals=np.asarray(initial_guess, dtype=np.float64),
         final_basis_orbitals=np.asarray(orbitals, dtype=np.float64),
         operator_context=operator_context,
+        use_jax_block_kernels=use_jax_block_kernels,
+        wall_time_seconds=float(wall_time_seconds),
     )
 
 
@@ -978,6 +1058,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     use_monitor_patch: bool = False,
     patch_parameters: LocalPotentialPatchParameters | None = None,
     kinetic_version: str = "production",
+    use_jax_block_kernels: bool = False,
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -1011,4 +1092,5 @@ def solve_fixed_potential_static_local_eigenproblem(
         tolerance=tolerance,
         initial_subspace_size=initial_subspace_size,
         ncv=ncv,
+        use_jax_block_kernels=use_jax_block_kernels,
     )

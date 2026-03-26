@@ -154,6 +154,8 @@ class H2FixedPotentialEigensolverRouteBaseline:
     max_orthogonality_error: float
     converged: bool
     kinetic_version: str = "production"
+    use_jax_block_kernels: bool = False
+    wall_time_seconds: float | None = None
 
 
 @dataclass(frozen=True)
@@ -2251,6 +2253,26 @@ class H2JaxKernelConsistencyRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxEigensolverHotpathRegressionBaseline:
+    """Recorded old-vs-JAX block-hot-path comparison on the H2 fixed-potential line."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    old_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    jax_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    old_k2_route: H2FixedPotentialEigensolverRouteBaseline | None
+    jax_k2_route: H2FixedPotentialEigensolverRouteBaseline | None
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2288,7 +2310,78 @@ H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
 )
 
 
+H2_JAX_EIGENSOLVER_HOTPATH_BASELINE = H2JaxEigensolverHotpathRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    old_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.18662718689698515,),
+        max_residual_norm=0.0001483108390547803,
+        max_orthogonality_error=3.3306690738754696e-16,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=False,
+        wall_time_seconds=9.949421839788556,
+    ),
+    jax_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.18662718689697616,),
+        max_residual_norm=0.0001483108390478155,
+        max_orthogonality_error=2.220446049250313e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
+        wall_time_seconds=80.35037644766271,
+    ),
+    old_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.1866584331584699, -0.1865957329712637),
+        max_residual_norm=0.00017589071376628463,
+        max_orthogonality_error=1.4254871126234903e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=False,
+        wall_time_seconds=14.538639488164335,
+    ),
+    jax_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.18665843315846384, -0.18659573297125773),
+        max_residual_norm=0.00017589071378107762,
+        max_orthogonality_error=2.6645352591003757e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
+        wall_time_seconds=192.0402395427227,
+    ),
+    diagnosis=(
+        "The first JAX handoff into the fixed-potential eigensolver block hot path is numerically "
+        "clean but not yet faster. On the repaired A-grid+patch+trial-fix route, the JAX block "
+        "kernels reproduce the old hot-path eigenvalues, residuals, and orthogonality to machine "
+        "precision for both k=1 and k=2. But on the current CPU-first audit environment the JAX "
+        "route is still substantially slower, even after a warmup call, which means the current "
+        "win is correctness and kernel placement rather than immediate throughput."
+    ),
+    note=(
+        "Very small H2 fixed-potential regression baseline for the first JAX block-hot-path "
+        "handoff inside the eigensolver. The outer eigensolver iteration, Ritz solve, and "
+        "convergence control remain in Python/SciPy; only block Hamiltonian apply and weighted "
+        "block linear algebra are switched."
+    ),
+)
+
+
 __all__ = [
+    "H2JaxEigensolverHotpathRegressionBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
     "H2JaxKernelConsistencyPoissonBaseline",
     "H2JaxKernelConsistencyReductionsBaseline",
@@ -2337,6 +2430,7 @@ __all__ = [
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_DIIS_SCF_BASELINE",
+    "H2_JAX_EIGENSOLVER_HOTPATH_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
