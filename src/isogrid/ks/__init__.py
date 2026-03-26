@@ -19,6 +19,9 @@ from .eigensolver import validate_orbital_block
 from .eigensolver import weighted_orbital_norms
 from .eigensolver import weighted_orthonormalize_orbitals
 from .eigensolver import weighted_overlap_matrix
+from .hamiltonian_local_jax import apply_fixed_potential_static_local_block_jax
+from .hamiltonian_local_jax import apply_fixed_potential_static_local_operator_jax
+from .hamiltonian_local_jax import build_fixed_potential_static_local_operator_jax
 from .local_hamiltonian import LocalHamiltonianTerms
 from .local_hamiltonian import apply_local_hamiltonian
 from .local_hamiltonian import build_default_h2_local_hamiltonian_action
@@ -40,13 +43,16 @@ __all__ = [
     "apply_fixed_potential_static_ks_block",
     "apply_fixed_potential_static_ks_operator",
     "apply_fixed_potential_static_local_block",
+    "apply_fixed_potential_static_local_block_jax",
     "apply_fixed_potential_static_local_operator",
+    "apply_fixed_potential_static_local_operator_jax",
     "apply_local_hamiltonian",
     "apply_static_ks_hamiltonian",
     "build_default_h2_local_hamiltonian_action",
     "build_default_h2_static_ks_action",
     "build_fixed_potential_static_ks_operator",
     "build_fixed_potential_static_local_operator",
+    "build_fixed_potential_static_local_operator_jax",
     "build_orbital_density",
     "build_singlet_like_spin_densities",
     "build_total_density",

@@ -33,20 +33,26 @@ def test_import_pseudo_entrypoint() -> None:
 
 def test_import_ops_entrypoint() -> None:
     from isogrid.ops import apply_kinetic_operator
+    from isogrid.ops import weighted_inner_product_jax
 
     assert callable(apply_kinetic_operator)
+    assert callable(weighted_inner_product_jax)
 
 
 def test_import_poisson_entrypoint() -> None:
+    from isogrid.poisson import solve_open_boundary_poisson_monitor_jax
     from isogrid.poisson import solve_hartree_potential
 
+    assert callable(solve_open_boundary_poisson_monitor_jax)
     assert callable(solve_hartree_potential)
 
 
 def test_import_local_hamiltonian_entrypoint() -> None:
     from isogrid.ks import apply_local_hamiltonian
+    from isogrid.ks import apply_fixed_potential_static_local_operator_jax
 
     assert callable(apply_local_hamiltonian)
+    assert callable(apply_fixed_potential_static_local_operator_jax)
 
 
 def test_import_nonlocal_entrypoint() -> None:
@@ -379,3 +385,19 @@ def test_import_h2_diis_scf_baseline() -> None:
     assert H2_DIIS_SCF_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_DIIS_SCF_BASELINE.singlet.diis_prototype_route.diis_enabled is True
     assert H2_DIIS_SCF_BASELINE.triplet.diis_prototype_route.converged is True
+
+
+def test_import_h2_jax_kernel_consistency_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_kernel_consistency_audit import (
+        run_h2_jax_kernel_consistency_audit,
+    )
+
+    assert callable(run_h2_jax_kernel_consistency_audit)
+
+
+def test_import_h2_jax_kernel_consistency_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_KERNEL_CONSISTENCY_BASELINE
+
+    assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.poisson.solver_method == "jax_cg_monitor"
+    assert H2_JAX_KERNEL_CONSISTENCY_BASELINE.local_hamiltonian.action_max_abs_diff == 4.440892098500626e-16

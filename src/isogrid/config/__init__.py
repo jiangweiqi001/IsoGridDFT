@@ -19,9 +19,17 @@ from .model import MoleculeGeometry
 from .model import ReferenceModelSettings
 from .model import ScfSettings
 from .model import SpinStateSpec
+from .runtime import ISOGRID_JAX_DISABLE_JIT_ENVVAR
+from .runtime import ISOGRID_JAX_PLATFORM_ENVVAR
+from .runtime import JAX_DISABLE_JIT_DEFAULT
+from .runtime import JAX_PLATFORM_DEFAULT
 from .runtime import JAX_X64_DEFAULT
+from .runtime import JaxRuntimeConfiguration
 from .runtime import SCIENTIFIC_DTYPE_NAME
 from .runtime import configure_jax_runtime
+from .runtime import get_configured_jax
+from .runtime import get_configured_jax_numpy
+from .runtime import get_jax_runtime_configuration
 from .runtime import get_jax_scientific_dtype
 from .runtime import is_jax_available
 from .runtime import require_jax
@@ -46,9 +54,17 @@ __all__ = [
     "ReferenceModelSettings",
     "ScfSettings",
     "SpinStateSpec",
+    "ISOGRID_JAX_DISABLE_JIT_ENVVAR",
+    "ISOGRID_JAX_PLATFORM_ENVVAR",
+    "JAX_DISABLE_JIT_DEFAULT",
+    "JAX_PLATFORM_DEFAULT",
     "JAX_X64_DEFAULT",
+    "JaxRuntimeConfiguration",
     "SCIENTIFIC_DTYPE_NAME",
     "configure_jax_runtime",
+    "get_configured_jax",
+    "get_configured_jax_numpy",
+    "get_jax_runtime_configuration",
     "get_jax_scientific_dtype",
     "is_jax_available",
     "require_jax",

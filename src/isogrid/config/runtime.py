@@ -1,42 +1,33 @@
-"""Minimal JAX runtime helpers for the scientific path."""
+"""Backward-compatible runtime imports for the scientific JAX path."""
 
-from __future__ import annotations
+from .runtime_jax import ISOGRID_JAX_DISABLE_JIT_ENVVAR
+from .runtime_jax import ISOGRID_JAX_PLATFORM_ENVVAR
+from .runtime_jax import JAX_DISABLE_JIT_DEFAULT
+from .runtime_jax import JAX_PLATFORM_DEFAULT
+from .runtime_jax import JAX_X64_DEFAULT
+from .runtime_jax import JaxRuntimeConfiguration
+from .runtime_jax import SCIENTIFIC_DTYPE_NAME
+from .runtime_jax import configure_jax_runtime
+from .runtime_jax import get_configured_jax
+from .runtime_jax import get_configured_jax_numpy
+from .runtime_jax import get_jax_runtime_configuration
+from .runtime_jax import get_jax_scientific_dtype
+from .runtime_jax import is_jax_available
+from .runtime_jax import require_jax
 
-from importlib.util import find_spec
-
-JAX_X64_DEFAULT = True
-SCIENTIFIC_DTYPE_NAME = "float64"
-
-
-def is_jax_available() -> bool:
-    """Return whether JAX can be imported in the current environment."""
-
-    return find_spec("jax") is not None
-
-
-def require_jax():
-    """Import JAX or raise a clear runtime error."""
-
-    try:
-        import jax
-    except ModuleNotFoundError as exc:
-        raise ModuleNotFoundError(
-            "JAX is required for the IsoGridDFT scientific runtime. "
-            "Install a suitable JAX build before calling runtime helpers."
-        ) from exc
-    return jax
-
-
-def configure_jax_runtime(enable_x64: bool = JAX_X64_DEFAULT):
-    """Apply the minimum JAX runtime settings used by the scientific path."""
-
-    jax = require_jax()
-    jax.config.update("jax_enable_x64", enable_x64)
-    return jax
-
-
-def get_jax_scientific_dtype():
-    """Return the scientific-path JAX dtype after importing JAX."""
-
-    jax = require_jax()
-    return jax.numpy.float64
+__all__ = [
+    "ISOGRID_JAX_DISABLE_JIT_ENVVAR",
+    "ISOGRID_JAX_PLATFORM_ENVVAR",
+    "JAX_DISABLE_JIT_DEFAULT",
+    "JAX_PLATFORM_DEFAULT",
+    "JAX_X64_DEFAULT",
+    "JaxRuntimeConfiguration",
+    "SCIENTIFIC_DTYPE_NAME",
+    "configure_jax_runtime",
+    "get_configured_jax",
+    "get_configured_jax_numpy",
+    "get_jax_runtime_configuration",
+    "get_jax_scientific_dtype",
+    "is_jax_available",
+    "require_jax",
+]

@@ -2202,7 +2202,97 @@ H2_DIIS_SCF_BASELINE = H2DiisScfRegressionBaseline(
 )
 
 
+@dataclass(frozen=True)
+class H2JaxKernelConsistencyReductionsBaseline:
+    """Recorded first-batch JAX reductions consistency summary."""
+
+    weighted_inner_product_abs_diff: float
+    weighted_norm_abs_diff: float
+    density_accumulation_max_abs_diff: float
+    overlap_matrix_max_abs_diff: float
+    orthonormalization_overlap_max_abs_diff: float
+
+
+@dataclass(frozen=True)
+class H2JaxKernelConsistencyPoissonBaseline:
+    """Recorded first-batch JAX Poisson consistency summary."""
+
+    solver_method: str
+    iteration_count: int
+    residual_max: float
+    potential_max_abs_diff: float
+    hartree_energy_abs_diff_ha: float
+
+
+@dataclass(frozen=True)
+class H2JaxKernelConsistencyLocalHamiltonianBaseline:
+    """Recorded first-batch JAX local-Hamiltonian consistency summary."""
+
+    action_max_abs_diff: float
+    action_weighted_norm_diff: float
+
+
+@dataclass(frozen=True)
+class H2JaxKernelConsistencyRegressionBaseline:
+    """Recorded first-batch JAX kernel migration baseline on the H2 A-grid path."""
+
+    benchmark_name: str
+    runtime_summary: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    reductions: H2JaxKernelConsistencyReductionsBaseline
+    poisson: H2JaxKernelConsistencyPoissonBaseline
+    local_hamiltonian: H2JaxKernelConsistencyLocalHamiltonianBaseline
+    note: str
+
+
+H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    runtime_summary="x64=True, disable_jit=False, platform=default",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    reductions=H2JaxKernelConsistencyReductionsBaseline(
+        weighted_inner_product_abs_diff=0.0,
+        weighted_norm_abs_diff=0.0,
+        density_accumulation_max_abs_diff=0.0,
+        overlap_matrix_max_abs_diff=8.881784197001252e-16,
+        orthonormalization_overlap_max_abs_diff=1.3322676295501878e-15,
+    ),
+    poisson=H2JaxKernelConsistencyPoissonBaseline(
+        solver_method="jax_cg_monitor",
+        iteration_count=400,
+        residual_max=2.1363030857485987e-07,
+        potential_max_abs_diff=2.6137809472359663e-07,
+        hartree_energy_abs_diff_ha=7.741737029220985e-09,
+    ),
+    local_hamiltonian=H2JaxKernelConsistencyLocalHamiltonianBaseline(
+        action_max_abs_diff=4.440892098500626e-16,
+        action_weighted_norm_diff=0.0,
+    ),
+    note=(
+        "First-batch JAX migration baseline for the current stable H2 monitor-grid hot kernels. "
+        "It records reductions, monitor Poisson CG, and local-only Hamiltonian apply on the "
+        "A-grid+patch+kinetic-trial-fix line without migrating nonlocal or the SCF/eigensolver "
+        "outer control flow."
+    ),
+)
+
+
 __all__ = [
+    "H2JaxKernelConsistencyLocalHamiltonianBaseline",
+    "H2JaxKernelConsistencyPoissonBaseline",
+    "H2JaxKernelConsistencyReductionsBaseline",
+    "H2JaxKernelConsistencyRegressionBaseline",
     "H2DiisScfRegressionBaseline",
     "H2DiisScfRouteBaseline",
     "H2DiisScfSpinBaseline",
@@ -2247,6 +2337,7 @@ __all__ = [
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_DIIS_SCF_BASELINE",
+    "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",

@@ -55,6 +55,8 @@ The current next step has now become a first H2 SCF dry-run on the repaired A-gr
 
 The current follow-up on that monitor-grid SCF line is intentionally very small: H2 triplet dry-run already converges, while the singlet route is now under a dedicated stability audit to see whether its two-cycle oscillation can be suppressed by a more conservative linear mixing choice and one minimal DIIS prototype before any broader SCF handoff is attempted.
 
+The first JAX migration slice has now started as well, but it is intentionally narrow: only already-stable hot kernels are being moved first, namely weighted reductions / block linear algebra, the repaired monitor-grid Poisson CG hot path, and the local-only A-grid Hamiltonian matvec. Nonlocal, the SCF outer control flow, and the eigensolver outer iteration still remain on their current Python/SciPy auditable routes.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -65,6 +67,7 @@ What is present today:
 - a first static KS Hamiltonian slice that connects kinetic, GTH local ionic, GTH nonlocal ionic, Hartree, and LSDA local terms without SCF
 - a first fixed-potential static-KS eigensolver scaffold that extracts the lowest few orbitals under frozen density and frozen potentials
 - a first minimal H2 SCF single-point driver for the singlet and triplet candidates
+- a first JAX runtime layer plus a first batch of JAX hot kernels for weighted reductions, monitor-grid Poisson, and the local-only A-grid Hamiltonian apply, while keeping the audit and fallback layers intact
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
