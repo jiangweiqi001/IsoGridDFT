@@ -619,6 +619,42 @@ class H2ScfDryRunRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2SingletStabilityRouteBaseline:
+    """Recorded singlet stability result for one conservative mixing scheme."""
+
+    scheme_label: str
+    kinetic_version: str
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    final_energy_change_ha: float | None
+    detected_two_cycle: bool
+    two_cycle_verdict: str
+    even_odd_energy_gap_ha: float | None
+    even_odd_residual_gap: float | None
+
+
+@dataclass(frozen=True)
+class H2SingletStabilityRegressionBaseline:
+    """Recorded very small A-grid singlet stability audit baseline."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    baseline_route: H2SingletStabilityRouteBaseline
+    smaller_mixing_route: H2SingletStabilityRouteBaseline
+    diagnosis: str
+    note: str
+
+
 H2_DEFAULT_PYSCF_REGRESSION_BASELINE = H2PySCFRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     geometry_label="H2, R = 1.4 Bohr",
@@ -1879,6 +1915,62 @@ H2_SCF_DRY_RUN_BASELINE = H2ScfDryRunRegressionBaseline(
 )
 
 
+H2_SINGLET_STABILITY_BASELINE = H2SingletStabilityRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    baseline_route=H2SingletStabilityRouteBaseline(
+        scheme_label="baseline",
+        kinetic_version="trial_fix",
+        converged=False,
+        iteration_count=10,
+        final_total_energy_ha=-0.1408486512266819,
+        final_lowest_eigenvalue_ha=-0.4361423023175884,
+        final_density_residual=0.3336218796626913,
+        final_energy_change_ha=0.002219282558758362,
+        detected_two_cycle=False,
+        two_cycle_verdict="stable_not_converged",
+        even_odd_energy_gap_ha=0.0018213009296351168,
+        even_odd_residual_gap=0.005781240287303924,
+    ),
+    smaller_mixing_route=H2SingletStabilityRouteBaseline(
+        scheme_label="smaller-mixing",
+        kinetic_version="trial_fix",
+        converged=False,
+        iteration_count=10,
+        final_total_energy_ha=-0.19604042867532245,
+        final_lowest_eigenvalue_ha=-0.3505684854591779,
+        final_density_residual=0.2993033291514288,
+        final_energy_change_ha=-0.0018690642042323846,
+        detected_two_cycle=False,
+        two_cycle_verdict="slow_monotone_or_damped",
+        even_odd_energy_gap_ha=0.004581969684613829,
+        even_odd_residual_gap=0.01157349178976752,
+    ),
+    diagnosis=(
+        "Within a deliberately small 10-step audit budget, the repaired A-grid singlet route no "
+        "longer blows up under either conservative scheme, but it also does not converge. The "
+        "baseline mixing=0.20 path remains stalled near residual ~0.334 and is best described as "
+        "stable-but-not-converged over this short window. Reducing the mixing to 0.10 suppresses "
+        "the sharper oscillatory behavior seen in the earlier 20-step dry-run baseline and turns "
+        "the update into a visibly more damped trajectory with residual ~0.299 after 10 steps. "
+        "This is therefore a partial stabilization, not yet a full singlet SCF fix."
+    ),
+    note=(
+        "Very small singlet-only A-grid stability baseline on the current "
+        "A-grid+patch+kinetic-trial-fix dry-run path. A separate damped-update branch is not "
+        "stored here because under the current pure linear density mixing driver it is algebraically "
+        "equivalent to choosing a smaller effective mixing factor. The iteration budget is kept at "
+        "10 steps so this remains a narrow stability audit rather than a wider SCF tuning pass."
+    ),
+)
+
+
 __all__ = [
     "H2GeometryConsistencyFieldBaseline",
     "H2GeometryConsistencyRegressionBaseline",
@@ -1900,6 +1992,8 @@ __all__ = [
     "H2OrbitalShapeRegressionBaseline",
     "H2ScfDryRunRegressionBaseline",
     "H2ScfDryRunRouteBaseline",
+    "H2SingletStabilityRegressionBaseline",
+    "H2SingletStabilityRouteBaseline",
     "H2FixedPotentialOperatorRegressionBaseline",
     "H2FixedPotentialOperatorRouteBaseline",
     "H2FixedPotentialEigensolverRegressionBaseline",
@@ -1926,5 +2020,6 @@ __all__ = [
     "H2_MONITOR_POISSON_REGRESSION_BASELINE",
     "H2_ORBITAL_SHAPE_AUDIT_BASELINE",
     "H2_SCF_DRY_RUN_BASELINE",
+    "H2_SINGLET_STABILITY_BASELINE",
     "H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE",
 ]

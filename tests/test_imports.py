@@ -346,3 +346,19 @@ def test_import_h2_scf_dry_run_baseline() -> None:
     assert H2_SCF_DRY_RUN_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.converged is False
     assert H2_SCF_DRY_RUN_BASELINE.monitor_triplet_route.converged is True
+
+
+def test_import_h2_monitor_grid_singlet_stability_audit_entrypoint() -> None:
+    from isogrid.audit.h2_monitor_grid_singlet_stability_audit import (
+        run_h2_monitor_grid_singlet_stability_audit,
+    )
+
+    assert callable(run_h2_monitor_grid_singlet_stability_audit)
+
+
+def test_import_h2_singlet_stability_baseline() -> None:
+    from isogrid.audit.baselines import H2_SINGLET_STABILITY_BASELINE
+
+    assert H2_SINGLET_STABILITY_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_SINGLET_STABILITY_BASELINE.baseline_route.detected_two_cycle is False
+    assert H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.converged is False
