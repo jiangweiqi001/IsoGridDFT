@@ -2334,6 +2334,53 @@ class H2JaxScfHotpathRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxTripletHartreeEnergyRouteBaseline:
+    """Recorded triplet-only SCF profiling route for Hartree/energy optimization."""
+
+    path_label: str
+    use_jax_block_kernels: bool
+    use_step_local_static_local_reuse: bool
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    hartree_solve_call_count: int
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    eigensolver_wall_time_seconds: float
+    static_local_prepare_wall_time_seconds: float
+    hartree_solve_wall_time_seconds: float
+    local_ionic_resolve_wall_time_seconds: float
+    xc_resolve_wall_time_seconds: float
+    energy_evaluation_wall_time_seconds: float
+    kinetic_energy_wall_time_seconds: float
+    local_ionic_energy_wall_time_seconds: float
+    hartree_energy_wall_time_seconds: float
+    xc_energy_wall_time_seconds: float
+    ion_ion_energy_wall_time_seconds: float
+    density_update_wall_time_seconds: float
+    bookkeeping_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
+class H2JaxTripletHartreeEnergyRegressionBaseline:
+    """Recorded triplet-only SCF profiling baseline for Hartree/energy reuse."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    jax_baseline_route: H2JaxTripletHartreeEnergyRouteBaseline
+    jax_optimized_route: H2JaxTripletHartreeEnergyRouteBaseline
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2594,11 +2641,91 @@ H2_JAX_SCF_HOTPATH_BASELINE = H2JaxScfHotpathRegressionBaseline(
 )
 
 
+H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    jax_baseline_route=H2JaxTripletHartreeEnergyRouteBaseline(
+        path_label="jax-baseline",
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=False,
+        converged=True,
+        iteration_count=18,
+        final_total_energy_ha=-1.221399798775,
+        final_lowest_eigenvalue_ha=-0.415006640804,
+        hartree_solve_call_count=37,
+        total_wall_time_seconds=653.643677,
+        average_iteration_wall_time_seconds=36.313538,
+        eigensolver_wall_time_seconds=103.603578,
+        static_local_prepare_wall_time_seconds=258.335332,
+        hartree_solve_wall_time_seconds=252.247794,
+        local_ionic_resolve_wall_time_seconds=4.655088,
+        xc_resolve_wall_time_seconds=1.405962,
+        energy_evaluation_wall_time_seconds=291.538590,
+        kinetic_energy_wall_time_seconds=0.0,
+        local_ionic_energy_wall_time_seconds=0.0,
+        hartree_energy_wall_time_seconds=0.0,
+        xc_energy_wall_time_seconds=0.0,
+        ion_ion_energy_wall_time_seconds=0.0,
+        density_update_wall_time_seconds=0.088934,
+        bookkeeping_wall_time_seconds=258.412575,
+    ),
+    jax_optimized_route=H2JaxTripletHartreeEnergyRouteBaseline(
+        path_label="jax-optimized",
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
+        converged=True,
+        iteration_count=18,
+        final_total_energy_ha=-1.221447077127,
+        final_lowest_eigenvalue_ha=-0.416961008159,
+        hartree_solve_call_count=37,
+        total_wall_time_seconds=610.211226,
+        average_iteration_wall_time_seconds=33.900624,
+        eigensolver_wall_time_seconds=99.768599,
+        static_local_prepare_wall_time_seconds=509.067168,
+        hartree_solve_wall_time_seconds=498.588525,
+        local_ionic_resolve_wall_time_seconds=7.498557,
+        xc_resolve_wall_time_seconds=2.927787,
+        energy_evaluation_wall_time_seconds=256.192466,
+        kinetic_energy_wall_time_seconds=1.138002,
+        local_ionic_energy_wall_time_seconds=0.000070,
+        hartree_energy_wall_time_seconds=0.039803,
+        xc_energy_wall_time_seconds=0.013469,
+        ion_ion_energy_wall_time_seconds=0.001791,
+        density_update_wall_time_seconds=0.090072,
+        bookkeeping_wall_time_seconds=254.160089,
+    ),
+    diagnosis=(
+        "On the converged H2 triplet A-grid dry-run, the dominant cost is still the repeated "
+        "static-local preparation and its Hartree solve, not the pure block eigensolver hot path. "
+        "The optimized route keeps the same 37 Hartree solves as the baseline, which shows that the "
+        "current SCF algorithm still performs one Hartree solve for the frozen input density and one "
+        "for the output-density single-point energy in each step. Even without changing that physics "
+        "or outer control flow, a very small step-local optimization still reduces total wall time "
+        "from about 653.64 s to about 610.21 s by reusing the density-independent base local ionic "
+        "evaluation and routing the energy evaluation through one prepared local-only context instead "
+        "of rebuilding its pieces ad hoc."
+    ),
+    note=(
+        "Very rough triplet-only SCF profiling baseline for the current JAX hot path on the repaired "
+        "A-grid+patch+kinetic-trial-fix route. The optimized path does not change the SCF algorithm "
+        "or Hartree physics; it only adds step-local reuse for local-only energy evaluation inputs."
+    ),
+)
+
+
 __all__ = [
     "H2JaxEigensolverHotpathReuseRegressionBaseline",
     "H2JaxEigensolverHotpathRegressionBaseline",
     "H2JaxScfHotpathRegressionBaseline",
     "H2JaxScfHotpathRouteBaseline",
+    "H2JaxTripletHartreeEnergyRegressionBaseline",
+    "H2JaxTripletHartreeEnergyRouteBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
     "H2JaxKernelConsistencyPoissonBaseline",
     "H2JaxKernelConsistencyReductionsBaseline",
@@ -2651,6 +2778,7 @@ __all__ = [
     "H2_JAX_EIGENSOLVER_HOTPATH_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_JAX_SCF_HOTPATH_BASELINE",
+    "H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",

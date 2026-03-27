@@ -44,7 +44,10 @@ from isogrid.grid import StructuredGridGeometry
 from isogrid.grid import build_default_h2_grid_geometry
 from isogrid.grid import build_h2_local_patch_development_monitor_grid
 from isogrid.ks import FixedPotentialEigensolverResult
+from isogrid.ks import FixedPotentialStaticLocalOperatorContext
+from isogrid.ks import FixedPotentialStaticLocalPreparationProfile
 from isogrid.ks import build_total_density
+from isogrid.ks import prepare_fixed_potential_static_local_operator_profiled
 from isogrid.ks import solve_fixed_potential_eigenproblem
 from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
 from isogrid.ks import validate_orbital_block
@@ -161,6 +164,7 @@ class H2ScfDryRunParameterSummary:
     interpolation_neighbors: int
     kinetic_version: str
     use_jax_block_kernels: bool
+    use_step_local_static_local_reuse: bool
     includes_nonlocal: bool
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
@@ -181,6 +185,17 @@ class MonitorGridDiisHistoryEntry:
 
 
 @dataclass(frozen=True)
+class StaticLocalEnergyEvaluationProfile:
+    """Very small timing summary for local-only single-point energy evaluation."""
+
+    kinetic_wall_time_seconds: float
+    local_ionic_wall_time_seconds: float
+    hartree_energy_wall_time_seconds: float
+    xc_energy_wall_time_seconds: float
+    ion_ion_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
 class H2StaticLocalScfDryRunResult:
     """Result of the first H2 A-grid static-local SCF dry-run."""
 
@@ -192,6 +207,7 @@ class H2StaticLocalScfDryRunResult:
     occupations: SpinOccupations
     parameter_summary: H2ScfDryRunParameterSummary
     use_jax_block_kernels: bool
+    use_step_local_static_local_reuse: bool
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
     cycle_breaker_triggered_iterations: tuple[int, ...]
@@ -220,9 +236,19 @@ class H2StaticLocalScfDryRunResult:
     total_wall_time_seconds: float
     average_iteration_wall_time_seconds: float | None
     eigensolver_wall_time_seconds: float
+    static_local_prepare_wall_time_seconds: float
+    hartree_solve_wall_time_seconds: float
+    local_ionic_resolve_wall_time_seconds: float
+    xc_resolve_wall_time_seconds: float
     energy_evaluation_wall_time_seconds: float
+    kinetic_energy_wall_time_seconds: float
+    local_ionic_energy_wall_time_seconds: float
+    hartree_energy_wall_time_seconds: float
+    xc_energy_wall_time_seconds: float
+    ion_ion_energy_wall_time_seconds: float
     density_update_wall_time_seconds: float
     bookkeeping_wall_time_seconds: float
+    hartree_solve_call_count: int
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -621,6 +647,7 @@ def _monitor_grid_scf_parameter_summary(
     *,
     kinetic_version: str,
     use_jax_block_kernels: bool,
+    use_step_local_static_local_reuse: bool,
     cycle_breaker_enabled: bool,
     cycle_breaker_weight: float,
     diis_enabled: bool,
@@ -638,6 +665,7 @@ def _monitor_grid_scf_parameter_summary(
         interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
         kinetic_version=kinetic_version,
         use_jax_block_kernels=bool(use_jax_block_kernels),
+        use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         includes_nonlocal=False,
         cycle_breaker_enabled=bool(cycle_breaker_enabled),
         cycle_breaker_weight=float(cycle_breaker_weight),
@@ -920,6 +948,133 @@ def evaluate_static_local_single_point_energy(
     )
 
 
+def evaluate_static_local_single_point_energy_from_context(
+    operator_context: FixedPotentialStaticLocalOperatorContext,
+    orbitals_up: np.ndarray,
+    orbitals_down: np.ndarray,
+    occupations: SpinOccupations,
+) -> tuple[SinglePointEnergyComponents, StaticLocalEnergyEvaluationProfile]:
+    """Evaluate the local-only single-point energy from one frozen static-local context.
+
+    This reuses the step-local `rho_total`, local ionic slice, Hartree potential,
+    and LSDA evaluation that were already assembled for the fixed-potential solve.
+    """
+
+    grid_geometry = operator_context.grid_geometry
+    kinetic_start = perf_counter()
+    kinetic_up = (
+        np.asarray(
+            [
+                _apply_kinetic_for_static_local_energy(
+                    orbital,
+                    grid_geometry=grid_geometry,
+                    kinetic_version=operator_context.kinetic_version,
+                )
+                for orbital in orbitals_up
+            ],
+            dtype=np.float64,
+        )
+        if occupations.n_alpha
+        else _empty_orbital_block(grid_geometry)
+    )
+    kinetic_down = (
+        np.asarray(
+            [
+                _apply_kinetic_for_static_local_energy(
+                    orbital,
+                    grid_geometry=grid_geometry,
+                    kinetic_version=operator_context.kinetic_version,
+                )
+                for orbital in orbitals_down
+            ],
+            dtype=np.float64,
+        )
+        if occupations.n_beta
+        else _empty_orbital_block(grid_geometry)
+    )
+    kinetic = _sum_weighted_expectations(
+        orbitals_up,
+        kinetic_up,
+        occupations.occupations_up,
+        grid_geometry=grid_geometry,
+    ) + _sum_weighted_expectations(
+        orbitals_down,
+        kinetic_down,
+        occupations.occupations_down,
+        grid_geometry=grid_geometry,
+    )
+    kinetic_elapsed = perf_counter() - kinetic_start
+
+    local_start = perf_counter()
+    if operator_context.frozen_patch_local_embedding is not None:
+        local_ionic = float(
+            operator_context.frozen_patch_local_embedding.patch_evaluation.corrected_local_energy
+        )
+    elif operator_context.local_ionic_evaluation is not None:
+        local_ionic = float(
+            integrate_field(
+                operator_context.rho_total
+                * operator_context.local_ionic_evaluation.total_local_potential,
+                grid_geometry=grid_geometry,
+            )
+        )
+    else:
+        local_ionic = float(
+            integrate_field(
+                operator_context.rho_total * operator_context.local_ionic_potential,
+                grid_geometry=grid_geometry,
+            )
+        )
+    local_elapsed = perf_counter() - local_start
+
+    hartree_start = perf_counter()
+    hartree = evaluate_hartree_energy(
+        rho=operator_context.rho_total,
+        grid_geometry=grid_geometry,
+        hartree_potential=(
+            operator_context.hartree_poisson_result
+            if operator_context.hartree_poisson_result is not None
+            else operator_context.hartree_potential
+        ),
+    )
+    hartree_elapsed = perf_counter() - hartree_start
+
+    xc_start = perf_counter()
+    lsda_evaluation = operator_context.lsda_evaluation
+    if lsda_evaluation is None:
+        lsda_evaluation = evaluate_lsda_terms(
+            rho_up=operator_context.rho_up,
+            rho_down=operator_context.rho_down,
+            functional=operator_context.case.reference_model.xc,
+        )
+    xc = float(integrate_field(lsda_evaluation.energy_density, grid_geometry=grid_geometry))
+    xc_elapsed = perf_counter() - xc_start
+
+    ion_ion_start = perf_counter()
+    ion_ion_repulsion = evaluate_ion_ion_repulsion(case=operator_context.case)
+    ion_ion_elapsed = perf_counter() - ion_ion_start
+
+    total = kinetic + local_ionic + hartree + xc + ion_ion_repulsion
+    return (
+        SinglePointEnergyComponents(
+            kinetic=float(kinetic),
+            local_ionic=float(local_ionic),
+            nonlocal_ionic=0.0,
+            hartree=float(hartree),
+            xc=float(xc),
+            ion_ion_repulsion=float(ion_ion_repulsion),
+            total=float(total),
+        ),
+        StaticLocalEnergyEvaluationProfile(
+            kinetic_wall_time_seconds=float(kinetic_elapsed),
+            local_ionic_wall_time_seconds=float(local_elapsed),
+            hartree_energy_wall_time_seconds=float(hartree_elapsed),
+            xc_energy_wall_time_seconds=float(xc_elapsed),
+            ion_ion_wall_time_seconds=float(ion_ion_elapsed),
+        ),
+    )
+
+
 def _check_density_electron_count(
     density: np.ndarray,
     target_electrons: float,
@@ -1157,6 +1312,7 @@ def run_h2_monitor_grid_scf_dry_run(
     eigensolver_ncv: int = 20,
     kinetic_version: str = "trial_fix",
     use_jax_block_kernels: bool = False,
+    use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
     cycle_breaker_weight: float = 0.5,
     enable_diis: bool = False,
@@ -1210,32 +1366,106 @@ def run_h2_monitor_grid_scf_dry_run(
     iteration_density_update_times: list[float] = []
     iteration_bookkeeping_times: list[float] = []
     eigensolver_wall_time = 0.0
+    static_local_prepare_wall_time = 0.0
+    hartree_solve_wall_time = 0.0
+    local_ionic_resolve_wall_time = 0.0
+    xc_resolve_wall_time = 0.0
     energy_evaluation_wall_time = 0.0
+    kinetic_energy_wall_time = 0.0
+    local_ionic_energy_wall_time = 0.0
+    hartree_energy_wall_time = 0.0
+    xc_energy_wall_time = 0.0
+    ion_ion_energy_wall_time = 0.0
     density_update_wall_time = 0.0
-    total_wall_start = perf_counter()
-    initial_energy_start = perf_counter()
-    final_energy = evaluate_static_local_single_point_energy(
-        rho_up=rho_up,
-        rho_down=rho_down,
-        orbitals_up=guess_up,
-        orbitals_down=guess_down,
-        occupations=occupations,
-        grid_geometry=grid_geometry,
-        case=case,
-        use_monitor_patch=True,
-        patch_parameters=patch_parameters,
-        kinetic_version=kinetic_version,
+    hartree_solve_call_count = 0
+    cached_base_local_ionic_evaluation = (
+        evaluate_local_ionic_potential(case=case, grid_geometry=grid_geometry)
+        if use_step_local_static_local_reuse
+        else None
     )
-    energy_evaluation_wall_time += perf_counter() - initial_energy_start
+    total_wall_start = perf_counter()
+    if use_step_local_static_local_reuse:
+        initial_context, initial_profile = prepare_fixed_potential_static_local_operator_profiled(
+            grid_geometry=grid_geometry,
+            rho_up=rho_up,
+            rho_down=rho_down,
+            spin_channel="up",
+            case=case,
+            use_monitor_patch=True,
+            patch_parameters=patch_parameters,
+            kinetic_version=kinetic_version,
+            base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+        )
+        static_local_prepare_wall_time += initial_profile.total_wall_time_seconds
+        hartree_solve_wall_time += initial_profile.hartree_resolve_wall_time_seconds
+        local_ionic_resolve_wall_time += initial_profile.local_ionic_resolve_wall_time_seconds
+        xc_resolve_wall_time += initial_profile.xc_resolve_wall_time_seconds
+        hartree_solve_call_count += 1
+        initial_energy_start = perf_counter()
+        final_energy, initial_energy_profile = evaluate_static_local_single_point_energy_from_context(
+            initial_context,
+            orbitals_up=guess_up,
+            orbitals_down=guess_down,
+            occupations=occupations,
+        )
+        energy_evaluation_wall_time += perf_counter() - initial_energy_start
+        kinetic_energy_wall_time += initial_energy_profile.kinetic_wall_time_seconds
+        local_ionic_energy_wall_time += initial_energy_profile.local_ionic_wall_time_seconds
+        hartree_energy_wall_time += initial_energy_profile.hartree_energy_wall_time_seconds
+        xc_energy_wall_time += initial_energy_profile.xc_energy_wall_time_seconds
+        ion_ion_energy_wall_time += initial_energy_profile.ion_ion_wall_time_seconds
+    else:
+        initial_energy_start = perf_counter()
+        final_energy = evaluate_static_local_single_point_energy(
+            rho_up=rho_up,
+            rho_down=rho_down,
+            orbitals_up=guess_up,
+            orbitals_down=guess_down,
+            occupations=occupations,
+            grid_geometry=grid_geometry,
+            case=case,
+            use_monitor_patch=True,
+            patch_parameters=patch_parameters,
+            kinetic_version=kinetic_version,
+        )
+        energy_evaluation_wall_time += perf_counter() - initial_energy_start
+        hartree_solve_call_count += 1
     converged = False
 
     for iteration in range(1, max_iterations + 1):
         iteration_start = perf_counter()
         solve_up = None
         solve_down = None
+        up_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
+        down_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
+        up_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
+        down_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
+        iteration_static_local_prepare_elapsed = 0.0
 
         eigensolver_start = perf_counter()
         if occupations.n_alpha > 0:
+            if use_step_local_static_local_reuse:
+                up_operator_context, up_preparation_profile = (
+                    prepare_fixed_potential_static_local_operator_profiled(
+                        grid_geometry=grid_geometry,
+                        rho_up=rho_up,
+                        rho_down=rho_down,
+                        spin_channel="up",
+                        case=case,
+                        use_monitor_patch=True,
+                        patch_parameters=patch_parameters,
+                        kinetic_version=kinetic_version,
+                        base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                    )
+                )
+                static_local_prepare_wall_time += up_preparation_profile.total_wall_time_seconds
+                hartree_solve_wall_time += up_preparation_profile.hartree_resolve_wall_time_seconds
+                local_ionic_resolve_wall_time += up_preparation_profile.local_ionic_resolve_wall_time_seconds
+                xc_resolve_wall_time += up_preparation_profile.xc_resolve_wall_time_seconds
+                iteration_static_local_prepare_elapsed += (
+                    up_preparation_profile.total_wall_time_seconds
+                )
+                hartree_solve_call_count += 1
             solve_up = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
                 rho_up=rho_up,
@@ -1250,6 +1480,9 @@ def run_h2_monitor_grid_scf_dry_run(
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
                 use_jax_block_kernels=use_jax_block_kernels,
+                operator_context=up_operator_context,
+                operator_preparation_profile=up_preparation_profile,
+                base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -1258,6 +1491,28 @@ def run_h2_monitor_grid_scf_dry_run(
         if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations):
             orbitals_down = np.asarray(orbitals_up, dtype=np.float64)
         elif occupations.n_beta > 0:
+            if use_step_local_static_local_reuse:
+                down_operator_context, down_preparation_profile = (
+                    prepare_fixed_potential_static_local_operator_profiled(
+                        grid_geometry=grid_geometry,
+                        rho_up=rho_up,
+                        rho_down=rho_down,
+                        spin_channel="down",
+                        case=case,
+                        use_monitor_patch=True,
+                        patch_parameters=patch_parameters,
+                        kinetic_version=kinetic_version,
+                        base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                    )
+                )
+                static_local_prepare_wall_time += down_preparation_profile.total_wall_time_seconds
+                hartree_solve_wall_time += down_preparation_profile.hartree_resolve_wall_time_seconds
+                local_ionic_resolve_wall_time += down_preparation_profile.local_ionic_resolve_wall_time_seconds
+                xc_resolve_wall_time += down_preparation_profile.xc_resolve_wall_time_seconds
+                iteration_static_local_prepare_elapsed += (
+                    down_preparation_profile.total_wall_time_seconds
+                )
+                hartree_solve_call_count += 1
             solve_down = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
                 rho_up=rho_up,
@@ -1272,12 +1527,39 @@ def run_h2_monitor_grid_scf_dry_run(
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
                 use_jax_block_kernels=use_jax_block_kernels,
+                operator_context=down_operator_context,
+                operator_preparation_profile=down_preparation_profile,
+                base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
             )
             orbitals_down = solve_down.orbitals
         else:
             orbitals_down = _empty_orbital_block(grid_geometry)
         eigensolver_elapsed = perf_counter() - eigensolver_start
-        eigensolver_wall_time += eigensolver_elapsed
+        if not use_step_local_static_local_reuse:
+            for solve_result in (solve_up, solve_down):
+                if solve_result is None or solve_result.static_local_preparation_profile is None:
+                    continue
+                static_local_prepare_wall_time += (
+                    solve_result.static_local_preparation_profile.total_wall_time_seconds
+                )
+                hartree_solve_wall_time += (
+                    solve_result.static_local_preparation_profile.hartree_resolve_wall_time_seconds
+                )
+                local_ionic_resolve_wall_time += (
+                    solve_result.static_local_preparation_profile.local_ionic_resolve_wall_time_seconds
+                )
+                xc_resolve_wall_time += (
+                    solve_result.static_local_preparation_profile.xc_resolve_wall_time_seconds
+                )
+                iteration_static_local_prepare_elapsed += (
+                    solve_result.static_local_preparation_profile.total_wall_time_seconds
+                )
+                hartree_solve_call_count += 1
+        eigensolver_core_elapsed = max(
+            0.0,
+            float(eigensolver_elapsed - iteration_static_local_prepare_elapsed),
+        )
+        eigensolver_wall_time += eigensolver_core_elapsed
 
         density_update_start = perf_counter()
         rho_up_out = _renormalize_density(
@@ -1313,18 +1595,57 @@ def run_h2_monitor_grid_scf_dry_run(
         density_update_wall_time += density_update_elapsed
 
         energy_evaluation_start = perf_counter()
-        energy = evaluate_static_local_single_point_energy(
-            rho_up=rho_up_out,
-            rho_down=rho_down_out,
-            orbitals_up=orbitals_up,
-            orbitals_down=orbitals_down,
-            occupations=occupations,
-            grid_geometry=grid_geometry,
-            case=case,
-            use_monitor_patch=True,
-            patch_parameters=patch_parameters,
-            kinetic_version=kinetic_version,
-        )
+        if use_step_local_static_local_reuse:
+            energy_spin_channel = (
+                "up"
+                if occupations.n_alpha > 0
+                else "down"
+            )
+            energy_context, energy_preparation_profile = (
+                prepare_fixed_potential_static_local_operator_profiled(
+                    grid_geometry=grid_geometry,
+                    rho_up=rho_up_out,
+                    rho_down=rho_down_out,
+                    spin_channel=energy_spin_channel,
+                    case=case,
+                    use_monitor_patch=True,
+                    patch_parameters=patch_parameters,
+                    kinetic_version=kinetic_version,
+                    base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                )
+            )
+            static_local_prepare_wall_time += energy_preparation_profile.total_wall_time_seconds
+            hartree_solve_wall_time += energy_preparation_profile.hartree_resolve_wall_time_seconds
+            local_ionic_resolve_wall_time += (
+                energy_preparation_profile.local_ionic_resolve_wall_time_seconds
+            )
+            xc_resolve_wall_time += energy_preparation_profile.xc_resolve_wall_time_seconds
+            hartree_solve_call_count += 1
+            energy, energy_profile = evaluate_static_local_single_point_energy_from_context(
+                energy_context,
+                orbitals_up=orbitals_up,
+                orbitals_down=orbitals_down,
+                occupations=occupations,
+            )
+            kinetic_energy_wall_time += energy_profile.kinetic_wall_time_seconds
+            local_ionic_energy_wall_time += energy_profile.local_ionic_wall_time_seconds
+            hartree_energy_wall_time += energy_profile.hartree_energy_wall_time_seconds
+            xc_energy_wall_time += energy_profile.xc_energy_wall_time_seconds
+            ion_ion_energy_wall_time += energy_profile.ion_ion_wall_time_seconds
+        else:
+            energy = evaluate_static_local_single_point_energy(
+                rho_up=rho_up_out,
+                rho_down=rho_down_out,
+                orbitals_up=orbitals_up,
+                orbitals_down=orbitals_down,
+                occupations=occupations,
+                grid_geometry=grid_geometry,
+                case=case,
+                use_monitor_patch=True,
+                patch_parameters=patch_parameters,
+                kinetic_version=kinetic_version,
+            )
+            hartree_solve_call_count += 1
         energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
         energy_evaluation_wall_time += energy_evaluation_elapsed
 
@@ -1456,7 +1777,7 @@ def run_h2_monitor_grid_scf_dry_run(
         previous_energy_total = energy.total
         bookkeeping_elapsed = perf_counter() - bookkeeping_start
 
-        iteration_eigensolver_times.append(float(eigensolver_elapsed))
+        iteration_eigensolver_times.append(float(eigensolver_core_elapsed))
         iteration_energy_evaluation_times.append(float(energy_evaluation_elapsed))
         iteration_density_update_times.append(float(density_update_elapsed))
         iteration_bookkeeping_times.append(float(bookkeeping_elapsed))
@@ -1491,6 +1812,7 @@ def run_h2_monitor_grid_scf_dry_run(
             patch_parameters,
             kinetic_version=kinetic_version,
             use_jax_block_kernels=use_jax_block_kernels,
+            use_step_local_static_local_reuse=use_step_local_static_local_reuse,
             cycle_breaker_enabled=enable_cycle_breaker,
             cycle_breaker_weight=cycle_breaker_weight,
             diis_enabled=enable_diis,
@@ -1498,6 +1820,7 @@ def run_h2_monitor_grid_scf_dry_run(
             diis_history_length=diis_history_length,
         ),
         use_jax_block_kernels=bool(use_jax_block_kernels),
+        use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         cycle_breaker_enabled=bool(enable_cycle_breaker),
         cycle_breaker_weight=float(cycle_breaker_weight),
         cycle_breaker_triggered_iterations=tuple(cycle_breaker_triggered_iterations),
@@ -1526,9 +1849,19 @@ def run_h2_monitor_grid_scf_dry_run(
         total_wall_time_seconds=total_wall_time_seconds,
         average_iteration_wall_time_seconds=average_iteration_wall_time_seconds,
         eigensolver_wall_time_seconds=float(eigensolver_wall_time),
+        static_local_prepare_wall_time_seconds=float(static_local_prepare_wall_time),
+        hartree_solve_wall_time_seconds=float(hartree_solve_wall_time),
+        local_ionic_resolve_wall_time_seconds=float(local_ionic_resolve_wall_time),
+        xc_resolve_wall_time_seconds=float(xc_resolve_wall_time),
         energy_evaluation_wall_time_seconds=float(energy_evaluation_wall_time),
+        kinetic_energy_wall_time_seconds=float(kinetic_energy_wall_time),
+        local_ionic_energy_wall_time_seconds=float(local_ionic_energy_wall_time),
+        hartree_energy_wall_time_seconds=float(hartree_energy_wall_time),
+        xc_energy_wall_time_seconds=float(xc_energy_wall_time),
+        ion_ion_energy_wall_time_seconds=float(ion_ion_energy_wall_time),
         density_update_wall_time_seconds=float(density_update_wall_time),
         bookkeeping_wall_time_seconds=bookkeeping_wall_time_seconds,
+        hartree_solve_call_count=int(hartree_solve_call_count),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
         density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),

@@ -98,6 +98,17 @@ class FixedPotentialStaticLocalOperatorContext:
 
 
 @dataclass(frozen=True)
+class FixedPotentialStaticLocalPreparationProfile:
+    """Very small timing/profile summary for static-local context preparation."""
+
+    density_build_wall_time_seconds: float
+    local_ionic_resolve_wall_time_seconds: float
+    hartree_resolve_wall_time_seconds: float
+    xc_resolve_wall_time_seconds: float
+    total_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
 class FixedPotentialEigensolverResult:
     """Audit-facing result of the first fixed-potential eigensolver."""
 
@@ -119,6 +130,7 @@ class FixedPotentialEigensolverResult:
     initial_guess_orbitals: np.ndarray
     final_basis_orbitals: np.ndarray
     operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext
+    static_local_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
     use_jax_block_kernels: bool = False
     use_jax_cached_kernels: bool = False
     wall_time_seconds: float | None = None
@@ -380,6 +392,7 @@ def _resolve_static_local_ionic_potential(
     *,
     use_monitor_patch: bool,
     patch_parameters: LocalPotentialPatchParameters | None,
+    base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
 ) -> tuple[
     np.ndarray,
     LocalIonicPotentialEvaluation | None,
@@ -404,6 +417,7 @@ def _resolve_static_local_ionic_potential(
             grid_geometry=grid_geometry,
             density_field=rho_total,
             patch_parameters=patch_parameters,
+            base_evaluation=base_local_ionic_evaluation,
         )
         return (
             embedding.corrected_total_local_potential,
@@ -513,7 +527,7 @@ def build_fixed_potential_static_ks_operator(
     return _operator
 
 
-def prepare_fixed_potential_static_local_operator(
+def prepare_fixed_potential_static_local_operator_profiled(
     grid_geometry: GridGeometryLike,
     rho_up: np.ndarray,
     rho_down: np.ndarray,
@@ -527,7 +541,11 @@ def prepare_fixed_potential_static_local_operator(
     use_monitor_patch: bool = False,
     patch_parameters: LocalPotentialPatchParameters | None = None,
     kinetic_version: str = "production",
-) -> FixedPotentialStaticLocalOperatorContext:
+    base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
+) -> tuple[
+    FixedPotentialStaticLocalOperatorContext,
+    FixedPotentialStaticLocalPreparationProfile,
+]:
     """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid.
 
     This operator intentionally excludes nonlocal ionic action and any SCF
@@ -536,15 +554,19 @@ def prepare_fixed_potential_static_local_operator(
     potential field matched to the chosen frozen density.
     """
 
+    total_start = time.perf_counter()
     rho_up_field = validate_orbital_field(rho_up, grid_geometry=grid_geometry, name="rho_up")
     rho_down_field = validate_orbital_field(rho_down, grid_geometry=grid_geometry, name="rho_down")
     normalized_spin = _normalize_spin_channel(spin_channel)
     normalized_kinetic_version = _normalize_static_local_kinetic_version(kinetic_version)
+    density_start = time.perf_counter()
     rho_total = _build_total_density_on_grid(
         rho_up=rho_up_field,
         rho_down=rho_down_field,
         grid_geometry=grid_geometry,
     )
+    density_elapsed = time.perf_counter() - density_start
+    local_start = time.perf_counter()
     local_field, local_evaluation, patch_embedding = _resolve_static_local_ionic_potential(
         grid_geometry=grid_geometry,
         case=case,
@@ -552,12 +574,17 @@ def prepare_fixed_potential_static_local_operator(
         local_ionic_potential=local_ionic_potential,
         use_monitor_patch=use_monitor_patch,
         patch_parameters=patch_parameters,
+        base_local_ionic_evaluation=base_local_ionic_evaluation,
     )
+    local_elapsed = time.perf_counter() - local_start
+    hartree_start = time.perf_counter()
     hartree_field, hartree_result = _resolve_hartree_potential(
         grid_geometry=grid_geometry,
         rho_total=rho_total,
         hartree_potential=hartree_potential,
     )
+    hartree_elapsed = time.perf_counter() - hartree_start
+    xc_start = time.perf_counter()
     xc_field, lsda_evaluation = _resolve_xc_potential(
         grid_geometry=grid_geometry,
         rho_up=rho_up_field,
@@ -567,7 +594,8 @@ def prepare_fixed_potential_static_local_operator(
         xc_potential=xc_potential,
         xc_functional=xc_functional,
     )
-    return FixedPotentialStaticLocalOperatorContext(
+    xc_elapsed = time.perf_counter() - xc_start
+    context = FixedPotentialStaticLocalOperatorContext(
         grid_geometry=grid_geometry,
         case=case,
         spin_channel=normalized_spin,
@@ -587,6 +615,50 @@ def prepare_fixed_potential_static_local_operator(
         lsda_evaluation=lsda_evaluation,
         kinetic_version=normalized_kinetic_version,
     )
+    profile = FixedPotentialStaticLocalPreparationProfile(
+        density_build_wall_time_seconds=float(density_elapsed),
+        local_ionic_resolve_wall_time_seconds=float(local_elapsed),
+        hartree_resolve_wall_time_seconds=float(hartree_elapsed),
+        xc_resolve_wall_time_seconds=float(xc_elapsed),
+        total_wall_time_seconds=float(time.perf_counter() - total_start),
+    )
+    return context, profile
+
+
+def prepare_fixed_potential_static_local_operator(
+    grid_geometry: GridGeometryLike,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    spin_channel: str,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    local_ionic_potential: LocalIonicPotentialEvaluation | np.ndarray | None = None,
+    hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
+    xc_potential: np.ndarray | None = None,
+    xc_functional: str | None = None,
+    *,
+    use_monitor_patch: bool = False,
+    patch_parameters: LocalPotentialPatchParameters | None = None,
+    kinetic_version: str = "production",
+    base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
+) -> FixedPotentialStaticLocalOperatorContext:
+    """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid."""
+
+    context, _ = prepare_fixed_potential_static_local_operator_profiled(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up,
+        rho_down=rho_down,
+        spin_channel=spin_channel,
+        case=case,
+        local_ionic_potential=local_ionic_potential,
+        hartree_potential=hartree_potential,
+        xc_potential=xc_potential,
+        xc_functional=xc_functional,
+        use_monitor_patch=use_monitor_patch,
+        patch_parameters=patch_parameters,
+        kinetic_version=kinetic_version,
+        base_local_ionic_evaluation=base_local_ionic_evaluation,
+    )
+    return context
 
 
 def apply_fixed_potential_static_local_operator(
@@ -987,6 +1059,7 @@ def _solve_weighted_fixed_potential_problem(
         initial_guess_orbitals=np.asarray(initial_guess, dtype=np.float64),
         final_basis_orbitals=np.asarray(orbitals, dtype=np.float64),
         operator_context=operator_context,
+        static_local_preparation_profile=None,
         use_jax_block_kernels=use_jax_block_kernels,
         use_jax_cached_kernels=bool(use_jax_block_kernels),
         wall_time_seconds=float(wall_time_seconds),
@@ -1052,6 +1125,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     hartree_potential: OpenBoundaryPoissonResult | np.ndarray | None = None,
     xc_potential: np.ndarray | None = None,
     xc_functional: str | None = None,
+    operator_context: FixedPotentialStaticLocalOperatorContext | None = None,
     max_iterations: int = 400,
     tolerance: float = 1.0e-3,
     initial_subspace_size: int | None = None,
@@ -1061,6 +1135,8 @@ def solve_fixed_potential_static_local_eigenproblem(
     patch_parameters: LocalPotentialPatchParameters | None = None,
     kinetic_version: str = "production",
     use_jax_block_kernels: bool = False,
+    operator_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None,
+    base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -1071,21 +1147,25 @@ def solve_fixed_potential_static_local_eigenproblem(
     with frozen density-derived local terms and no nonlocal ionic action.
     """
 
-    operator_context = prepare_fixed_potential_static_local_operator(
-        grid_geometry=grid_geometry,
-        rho_up=rho_up,
-        rho_down=rho_down,
-        spin_channel=spin_channel,
-        case=case,
-        local_ionic_potential=local_ionic_potential,
-        hartree_potential=hartree_potential,
-        xc_potential=xc_potential,
-        xc_functional=xc_functional,
-        use_monitor_patch=use_monitor_patch,
-        patch_parameters=patch_parameters,
-        kinetic_version=kinetic_version,
-    )
-    return _solve_weighted_fixed_potential_problem(
+    if operator_context is None:
+        operator_context, operator_preparation_profile = (
+            prepare_fixed_potential_static_local_operator_profiled(
+                grid_geometry=grid_geometry,
+                rho_up=rho_up,
+                rho_down=rho_down,
+                spin_channel=spin_channel,
+                case=case,
+                local_ionic_potential=local_ionic_potential,
+                hartree_potential=hartree_potential,
+                xc_potential=xc_potential,
+                xc_functional=xc_functional,
+                use_monitor_patch=use_monitor_patch,
+                patch_parameters=patch_parameters,
+                kinetic_version=kinetic_version,
+                base_local_ionic_evaluation=base_local_ionic_evaluation,
+            )
+        )
+    result = _solve_weighted_fixed_potential_problem(
         operator_context=operator_context,
         block_apply=apply_fixed_potential_static_local_block,
         k=k,
@@ -1095,4 +1175,28 @@ def solve_fixed_potential_static_local_eigenproblem(
         initial_subspace_size=initial_subspace_size,
         ncv=ncv,
         use_jax_block_kernels=use_jax_block_kernels,
+    )
+    return FixedPotentialEigensolverResult(
+        target_orbitals=result.target_orbitals,
+        solver_method=result.solver_method,
+        solver_note=result.solver_note,
+        converged=result.converged,
+        iteration_count=result.iteration_count,
+        tolerance=result.tolerance,
+        eigenvalues=result.eigenvalues,
+        orbitals=result.orbitals,
+        weighted_overlap=result.weighted_overlap,
+        max_orthogonality_error=result.max_orthogonality_error,
+        residual_norms=result.residual_norms,
+        residual_history=result.residual_history,
+        ritz_value_history=result.ritz_value_history,
+        subspace_dimensions=result.subspace_dimensions,
+        ritz_matrix=result.ritz_matrix,
+        initial_guess_orbitals=result.initial_guess_orbitals,
+        final_basis_orbitals=result.final_basis_orbitals,
+        operator_context=result.operator_context,
+        static_local_preparation_profile=operator_preparation_profile,
+        use_jax_block_kernels=result.use_jax_block_kernels,
+        use_jax_cached_kernels=result.use_jax_cached_kernels,
+        wall_time_seconds=result.wall_time_seconds,
     )

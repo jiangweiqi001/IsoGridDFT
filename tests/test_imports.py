@@ -443,3 +443,19 @@ def test_import_h2_jax_scf_hotpath_baseline() -> None:
     assert H2_JAX_SCF_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_SCF_HOTPATH_BASELINE.triplet_old_route.use_jax_block_kernels is False
     assert H2_JAX_SCF_HOTPATH_BASELINE.triplet_jax_route.use_jax_block_kernels is True
+
+
+def test_import_h2_jax_triplet_hartree_energy_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_triplet_hartree_energy_audit import (
+        run_h2_jax_triplet_hartree_energy_audit,
+    )
+
+    assert callable(run_h2_jax_triplet_hartree_energy_audit)
+
+
+def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE
+
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_baseline_route.hartree_solve_call_count == 37
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_optimized_route.use_step_local_static_local_reuse is True

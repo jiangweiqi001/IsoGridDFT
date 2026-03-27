@@ -3,6 +3,7 @@
 from .eigensolver import FixedPotentialEigensolverResult
 from .eigensolver import FixedPotentialOperatorContext
 from .eigensolver import FixedPotentialStaticLocalOperatorContext
+from .eigensolver import FixedPotentialStaticLocalPreparationProfile
 from .eigensolver import apply_fixed_potential_static_ks_block
 from .eigensolver import apply_fixed_potential_static_ks_operator
 from .eigensolver import apply_fixed_potential_static_local_block
@@ -12,6 +13,7 @@ from .eigensolver import build_fixed_potential_static_local_operator
 from .eigensolver import flatten_orbital_block
 from .eigensolver import prepare_fixed_potential_static_ks_operator
 from .eigensolver import prepare_fixed_potential_static_local_operator
+from .eigensolver import prepare_fixed_potential_static_local_operator_profiled
 from .eigensolver import reshape_orbital_columns
 from .eigensolver import solve_fixed_potential_eigenproblem
 from .eigensolver import solve_fixed_potential_static_local_eigenproblem
@@ -38,6 +40,7 @@ __all__ = [
     "FixedPotentialEigensolverResult",
     "FixedPotentialOperatorContext",
     "FixedPotentialStaticLocalOperatorContext",
+    "FixedPotentialStaticLocalPreparationProfile",
     "LocalHamiltonianTerms",
     "StaticKSHamiltonianTerms",
     "apply_fixed_potential_static_ks_block",
@@ -61,6 +64,7 @@ __all__ = [
     "flatten_orbital_block",
     "prepare_fixed_potential_static_ks_operator",
     "prepare_fixed_potential_static_local_operator",
+    "prepare_fixed_potential_static_local_operator_profiled",
     "reshape_orbital_columns",
     "solve_fixed_potential_eigenproblem",
     "solve_fixed_potential_static_local_eigenproblem",
