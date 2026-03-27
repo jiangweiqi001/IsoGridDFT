@@ -20,7 +20,6 @@ import numpy as np
 
 from isogrid.config.runtime_jax import get_configured_jax
 from isogrid.grid import MonitorGridGeometry
-from isogrid.ops.kinetic_jax import apply_monitor_grid_laplacian_operator_jax
 from isogrid.ops.kinetic_jax import build_monitor_grid_laplacian_operator_jax
 
 from .hartree import validate_density_field
@@ -39,8 +38,12 @@ class MonitorPoissonJaxSolveDiagnostics:
     residual_max: float
     converged: bool
     total_wall_time_seconds: float = 0.0
+    boundary_condition_wall_time_seconds: float = 0.0
     build_wall_time_seconds: float = 0.0
+    rhs_assembly_wall_time_seconds: float = 0.0
     cg_wall_time_seconds: float = 0.0
+    matvec_call_count: int = 0
+    matvec_wall_time_seconds: float = 0.0
     used_cached_operator: bool = False
     first_solve_for_cached_operator: bool = False
 
@@ -53,6 +56,7 @@ class MonitorPoissonJaxCachedSolveKernels:
     interior_size: int
     scatter: object
     gather: object
+    boundary_laplacian: object
     matvec: object
 
 
@@ -116,7 +120,7 @@ def build_monitor_open_boundary_poisson_matvec_jax(
         action = -laplacian(full_field)
         return gather(action)
 
-    return _matvec
+    return laplacian, _matvec
 
 
 def clear_monitor_poisson_jax_kernel_cache() -> None:
@@ -146,13 +150,16 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
 ) -> tuple[MonitorPoissonJaxCachedSolveKernels, bool]:
     if not use_cached_operator:
         interior_mask, interior_size, scatter, gather = _build_monitor_interior_scatter(grid_geometry)
-        matvec = build_monitor_open_boundary_poisson_matvec_jax(grid_geometry=grid_geometry)
+        boundary_laplacian, matvec = build_monitor_open_boundary_poisson_matvec_jax(
+            grid_geometry=grid_geometry,
+        )
         return (
             MonitorPoissonJaxCachedSolveKernels(
                 interior_mask=interior_mask,
                 interior_size=interior_size,
                 scatter=scatter,
                 gather=gather,
+                boundary_laplacian=boundary_laplacian,
                 matvec=matvec,
             ),
             False,
@@ -164,12 +171,15 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
         return cached, False
 
     interior_mask, interior_size, scatter, gather = _build_monitor_interior_scatter(grid_geometry)
-    matvec = build_monitor_open_boundary_poisson_matvec_jax(grid_geometry=grid_geometry)
+    boundary_laplacian, matvec = build_monitor_open_boundary_poisson_matvec_jax(
+        grid_geometry=grid_geometry,
+    )
     cached = MonitorPoissonJaxCachedSolveKernels(
         interior_mask=interior_mask,
         interior_size=interior_size,
         scatter=scatter,
         gather=gather,
+        boundary_laplacian=boundary_laplacian,
         matvec=matvec,
     )
     _MONITOR_POISSON_JAX_KERNEL_CACHE[cache_key] = cached
@@ -185,9 +195,20 @@ def _run_jax_cg(
 ):
     jax = get_configured_jax()
     jnp = jax.numpy
+    matvec_call_count = 0
+    matvec_wall_time_seconds = 0.0
+
+    def _timed_matvec(values):
+        nonlocal matvec_call_count, matvec_wall_time_seconds
+        start = perf_counter()
+        result = matvec(values)
+        matvec_wall_time_seconds += perf_counter() - start
+        matvec_call_count += 1
+        return result
+
     rhs_values = jnp.asarray(rhs, dtype=jnp.float64)
     x = jnp.zeros_like(rhs_values)
-    r = rhs_values - matvec(x)
+    r = rhs_values - _timed_matvec(x)
     p = r
     rr = jnp.vdot(r, r)
 
@@ -195,7 +216,7 @@ def _run_jax_cg(
     iteration_count = 0
     residual_max = float(jnp.max(jnp.abs(r)))
     for iteration in range(1, max_iterations + 1):
-        ap = matvec(p)
+        ap = _timed_matvec(p)
         denominator = jnp.vdot(p, ap)
         if float(jnp.abs(denominator)) <= 1.0e-20:
             break
@@ -219,6 +240,8 @@ def _run_jax_cg(
         iteration_count=iteration_count,
         residual_max=residual_max,
         converged=converged,
+        matvec_call_count=int(matvec_call_count),
+        matvec_wall_time_seconds=float(matvec_wall_time_seconds),
     )
 
 
@@ -237,11 +260,13 @@ def solve_open_boundary_poisson_monitor_jax(
 
     solve_start = perf_counter()
     density = validate_density_field(rho, grid_geometry=grid_geometry)
+    boundary_start = perf_counter()
     boundary_condition = _compute_multipole_boundary_condition(
         grid_geometry=grid_geometry,
         rho=density,
         multipole_order=multipole_order,
     )
+    boundary_elapsed = perf_counter() - boundary_start
     build_start = perf_counter()
     kernels, first_cached_solve = _get_monitor_open_boundary_poisson_kernels_jax(
         grid_geometry=grid_geometry,
@@ -251,23 +276,26 @@ def solve_open_boundary_poisson_monitor_jax(
     interior_mask = kernels.interior_mask
     scatter = kernels.scatter
     gather = kernels.gather
+    boundary_laplacian = kernels.boundary_laplacian
     matvec = kernels.matvec
     jax = get_configured_jax()
     jnp = jax.numpy
 
+    rhs_start = perf_counter()
     boundary_field = np.array(boundary_condition.boundary_values, copy=True)
     boundary_field[interior_mask] = 0.0
     rhs_full = _FOUR_PI * density + np.asarray(
-        apply_monitor_grid_laplacian_operator_jax(
+        boundary_laplacian(
             jnp.asarray(boundary_field, dtype=jnp.float64),
-            grid_geometry=grid_geometry,
         ),
         dtype=np.float64,
     )
+    rhs_interior = gather(rhs_full)
+    rhs_elapsed = perf_counter() - rhs_start
     cg_start = perf_counter()
     interior_solution, diagnostics = _run_jax_cg(
         matvec=matvec,
-        rhs=gather(rhs_full),
+        rhs=rhs_interior,
         tolerance=tolerance,
         max_iterations=max_iterations,
     )
@@ -282,8 +310,12 @@ def solve_open_boundary_poisson_monitor_jax(
         residual_max=diagnostics.residual_max,
         converged=diagnostics.converged,
         total_wall_time_seconds=float(total_elapsed),
+        boundary_condition_wall_time_seconds=float(boundary_elapsed),
         build_wall_time_seconds=float(build_elapsed),
+        rhs_assembly_wall_time_seconds=float(rhs_elapsed),
         cg_wall_time_seconds=float(cg_elapsed),
+        matvec_call_count=int(diagnostics.matvec_call_count),
+        matvec_wall_time_seconds=float(diagnostics.matvec_wall_time_seconds),
         used_cached_operator=bool(use_cached_operator),
         first_solve_for_cached_operator=bool(use_cached_operator and first_cached_solve),
     )

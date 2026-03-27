@@ -77,9 +77,18 @@ class H2TripletHartreeEnergyRouteResult:
     average_hartree_solve_wall_time_seconds: float | None
     first_hartree_solve_wall_time_seconds: float | None
     repeated_hartree_solve_average_wall_time_seconds: float | None
+    repeated_hartree_solve_min_wall_time_seconds: float | None
+    repeated_hartree_solve_max_wall_time_seconds: float | None
     average_hartree_cg_iterations: float | None
     first_hartree_cg_iterations: int | None
     repeated_hartree_cg_iteration_average: float | None
+    average_hartree_boundary_condition_wall_time_seconds: float | None
+    average_hartree_build_wall_time_seconds: float | None
+    average_hartree_rhs_assembly_wall_time_seconds: float | None
+    average_hartree_cg_wall_time_seconds: float | None
+    average_hartree_matvec_call_count: float | None
+    average_hartree_matvec_wall_time_seconds: float | None
+    average_hartree_matvec_wall_time_per_call_seconds: float | None
     hartree_cached_operator_usage_count: int
     hartree_cached_operator_first_solve_count: int
     timing_breakdown: H2TripletHartreeEnergyTimingBreakdown
@@ -149,9 +158,28 @@ def _build_route_result(
         repeated_hartree_solve_average_wall_time_seconds=(
             result.repeated_hartree_solve_average_wall_time_seconds
         ),
+        repeated_hartree_solve_min_wall_time_seconds=(
+            result.repeated_hartree_solve_min_wall_time_seconds
+        ),
+        repeated_hartree_solve_max_wall_time_seconds=(
+            result.repeated_hartree_solve_max_wall_time_seconds
+        ),
         average_hartree_cg_iterations=result.average_hartree_cg_iterations,
         first_hartree_cg_iterations=result.first_hartree_cg_iterations,
         repeated_hartree_cg_iteration_average=result.repeated_hartree_cg_iteration_average,
+        average_hartree_boundary_condition_wall_time_seconds=(
+            result.average_hartree_boundary_condition_wall_time_seconds
+        ),
+        average_hartree_build_wall_time_seconds=result.average_hartree_build_wall_time_seconds,
+        average_hartree_rhs_assembly_wall_time_seconds=(
+            result.average_hartree_rhs_assembly_wall_time_seconds
+        ),
+        average_hartree_cg_wall_time_seconds=result.average_hartree_cg_wall_time_seconds,
+        average_hartree_matvec_call_count=result.average_hartree_matvec_call_count,
+        average_hartree_matvec_wall_time_seconds=result.average_hartree_matvec_wall_time_seconds,
+        average_hartree_matvec_wall_time_per_call_seconds=(
+            result.average_hartree_matvec_wall_time_per_call_seconds
+        ),
         hartree_cached_operator_usage_count=int(result.hartree_cached_operator_usage_count),
         hartree_cached_operator_first_solve_count=int(result.hartree_cached_operator_first_solve_count),
         timing_breakdown=H2TripletHartreeEnergyTimingBreakdown(
@@ -261,13 +289,28 @@ def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
         "    repeated-solve [s]: "
         f"first={0.0 if route.first_hartree_solve_wall_time_seconds is None else route.first_hartree_solve_wall_time_seconds:.6f}, "
         f"avg={0.0 if route.average_hartree_solve_wall_time_seconds is None else route.average_hartree_solve_wall_time_seconds:.6f}, "
-        f"repeated_avg={0.0 if route.repeated_hartree_solve_average_wall_time_seconds is None else route.repeated_hartree_solve_average_wall_time_seconds:.6f}"
+        f"repeated_avg={0.0 if route.repeated_hartree_solve_average_wall_time_seconds is None else route.repeated_hartree_solve_average_wall_time_seconds:.6f}, "
+        f"repeated_min={0.0 if route.repeated_hartree_solve_min_wall_time_seconds is None else route.repeated_hartree_solve_min_wall_time_seconds:.6f}, "
+        f"repeated_max={0.0 if route.repeated_hartree_solve_max_wall_time_seconds is None else route.repeated_hartree_solve_max_wall_time_seconds:.6f}"
     )
     print(
         "    repeated-solve iters: "
         f"first={route.first_hartree_cg_iterations}, "
         f"avg={route.average_hartree_cg_iterations}, "
         f"repeated_avg={route.repeated_hartree_cg_iteration_average}"
+    )
+    print(
+        "    solve breakdown avg [s]: "
+        f"boundary={0.0 if route.average_hartree_boundary_condition_wall_time_seconds is None else route.average_hartree_boundary_condition_wall_time_seconds:.6f}, "
+        f"build={0.0 if route.average_hartree_build_wall_time_seconds is None else route.average_hartree_build_wall_time_seconds:.6f}, "
+        f"rhs={0.0 if route.average_hartree_rhs_assembly_wall_time_seconds is None else route.average_hartree_rhs_assembly_wall_time_seconds:.6f}, "
+        f"cg={0.0 if route.average_hartree_cg_wall_time_seconds is None else route.average_hartree_cg_wall_time_seconds:.6f}"
+    )
+    print(
+        "    matvec avg: "
+        f"calls={route.average_hartree_matvec_call_count}, "
+        f"wall={route.average_hartree_matvec_wall_time_seconds}, "
+        f"per_call={route.average_hartree_matvec_wall_time_per_call_seconds}"
     )
     print(
         "    cache stats: "

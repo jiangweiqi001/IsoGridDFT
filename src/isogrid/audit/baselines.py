@@ -2353,9 +2353,18 @@ class H2JaxTripletHartreeEnergyRouteBaseline:
     average_hartree_solve_wall_time_seconds: float | None
     first_hartree_solve_wall_time_seconds: float | None
     repeated_hartree_solve_average_wall_time_seconds: float | None
+    repeated_hartree_solve_min_wall_time_seconds: float | None
+    repeated_hartree_solve_max_wall_time_seconds: float | None
     average_hartree_cg_iterations: float | None
     first_hartree_cg_iterations: int | None
     repeated_hartree_cg_iteration_average: float | None
+    average_hartree_boundary_condition_wall_time_seconds: float | None
+    average_hartree_build_wall_time_seconds: float | None
+    average_hartree_rhs_assembly_wall_time_seconds: float | None
+    average_hartree_cg_wall_time_seconds: float | None
+    average_hartree_matvec_call_count: float | None
+    average_hartree_matvec_wall_time_seconds: float | None
+    average_hartree_matvec_wall_time_per_call_seconds: float | None
     hartree_cached_operator_usage_count: int
     hartree_cached_operator_first_solve_count: int
     eigensolver_wall_time_seconds: float
@@ -2668,32 +2677,41 @@ H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBase
         use_step_local_static_local_reuse=True,
         converged=True,
         iteration_count=18,
-        final_total_energy_ha=-1.221444887019,
-        final_lowest_eigenvalue_ha=-0.416839027624,
+        final_total_energy_ha=-1.221445985903,
+        final_lowest_eigenvalue_ha=-0.416920527811,
         hartree_solve_call_count=37,
-        total_wall_time_seconds=289.020552,
-        average_iteration_wall_time_seconds=16.056697,
-        average_hartree_solve_wall_time_seconds=4.720725,
-        first_hartree_solve_wall_time_seconds=6.704705,
-        repeated_hartree_solve_average_wall_time_seconds=4.665614,
+        total_wall_time_seconds=308.453393,
+        average_iteration_wall_time_seconds=17.136300,
+        average_hartree_solve_wall_time_seconds=4.505048,
+        first_hartree_solve_wall_time_seconds=7.697126,
+        repeated_hartree_solve_average_wall_time_seconds=4.416379,
+        repeated_hartree_solve_min_wall_time_seconds=4.118399,
+        repeated_hartree_solve_max_wall_time_seconds=4.675864,
         average_hartree_cg_iterations=400.0,
         first_hartree_cg_iterations=400,
         repeated_hartree_cg_iteration_average=400.0,
+        average_hartree_boundary_condition_wall_time_seconds=0.013755,
+        average_hartree_build_wall_time_seconds=0.070357,
+        average_hartree_rhs_assembly_wall_time_seconds=0.584875,
+        average_hartree_cg_wall_time_seconds=3.828131,
+        average_hartree_matvec_call_count=401.0,
+        average_hartree_matvec_wall_time_seconds=0.732417,
+        average_hartree_matvec_wall_time_per_call_seconds=0.0018264774114620471,
         hartree_cached_operator_usage_count=0,
         hartree_cached_operator_first_solve_count=0,
-        eigensolver_wall_time_seconds=103.531773,
-        static_local_prepare_wall_time_seconds=184.338645,
-        hartree_solve_wall_time_seconds=174.855615,
-        local_ionic_resolve_wall_time_seconds=7.648311,
-        xc_resolve_wall_time_seconds=1.824485,
-        energy_evaluation_wall_time_seconds=87.704317,
-        kinetic_energy_wall_time_seconds=0.941481,
+        eigensolver_wall_time_seconds=129.042787,
+        static_local_prepare_wall_time_seconds=178.041393,
+        hartree_solve_wall_time_seconds=167.109889,
+        local_ionic_resolve_wall_time_seconds=7.725487,
+        xc_resolve_wall_time_seconds=1.738294,
+        energy_evaluation_wall_time_seconds=86.391162,
+        kinetic_energy_wall_time_seconds=0.956781,
         local_ionic_energy_wall_time_seconds=0.000042,
-        hartree_energy_wall_time_seconds=0.036841,
-        xc_energy_wall_time_seconds=0.011779,
-        ion_ion_energy_wall_time_seconds=0.001173,
-        density_update_wall_time_seconds=0.102573,
-        bookkeeping_wall_time_seconds=98.213661,
+        hartree_energy_wall_time_seconds=0.033409,
+        xc_energy_wall_time_seconds=0.009311,
+        ion_ion_energy_wall_time_seconds=0.001194,
+        density_update_wall_time_seconds=0.090994,
+        bookkeeping_wall_time_seconds=92.319612,
     ),
     jax_hartree_optimized_route=H2JaxTripletHartreeEnergyRouteBaseline(
         path_label="jax-hartree-optimized",
@@ -2703,45 +2721,55 @@ H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBase
         use_step_local_static_local_reuse=True,
         converged=True,
         iteration_count=18,
-        final_total_energy_ha=-1.221450199571,
-        final_lowest_eigenvalue_ha=-0.417078319161,
+        final_total_energy_ha=-1.221449946051,
+        final_lowest_eigenvalue_ha=-0.416874607906,
         hartree_solve_call_count=37,
-        total_wall_time_seconds=272.127388,
-        average_iteration_wall_time_seconds=15.118188,
-        average_hartree_solve_wall_time_seconds=3.974504,
-        first_hartree_solve_wall_time_seconds=4.213623,
-        repeated_hartree_solve_average_wall_time_seconds=3.967862,
+        total_wall_time_seconds=249.996670,
+        average_iteration_wall_time_seconds=13.888704,
+        average_hartree_solve_wall_time_seconds=3.155682,
+        first_hartree_solve_wall_time_seconds=4.553090,
+        repeated_hartree_solve_average_wall_time_seconds=3.116865,
+        repeated_hartree_solve_min_wall_time_seconds=2.961972,
+        repeated_hartree_solve_max_wall_time_seconds=3.334848,
         average_hartree_cg_iterations=400.0,
         first_hartree_cg_iterations=400,
         repeated_hartree_cg_iteration_average=400.0,
+        average_hartree_boundary_condition_wall_time_seconds=0.014441,
+        average_hartree_build_wall_time_seconds=0.000267,
+        average_hartree_rhs_assembly_wall_time_seconds=0.024944,
+        average_hartree_cg_wall_time_seconds=3.109750,
+        average_hartree_matvec_call_count=401.0,
+        average_hartree_matvec_wall_time_seconds=0.053724,
+        average_hartree_matvec_wall_time_per_call_seconds=0.00013397461487914603,
         hartree_cached_operator_usage_count=37,
         hartree_cached_operator_first_solve_count=1,
-        eigensolver_wall_time_seconds=114.549335,
-        static_local_prepare_wall_time_seconds=156.363386,
-        hartree_solve_wall_time_seconds=147.078648,
-        local_ionic_resolve_wall_time_seconds=7.458047,
-        xc_resolve_wall_time_seconds=1.792979,
-        energy_evaluation_wall_time_seconds=76.980575,
-        kinetic_energy_wall_time_seconds=0.997526,
+        eigensolver_wall_time_seconds=121.677534,
+        static_local_prepare_wall_time_seconds=126.915424,
+        hartree_solve_wall_time_seconds=116.783923,
+        local_ionic_resolve_wall_time_seconds=7.870981,
+        xc_resolve_wall_time_seconds=1.811502,
+        energy_evaluation_wall_time_seconds=61.258812,
+        kinetic_energy_wall_time_seconds=1.048088,
         local_ionic_energy_wall_time_seconds=0.000039,
-        hartree_energy_wall_time_seconds=0.033291,
-        xc_energy_wall_time_seconds=0.009784,
-        ion_ion_energy_wall_time_seconds=0.001163,
-        density_update_wall_time_seconds=0.091070,
-        bookkeeping_wall_time_seconds=80.506413,
+        hartree_energy_wall_time_seconds=0.038786,
+        xc_energy_wall_time_seconds=0.010006,
+        ion_ion_energy_wall_time_seconds=0.001176,
+        density_update_wall_time_seconds=0.095907,
+        bookkeeping_wall_time_seconds=66.964416,
     ),
     diagnosis=(
         "This baseline compares two otherwise identical JAX-Hartree triplet SCF routes while "
         "keeping the JAX eigensolver hot path and step-local reuse fixed. The only intended "
         "difference is whether repeated monitor-grid Poisson solves reuse a cached operator "
         "callable. The solve count stays at 37 in both routes, but total wall time still drops "
-        "from about 289.02 s to about 272.13 s, and the average Hartree solve cost drops from "
-        "about 4.72 s to about 3.97 s. The dominant benefit therefore comes from reducing "
-        "repeated single-solve overhead rather than changing the SCF algorithm or the number of calls."
+        "from about 308.45 s to about 250.00 s, and the average Hartree solve cost drops from "
+        "about 4.51 s to about 3.16 s. The detailed single-solve breakdown shows that the "
+        "largest remaining cost is the CG body itself, while the repeated-solve reuse mainly "
+        "collapses build/setup and rhs/matvec overhead rather than reducing iteration count."
     ),
     note=(
-        "Very rough triplet-only SCF profiling baseline for repeated-solve reuse on the repaired "
-        "A-grid+patch+kinetic-trial-fix route with the JAX Hartree backend already enabled. "
+        "Very rough triplet-only SCF profiling baseline for single-solve / repeated-solve reuse "
+        "on the repaired A-grid+patch+kinetic-trial-fix route with the JAX Hartree backend enabled. "
         "Timing values come from the latest audit run and should be interpreted as rough wall-time "
         "references, not formal benchmarks."
     ),

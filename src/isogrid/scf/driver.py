@@ -258,11 +258,28 @@ class H2StaticLocalScfDryRunResult:
     average_hartree_solve_wall_time_seconds: float | None
     first_hartree_solve_wall_time_seconds: float | None
     repeated_hartree_solve_average_wall_time_seconds: float | None
+    repeated_hartree_solve_min_wall_time_seconds: float | None
+    repeated_hartree_solve_max_wall_time_seconds: float | None
     average_hartree_cg_iterations: float | None
     first_hartree_cg_iterations: int | None
     repeated_hartree_cg_iteration_average: float | None
+    average_hartree_boundary_condition_wall_time_seconds: float | None
+    average_hartree_build_wall_time_seconds: float | None
+    average_hartree_rhs_assembly_wall_time_seconds: float | None
+    average_hartree_cg_wall_time_seconds: float | None
+    average_hartree_matvec_call_count: float | None
+    average_hartree_matvec_wall_time_seconds: float | None
+    average_hartree_matvec_wall_time_per_call_seconds: float | None
     hartree_cached_operator_usage_count: int
     hartree_cached_operator_first_solve_count: int
+    hartree_solve_wall_time_seconds_history: tuple[float, ...]
+    hartree_cg_iterations_history: tuple[int, ...]
+    hartree_boundary_condition_wall_time_seconds_history: tuple[float, ...]
+    hartree_build_wall_time_seconds_history: tuple[float, ...]
+    hartree_rhs_assembly_wall_time_seconds_history: tuple[float, ...]
+    hartree_cg_wall_time_seconds_history: tuple[float, ...]
+    hartree_matvec_call_count_history: tuple[int, ...]
+    hartree_matvec_wall_time_seconds_history: tuple[float, ...]
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -733,6 +750,12 @@ def _record_last_jax_hartree_solve_diagnostics(
     cg_iterations: list[int],
     cached_use_flags: list[bool],
     cached_first_flags: list[bool],
+    boundary_condition_times: list[float] | None = None,
+    build_times: list[float] | None = None,
+    rhs_assembly_times: list[float] | None = None,
+    cg_times: list[float] | None = None,
+    matvec_call_counts: list[int] | None = None,
+    matvec_times: list[float] | None = None,
 ) -> None:
     if not enabled:
         return
@@ -743,6 +766,18 @@ def _record_last_jax_hartree_solve_diagnostics(
     cg_iterations.append(int(diagnostics.iteration_count))
     cached_use_flags.append(bool(diagnostics.used_cached_operator))
     cached_first_flags.append(bool(diagnostics.first_solve_for_cached_operator))
+    if boundary_condition_times is not None:
+        boundary_condition_times.append(float(diagnostics.boundary_condition_wall_time_seconds))
+    if build_times is not None:
+        build_times.append(float(diagnostics.build_wall_time_seconds))
+    if rhs_assembly_times is not None:
+        rhs_assembly_times.append(float(diagnostics.rhs_assembly_wall_time_seconds))
+    if cg_times is not None:
+        cg_times.append(float(diagnostics.cg_wall_time_seconds))
+    if matvec_call_counts is not None:
+        matvec_call_counts.append(int(diagnostics.matvec_call_count))
+    if matvec_times is not None:
+        matvec_times.append(float(diagnostics.matvec_wall_time_seconds))
 
 
 def _density_residual_fields(
@@ -1422,6 +1457,12 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
     hartree_cached_first_flags: list[bool] = []
+    hartree_boundary_condition_times: list[float] = []
+    hartree_build_times: list[float] = []
+    hartree_rhs_assembly_times: list[float] = []
+    hartree_cg_times: list[float] = []
+    hartree_matvec_call_counts: list[int] = []
+    hartree_matvec_times: list[float] = []
     eigensolver_wall_time = 0.0
     static_local_prepare_wall_time = 0.0
     hartree_solve_wall_time = 0.0
@@ -1468,6 +1509,12 @@ def run_h2_monitor_grid_scf_dry_run(
             cg_iterations=hartree_cg_iterations,
             cached_use_flags=hartree_cached_use_flags,
             cached_first_flags=hartree_cached_first_flags,
+            boundary_condition_times=hartree_boundary_condition_times,
+            build_times=hartree_build_times,
+            rhs_assembly_times=hartree_rhs_assembly_times,
+            cg_times=hartree_cg_times,
+            matvec_call_counts=hartree_matvec_call_counts,
+            matvec_times=hartree_matvec_times,
         )
         initial_energy_start = perf_counter()
         final_energy, initial_energy_profile = evaluate_static_local_single_point_energy_from_context(
@@ -1506,6 +1553,12 @@ def run_h2_monitor_grid_scf_dry_run(
             cg_iterations=hartree_cg_iterations,
             cached_use_flags=hartree_cached_use_flags,
             cached_first_flags=hartree_cached_first_flags,
+            boundary_condition_times=hartree_boundary_condition_times,
+            build_times=hartree_build_times,
+            rhs_assembly_times=hartree_rhs_assembly_times,
+            cg_times=hartree_cg_times,
+            matvec_call_counts=hartree_matvec_call_counts,
+            matvec_times=hartree_matvec_times,
         )
     converged = False
 
@@ -1551,6 +1604,12 @@ def run_h2_monitor_grid_scf_dry_run(
                     cg_iterations=hartree_cg_iterations,
                     cached_use_flags=hartree_cached_use_flags,
                     cached_first_flags=hartree_cached_first_flags,
+                    boundary_condition_times=hartree_boundary_condition_times,
+                    build_times=hartree_build_times,
+                    rhs_assembly_times=hartree_rhs_assembly_times,
+                    cg_times=hartree_cg_times,
+                    matvec_call_counts=hartree_matvec_call_counts,
+                    matvec_times=hartree_matvec_times,
                 )
             solve_up = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
@@ -1609,6 +1668,12 @@ def run_h2_monitor_grid_scf_dry_run(
                     cg_iterations=hartree_cg_iterations,
                     cached_use_flags=hartree_cached_use_flags,
                     cached_first_flags=hartree_cached_first_flags,
+                    boundary_condition_times=hartree_boundary_condition_times,
+                    build_times=hartree_build_times,
+                    rhs_assembly_times=hartree_rhs_assembly_times,
+                    cg_times=hartree_cg_times,
+                    matvec_call_counts=hartree_matvec_call_counts,
+                    matvec_times=hartree_matvec_times,
                 )
             solve_down = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
@@ -1728,6 +1793,12 @@ def run_h2_monitor_grid_scf_dry_run(
                 cg_iterations=hartree_cg_iterations,
                 cached_use_flags=hartree_cached_use_flags,
                 cached_first_flags=hartree_cached_first_flags,
+                boundary_condition_times=hartree_boundary_condition_times,
+                build_times=hartree_build_times,
+                rhs_assembly_times=hartree_rhs_assembly_times,
+                cg_times=hartree_cg_times,
+                matvec_call_counts=hartree_matvec_call_counts,
+                matvec_times=hartree_matvec_times,
             )
             energy, energy_profile = evaluate_static_local_single_point_energy_from_context(
                 energy_context,
@@ -1762,6 +1833,12 @@ def run_h2_monitor_grid_scf_dry_run(
                 cg_iterations=hartree_cg_iterations,
                 cached_use_flags=hartree_cached_use_flags,
                 cached_first_flags=hartree_cached_first_flags,
+                boundary_condition_times=hartree_boundary_condition_times,
+                build_times=hartree_build_times,
+                rhs_assembly_times=hartree_rhs_assembly_times,
+                cg_times=hartree_cg_times,
+                matvec_call_counts=hartree_matvec_call_counts,
+                matvec_times=hartree_matvec_times,
             )
         energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
         energy_evaluation_wall_time += energy_evaluation_elapsed
@@ -1922,6 +1999,16 @@ def run_h2_monitor_grid_scf_dry_run(
         if len(hartree_solve_times) <= 1
         else float(np.mean(hartree_solve_times[1:]))
     )
+    repeated_hartree_solve_min_wall_time_seconds = (
+        None
+        if len(hartree_solve_times) <= 1
+        else float(np.min(hartree_solve_times[1:]))
+    )
+    repeated_hartree_solve_max_wall_time_seconds = (
+        None
+        if len(hartree_solve_times) <= 1
+        else float(np.max(hartree_solve_times[1:]))
+    )
     average_hartree_cg_iterations = (
         None if not hartree_cg_iterations else float(np.mean(hartree_cg_iterations))
     )
@@ -1932,6 +2019,31 @@ def run_h2_monitor_grid_scf_dry_run(
         None
         if len(hartree_cg_iterations) <= 1
         else float(np.mean(hartree_cg_iterations[1:]))
+    )
+    average_hartree_boundary_condition_wall_time_seconds = (
+        None
+        if not hartree_boundary_condition_times
+        else float(np.mean(hartree_boundary_condition_times))
+    )
+    average_hartree_build_wall_time_seconds = (
+        None if not hartree_build_times else float(np.mean(hartree_build_times))
+    )
+    average_hartree_rhs_assembly_wall_time_seconds = (
+        None if not hartree_rhs_assembly_times else float(np.mean(hartree_rhs_assembly_times))
+    )
+    average_hartree_cg_wall_time_seconds = (
+        None if not hartree_cg_times else float(np.mean(hartree_cg_times))
+    )
+    average_hartree_matvec_call_count = (
+        None if not hartree_matvec_call_counts else float(np.mean(hartree_matvec_call_counts))
+    )
+    average_hartree_matvec_wall_time_seconds = (
+        None if not hartree_matvec_times else float(np.mean(hartree_matvec_times))
+    )
+    average_hartree_matvec_wall_time_per_call_seconds = (
+        None
+        if not hartree_matvec_times or not hartree_matvec_call_counts or sum(hartree_matvec_call_counts) == 0
+        else float(sum(hartree_matvec_times) / sum(hartree_matvec_call_counts))
     )
     bookkeeping_wall_time_seconds = float(
         total_wall_time_seconds
@@ -2008,11 +2120,32 @@ def run_h2_monitor_grid_scf_dry_run(
         average_hartree_solve_wall_time_seconds=average_hartree_solve_wall_time_seconds,
         first_hartree_solve_wall_time_seconds=first_hartree_solve_wall_time_seconds,
         repeated_hartree_solve_average_wall_time_seconds=repeated_hartree_solve_average_wall_time_seconds,
+        repeated_hartree_solve_min_wall_time_seconds=repeated_hartree_solve_min_wall_time_seconds,
+        repeated_hartree_solve_max_wall_time_seconds=repeated_hartree_solve_max_wall_time_seconds,
         average_hartree_cg_iterations=average_hartree_cg_iterations,
         first_hartree_cg_iterations=first_hartree_cg_iterations,
         repeated_hartree_cg_iteration_average=repeated_hartree_cg_iteration_average,
+        average_hartree_boundary_condition_wall_time_seconds=average_hartree_boundary_condition_wall_time_seconds,
+        average_hartree_build_wall_time_seconds=average_hartree_build_wall_time_seconds,
+        average_hartree_rhs_assembly_wall_time_seconds=average_hartree_rhs_assembly_wall_time_seconds,
+        average_hartree_cg_wall_time_seconds=average_hartree_cg_wall_time_seconds,
+        average_hartree_matvec_call_count=average_hartree_matvec_call_count,
+        average_hartree_matvec_wall_time_seconds=average_hartree_matvec_wall_time_seconds,
+        average_hartree_matvec_wall_time_per_call_seconds=average_hartree_matvec_wall_time_per_call_seconds,
         hartree_cached_operator_usage_count=int(sum(hartree_cached_use_flags)),
         hartree_cached_operator_first_solve_count=int(sum(hartree_cached_first_flags)),
+        hartree_solve_wall_time_seconds_history=tuple(float(value) for value in hartree_solve_times),
+        hartree_cg_iterations_history=tuple(int(value) for value in hartree_cg_iterations),
+        hartree_boundary_condition_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_boundary_condition_times
+        ),
+        hartree_build_wall_time_seconds_history=tuple(float(value) for value in hartree_build_times),
+        hartree_rhs_assembly_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_rhs_assembly_times
+        ),
+        hartree_cg_wall_time_seconds_history=tuple(float(value) for value in hartree_cg_times),
+        hartree_matvec_call_count_history=tuple(int(value) for value in hartree_matvec_call_counts),
+        hartree_matvec_wall_time_seconds_history=tuple(float(value) for value in hartree_matvec_times),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
         density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),

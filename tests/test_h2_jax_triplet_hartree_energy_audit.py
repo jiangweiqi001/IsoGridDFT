@@ -41,9 +41,18 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         average_hartree_solve_wall_time_seconds=5.0,
         first_hartree_solve_wall_time_seconds=12.0,
         repeated_hartree_solve_average_wall_time_seconds=4.8,
+        repeated_hartree_solve_min_wall_time_seconds=4.2,
+        repeated_hartree_solve_max_wall_time_seconds=5.1,
         average_hartree_cg_iterations=400.0,
         first_hartree_cg_iterations=400,
         repeated_hartree_cg_iteration_average=400.0,
+        average_hartree_boundary_condition_wall_time_seconds=0.2,
+        average_hartree_build_wall_time_seconds=0.3,
+        average_hartree_rhs_assembly_wall_time_seconds=0.4,
+        average_hartree_cg_wall_time_seconds=4.1,
+        average_hartree_matvec_call_count=401.0,
+        average_hartree_matvec_wall_time_seconds=3.5,
+        average_hartree_matvec_wall_time_per_call_seconds=0.0087,
         hartree_cached_operator_usage_count=37,
         hartree_cached_operator_first_solve_count=1,
         timing_breakdown=H2TripletHartreeEnergyTimingBreakdown(
@@ -83,5 +92,6 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     assert route.use_step_local_static_local_reuse is True
     assert route.hartree_solve_call_count == 37
     assert route.first_hartree_solve_wall_time_seconds == 12.0
+    assert route.average_hartree_matvec_call_count == 401.0
     assert route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
     assert audit_result.jax_hartree_optimized_route.final_total_energy_ha == -1.22
