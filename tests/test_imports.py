@@ -457,5 +457,6 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE
 
     assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.monitor_shape == (67, 67, 81)
-    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_baseline_route.hartree_solve_call_count == 37
-    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_optimized_route.use_step_local_static_local_reuse is True
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.baseline_route.hartree_backend == "python"
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_route.hartree_backend == "jax"
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_route.hartree_solve_call_count == 37

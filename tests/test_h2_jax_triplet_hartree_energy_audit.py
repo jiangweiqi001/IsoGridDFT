@@ -23,9 +23,10 @@ def test_h2_jax_triplet_hartree_energy_module_imports() -> None:
 
 def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     route = H2TripletHartreeEnergyRouteResult(
-        path_label="jax-optimized",
+        path_label="jax-hartree",
         spin_state_label="triplet",
         kinetic_version="trial_fix",
+        hartree_backend="jax",
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
         converged=True,
@@ -63,12 +64,13 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         ),
     )
     audit_result = H2TripletHartreeEnergyAuditResult(
-        jax_baseline=route,
-        jax_optimized=route,
+        baseline_route=route,
+        jax_hartree_route=route,
         note="triplet profiling smoke",
     )
 
+    assert route.hartree_backend == "jax"
     assert route.use_step_local_static_local_reuse is True
     assert route.hartree_solve_call_count == 37
     assert route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
-    assert audit_result.jax_optimized.final_total_energy_ha == -1.22
+    assert audit_result.jax_hartree_route.final_total_energy_ha == -1.22

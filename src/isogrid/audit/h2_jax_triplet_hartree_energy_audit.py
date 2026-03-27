@@ -1,4 +1,4 @@
-"""Very rough triplet-only SCF audit for Hartree and energy-evaluation reuse.
+"""Very rough triplet-only SCF audit for the Hartree backend switch.
 
 This audit keeps the A-grid H2 dry-run restricted to the current local-only
 Hamiltonian
@@ -6,16 +6,16 @@ Hamiltonian
     T + V_loc,ion + V_H + V_xc
 
 with the repaired monitor-grid Hartree path, patch-assisted local ionic slice,
-and the kinetic trial-fix branch. It compares two JAX-backed SCF routes on the
-already-converged H2 triplet case:
+and the kinetic trial-fix branch. It compares two otherwise identical JAX-backed
+SCF routes on the already-converged H2 triplet case:
 
-- the current JAX SCF hot path without per-step local reuse
-- the same JAX SCF hot path with very small step-local reuse of static-local
-  preparation and single-point energy inputs
+- the current baseline Hartree backend
+- the opt-in JAX Hartree backend that reuses the existing `poisson_jax.py` path
 
 The goal is not a formal benchmark. It is a small, auditable profile that
-answers whether repeated Poisson/Hartree and energy-evaluation work inside one
-SCF step can be reduced without changing the outer SCF algorithm.
+answers whether switching only the Hartree backend lowers the dominant Poisson /
+Hartree cost inside the SCF loop while keeping the triplet route numerically
+aligned.
 """
 
 from __future__ import annotations
@@ -57,11 +57,12 @@ class H2TripletHartreeEnergyTimingBreakdown:
 
 @dataclass(frozen=True)
 class H2TripletHartreeEnergyRouteResult:
-    """Compact triplet SCF profiling summary for one JAX route."""
+    """Compact triplet SCF profiling summary for one Hartree backend route."""
 
     path_label: str
     spin_state_label: str
     kinetic_version: str
+    hartree_backend: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     converged: bool
@@ -79,17 +80,17 @@ class H2TripletHartreeEnergyRouteResult:
 
 @dataclass(frozen=True)
 class H2TripletHartreeEnergyAuditResult:
-    """Top-level triplet-only SCF audit for repeated Hartree/energy work."""
+    """Top-level triplet-only SCF audit for the Hartree backend switch."""
 
-    jax_baseline: H2TripletHartreeEnergyRouteResult
-    jax_optimized: H2TripletHartreeEnergyRouteResult
+    baseline_route: H2TripletHartreeEnergyRouteResult
+    jax_hartree_route: H2TripletHartreeEnergyRouteResult
     note: str
 
 
 def _monitor_parameter_summary(result: H2StaticLocalScfDryRunResult) -> str:
     parameters = result.parameter_summary
     return (
-        "A-grid+patch+trial-fix triplet SCF Hartree/energy audit: "
+        "A-grid+patch+trial-fix triplet SCF Hartree-backend audit: "
         f"shape={parameters.grid_shape}, "
         f"box={parameters.box_half_extents_bohr}, "
         f"weight_scale={parameters.weight_scale:.2f}, "
@@ -99,6 +100,7 @@ def _monitor_parameter_summary(result: H2StaticLocalScfDryRunResult) -> str:
         f"strength={parameters.correction_strength:.2f}, "
         f"neighbors={parameters.interpolation_neighbors}, "
         f"kinetic={parameters.kinetic_version}, "
+        f"hartree_backend={parameters.hartree_backend}, "
         f"use_jax_block_kernels={parameters.use_jax_block_kernels}, "
         f"use_step_local_static_local_reuse={parameters.use_step_local_static_local_reuse}, "
         f"mixing={_A_GRID_DRY_RUN_MIXING:.2f}, "
@@ -118,6 +120,7 @@ def _build_route_result(
         path_label=path_label,
         spin_state_label=result.spin_state_label,
         kinetic_version=result.kinetic_version,
+        hartree_backend=result.hartree_backend,
         use_jax_block_kernels=bool(result.use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(result.use_step_local_static_local_reuse),
         converged=bool(result.converged),
@@ -159,8 +162,9 @@ def _build_route_result(
 def _run_route(
     *,
     case: BenchmarkCase,
-    use_step_local_static_local_reuse: bool,
+    hartree_backend: str,
 ) -> H2TripletHartreeEnergyRouteResult:
+    path_label = "baseline" if hartree_backend == "python" else "jax-hartree"
     return _build_route_result(
         run_h2_monitor_grid_scf_dry_run(
             "triplet",
@@ -172,35 +176,38 @@ def _run_route(
             eigensolver_tolerance=_A_GRID_DRY_RUN_EIGENSOLVER_TOLERANCE,
             eigensolver_ncv=_A_GRID_DRY_RUN_EIGENSOLVER_NCV,
             kinetic_version="trial_fix",
+            hartree_backend=hartree_backend,
             use_jax_block_kernels=True,
-            use_step_local_static_local_reuse=use_step_local_static_local_reuse,
+            use_step_local_static_local_reuse=True,
         ),
-        path_label="jax-optimized" if use_step_local_static_local_reuse else "jax-baseline",
+        path_label=path_label,
     )
 
 
 def run_h2_jax_triplet_hartree_energy_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2TripletHartreeEnergyAuditResult:
-    """Run the triplet-only SCF profiling audit for step-local reuse."""
+    """Run the triplet-only SCF profiling audit for the Hartree backend switch."""
 
-    jax_baseline = _run_route(case=case, use_step_local_static_local_reuse=False)
-    jax_optimized = _run_route(case=case, use_step_local_static_local_reuse=True)
+    baseline_route = _run_route(case=case, hartree_backend="python")
+    jax_hartree_route = _run_route(case=case, hartree_backend="jax")
     return H2TripletHartreeEnergyAuditResult(
-        jax_baseline=jax_baseline,
-        jax_optimized=jax_optimized,
+        baseline_route=baseline_route,
+        jax_hartree_route=jax_hartree_route,
         note=(
-            "Triplet-only A-grid SCF audit for the current repaired JAX hot path. The baseline "
-            "route uses the JAX eigensolver hot path without step-local reuse, while the optimized "
-            "route reuses the density-independent base local ionic evaluation and evaluates the "
-            "single-point energy from one freshly prepared output-density context inside each SCF "
-            "step. Nonlocal remains absent."
+            "Triplet-only A-grid SCF audit for the Hartree backend switch. Both routes keep "
+            "the JAX eigensolver hot path and the step-local static-local reuse enabled; the "
+            "only intended difference is whether the Hartree potential is resolved through the "
+            "existing Python/SciPy backend or the opt-in JAX Poisson backend. "
+            "The `static_local_prepare` and `hartree_solve` buckets are diagnostic and overlap "
+            "with `eigensolver` / `energy_eval`; they should not be summed with the total wall time."
         ),
     )
 
 
 def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
     print(f"  route: {route.path_label}")
+    print(f"    hartree_backend: {route.hartree_backend}")
     print(f"    converged: {route.converged}")
     print(f"    iterations: {route.iteration_count}")
     print(f"    final total energy [Ha]: {route.final_total_energy_ha:.12f}")
@@ -237,20 +244,20 @@ def print_h2_jax_triplet_hartree_energy_summary(
 ) -> None:
     """Print the compact triplet profiling summary."""
 
-    print("IsoGridDFT H2 triplet JAX Hartree/energy audit")
+    print("IsoGridDFT H2 triplet JAX Hartree backend audit")
     print(f"note: {result.note}")
     print()
-    _print_route(result.jax_baseline)
-    _print_route(result.jax_optimized)
+    _print_route(result.baseline_route)
+    _print_route(result.jax_hartree_route)
     print()
     print(
         "  total timing delta [s]: "
-        f"{result.jax_optimized.total_wall_time_seconds - result.jax_baseline.total_wall_time_seconds:+.6f}"
+        f"{result.jax_hartree_route.total_wall_time_seconds - result.baseline_route.total_wall_time_seconds:+.6f}"
     )
-    if result.jax_baseline.total_wall_time_seconds > 0.0:
+    if result.baseline_route.total_wall_time_seconds > 0.0:
         print(
-            "  timing ratio (optimized/baseline): "
-            f"{result.jax_optimized.total_wall_time_seconds / result.jax_baseline.total_wall_time_seconds:.6f}"
+            "  timing ratio (jax-hartree/baseline): "
+            f"{result.jax_hartree_route.total_wall_time_seconds / result.baseline_route.total_wall_time_seconds:.6f}"
         )
 
 

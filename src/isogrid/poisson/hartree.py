@@ -51,10 +51,32 @@ def solve_hartree_potential(
     tolerance: float = 1.0e-8,
     max_iterations: int = 400,
     solver: str = "auto",
+    backend: str = "python",
 ) -> OpenBoundaryPoissonResult:
     """Solve the first-stage Hartree potential from a total electron density."""
 
     density = validate_density_field(rho, grid_geometry=grid_geometry)
+    normalized_backend = backend.strip().lower()
+    if normalized_backend not in {"python", "jax"}:
+        raise ValueError(
+            "backend must be `python` or `jax`; "
+            f"received `{backend}`."
+        )
+    if normalized_backend == "jax":
+        if not isinstance(grid_geometry, MonitorGridGeometry):
+            raise ValueError(
+                "The JAX Hartree backend currently supports only the monitor-grid path."
+            )
+        from .poisson_jax import solve_open_boundary_poisson_monitor_jax
+
+        poisson_result, _ = solve_open_boundary_poisson_monitor_jax(
+            grid_geometry=grid_geometry,
+            rho=density,
+            multipole_order=multipole_order,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+        )
+        return poisson_result
     return solve_open_boundary_poisson(
         grid_geometry=grid_geometry,
         rho=density,

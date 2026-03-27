@@ -163,6 +163,7 @@ class H2ScfDryRunParameterSummary:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
+    hartree_backend: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     includes_nonlocal: bool
@@ -206,6 +207,7 @@ class H2StaticLocalScfDryRunResult:
     spin: int
     occupations: SpinOccupations
     parameter_summary: H2ScfDryRunParameterSummary
+    hartree_backend: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     cycle_breaker_enabled: bool
@@ -646,6 +648,7 @@ def _monitor_grid_scf_parameter_summary(
     patch_parameters: LocalPotentialPatchParameters,
     *,
     kinetic_version: str,
+    hartree_backend: str,
     use_jax_block_kernels: bool,
     use_step_local_static_local_reuse: bool,
     cycle_breaker_enabled: bool,
@@ -664,6 +667,7 @@ def _monitor_grid_scf_parameter_summary(
         correction_strength=float(patch_parameters.correction_strength),
         interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
         kinetic_version=kinetic_version,
+        hartree_backend=hartree_backend,
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         includes_nonlocal=False,
@@ -825,6 +829,7 @@ def evaluate_static_local_single_point_energy(
     use_monitor_patch: bool = False,
     patch_parameters: LocalPotentialPatchParameters | None = None,
     kinetic_version: str = "production",
+    hartree_backend: str = "python",
 ) -> SinglePointEnergyComponents:
     """Evaluate the local-only single-point energy on either supported grid.
 
@@ -922,6 +927,7 @@ def evaluate_static_local_single_point_energy(
     hartree_result = solve_hartree_potential(
         grid_geometry=grid_geometry,
         rho=rho_total,
+        backend=hartree_backend,
     )
     lsda_evaluation = evaluate_lsda_terms(
         rho_up=rho_up_field,
@@ -1311,6 +1317,7 @@ def run_h2_monitor_grid_scf_dry_run(
     eigensolver_tolerance: float = 1.0e-3,
     eigensolver_ncv: int = 20,
     kinetic_version: str = "trial_fix",
+    hartree_backend: str = "python",
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -1340,6 +1347,12 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("diis_history_length must be at least 2.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
+    normalized_hartree_backend = hartree_backend.strip().lower()
+    if normalized_hartree_backend not in {"python", "jax"}:
+        raise ValueError(
+            "hartree_backend must be `python` or `jax`; "
+            f"received `{hartree_backend}`."
+        )
 
     occupations = resolve_h2_spin_occupations(spin_label=spin_label, case=case)
     rho_up, rho_down, guess_up, guess_down = build_h2_initial_density_guess(
@@ -1395,6 +1408,7 @@ def run_h2_monitor_grid_scf_dry_run(
             patch_parameters=patch_parameters,
             kinetic_version=kinetic_version,
             base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+            hartree_backend=normalized_hartree_backend,
         )
         static_local_prepare_wall_time += initial_profile.total_wall_time_seconds
         hartree_solve_wall_time += initial_profile.hartree_resolve_wall_time_seconds
@@ -1427,6 +1441,7 @@ def run_h2_monitor_grid_scf_dry_run(
             use_monitor_patch=True,
             patch_parameters=patch_parameters,
             kinetic_version=kinetic_version,
+            hartree_backend=normalized_hartree_backend,
         )
         energy_evaluation_wall_time += perf_counter() - initial_energy_start
         hartree_solve_call_count += 1
@@ -1456,6 +1471,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         patch_parameters=patch_parameters,
                         kinetic_version=kinetic_version,
                         base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                        hartree_backend=normalized_hartree_backend,
                     )
                 )
                 static_local_prepare_wall_time += up_preparation_profile.total_wall_time_seconds
@@ -1483,6 +1499,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 operator_context=up_operator_context,
                 operator_preparation_profile=up_preparation_profile,
                 base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                hartree_backend=normalized_hartree_backend,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -1503,6 +1520,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         patch_parameters=patch_parameters,
                         kinetic_version=kinetic_version,
                         base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                        hartree_backend=normalized_hartree_backend,
                     )
                 )
                 static_local_prepare_wall_time += down_preparation_profile.total_wall_time_seconds
@@ -1530,6 +1548,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 operator_context=down_operator_context,
                 operator_preparation_profile=down_preparation_profile,
                 base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                hartree_backend=normalized_hartree_backend,
             )
             orbitals_down = solve_down.orbitals
         else:
@@ -1612,6 +1631,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     patch_parameters=patch_parameters,
                     kinetic_version=kinetic_version,
                     base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
+                    hartree_backend=normalized_hartree_backend,
                 )
             )
             static_local_prepare_wall_time += energy_preparation_profile.total_wall_time_seconds
@@ -1644,6 +1664,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 use_monitor_patch=True,
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
+                hartree_backend=normalized_hartree_backend,
             )
             hartree_solve_call_count += 1
         energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
@@ -1811,6 +1832,7 @@ def run_h2_monitor_grid_scf_dry_run(
         parameter_summary=_monitor_grid_scf_parameter_summary(
             patch_parameters,
             kinetic_version=kinetic_version,
+            hartree_backend=normalized_hartree_backend,
             use_jax_block_kernels=use_jax_block_kernels,
             use_step_local_static_local_reuse=use_step_local_static_local_reuse,
             cycle_breaker_enabled=enable_cycle_breaker,
@@ -1819,6 +1841,7 @@ def run_h2_monitor_grid_scf_dry_run(
             diis_warmup_iterations=diis_warmup_iterations,
             diis_history_length=diis_history_length,
         ),
+        hartree_backend=normalized_hartree_backend,
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         cycle_breaker_enabled=bool(enable_cycle_breaker),

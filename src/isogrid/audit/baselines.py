@@ -2339,6 +2339,7 @@ class H2JaxTripletHartreeEnergyRouteBaseline:
     """Recorded triplet-only SCF profiling route for Hartree/energy optimization."""
 
     path_label: str
+    hartree_backend: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     converged: bool
@@ -2365,7 +2366,7 @@ class H2JaxTripletHartreeEnergyRouteBaseline:
 
 @dataclass(frozen=True)
 class H2JaxTripletHartreeEnergyRegressionBaseline:
-    """Recorded triplet-only SCF profiling baseline for Hartree/energy reuse."""
+    """Recorded triplet-only SCF profiling baseline for the Hartree backend switch."""
 
     benchmark_name: str
     monitor_shape: tuple[int, int, int]
@@ -2375,8 +2376,8 @@ class H2JaxTripletHartreeEnergyRegressionBaseline:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
-    jax_baseline_route: H2JaxTripletHartreeEnergyRouteBaseline
-    jax_optimized_route: H2JaxTripletHartreeEnergyRouteBaseline
+    baseline_route: H2JaxTripletHartreeEnergyRouteBaseline
+    jax_hartree_route: H2JaxTripletHartreeEnergyRouteBaseline
     diagnosis: str
     note: str
 
@@ -2650,71 +2651,71 @@ H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBase
     correction_strength=1.30,
     interpolation_neighbors=8,
     kinetic_version="trial_fix",
-    jax_baseline_route=H2JaxTripletHartreeEnergyRouteBaseline(
-        path_label="jax-baseline",
-        use_jax_block_kernels=True,
-        use_step_local_static_local_reuse=False,
-        converged=True,
-        iteration_count=18,
-        final_total_energy_ha=-1.221399798775,
-        final_lowest_eigenvalue_ha=-0.415006640804,
-        hartree_solve_call_count=37,
-        total_wall_time_seconds=653.643677,
-        average_iteration_wall_time_seconds=36.313538,
-        eigensolver_wall_time_seconds=103.603578,
-        static_local_prepare_wall_time_seconds=258.335332,
-        hartree_solve_wall_time_seconds=252.247794,
-        local_ionic_resolve_wall_time_seconds=4.655088,
-        xc_resolve_wall_time_seconds=1.405962,
-        energy_evaluation_wall_time_seconds=291.538590,
-        kinetic_energy_wall_time_seconds=0.0,
-        local_ionic_energy_wall_time_seconds=0.0,
-        hartree_energy_wall_time_seconds=0.0,
-        xc_energy_wall_time_seconds=0.0,
-        ion_ion_energy_wall_time_seconds=0.0,
-        density_update_wall_time_seconds=0.088934,
-        bookkeeping_wall_time_seconds=258.412575,
-    ),
-    jax_optimized_route=H2JaxTripletHartreeEnergyRouteBaseline(
-        path_label="jax-optimized",
+    baseline_route=H2JaxTripletHartreeEnergyRouteBaseline(
+        path_label="baseline",
+        hartree_backend="python",
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
         converged=True,
         iteration_count=18,
-        final_total_energy_ha=-1.221447077127,
-        final_lowest_eigenvalue_ha=-0.416961008159,
+        final_total_energy_ha=-1.221444751809,
+        final_lowest_eigenvalue_ha=-0.416839011536,
         hartree_solve_call_count=37,
-        total_wall_time_seconds=610.211226,
-        average_iteration_wall_time_seconds=33.900624,
-        eigensolver_wall_time_seconds=99.768599,
-        static_local_prepare_wall_time_seconds=509.067168,
-        hartree_solve_wall_time_seconds=498.588525,
-        local_ionic_resolve_wall_time_seconds=7.498557,
-        xc_resolve_wall_time_seconds=2.927787,
-        energy_evaluation_wall_time_seconds=256.192466,
-        kinetic_energy_wall_time_seconds=1.138002,
-        local_ionic_energy_wall_time_seconds=0.000070,
-        hartree_energy_wall_time_seconds=0.039803,
-        xc_energy_wall_time_seconds=0.013469,
-        ion_ion_energy_wall_time_seconds=0.001791,
-        density_update_wall_time_seconds=0.090072,
-        bookkeeping_wall_time_seconds=254.160089,
+        total_wall_time_seconds=567.593850,
+        average_iteration_wall_time_seconds=31.532992,
+        eigensolver_wall_time_seconds=95.268828,
+        static_local_prepare_wall_time_seconds=471.050990,
+        hartree_solve_wall_time_seconds=460.313276,
+        local_ionic_resolve_wall_time_seconds=7.901192,
+        xc_resolve_wall_time_seconds=2.787132,
+        energy_evaluation_wall_time_seconds=232.887047,
+        kinetic_energy_wall_time_seconds=1.040427,
+        local_ionic_energy_wall_time_seconds=0.000042,
+        hartree_energy_wall_time_seconds=0.037677,
+        xc_energy_wall_time_seconds=0.010432,
+        ion_ion_energy_wall_time_seconds=0.001220,
+        density_update_wall_time_seconds=0.099311,
+        bookkeeping_wall_time_seconds=239.338664,
+    ),
+    jax_hartree_route=H2JaxTripletHartreeEnergyRouteBaseline(
+        path_label="jax-hartree",
+        hartree_backend="jax",
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
+        converged=True,
+        iteration_count=20,
+        final_total_energy_ha=-1.221458812022,
+        final_lowest_eigenvalue_ha=-0.417340788020,
+        hartree_solve_call_count=41,
+        total_wall_time_seconds=310.915227,
+        average_iteration_wall_time_seconds=15.545761,
+        eigensolver_wall_time_seconds=97.775190,
+        static_local_prepare_wall_time_seconds=211.950056,
+        hartree_solve_wall_time_seconds=202.956771,
+        local_ionic_resolve_wall_time_seconds=7.651331,
+        xc_resolve_wall_time_seconds=1.293101,
+        energy_evaluation_wall_time_seconds=106.293666,
+        kinetic_energy_wall_time_seconds=0.967230,
+        local_ionic_energy_wall_time_seconds=0.000039,
+        hartree_energy_wall_time_seconds=0.038370,
+        xc_energy_wall_time_seconds=0.010725,
+        ion_ion_energy_wall_time_seconds=0.001297,
+        density_update_wall_time_seconds=0.089884,
+        bookkeeping_wall_time_seconds=106.756487,
     ),
     diagnosis=(
-        "On the converged H2 triplet A-grid dry-run, the dominant cost is still the repeated "
-        "static-local preparation and its Hartree solve, not the pure block eigensolver hot path. "
-        "The optimized route keeps the same 37 Hartree solves as the baseline, which shows that the "
-        "current SCF algorithm still performs one Hartree solve for the frozen input density and one "
-        "for the output-density single-point energy in each step. Even without changing that physics "
-        "or outer control flow, a very small step-local optimization still reduces total wall time "
-        "from about 653.64 s to about 610.21 s by reusing the density-independent base local ionic "
-        "evaluation and routing the energy evaluation through one prepared local-only context instead "
-        "of rebuilding its pieces ad hoc."
+        "This baseline compares the same converged H2 triplet A-grid dry-run under two Hartree "
+        "backends while keeping the JAX eigensolver hot path and step-local reuse fixed. "
+        "Switching only the Hartree backend to the existing JAX Poisson route cuts total wall "
+        "time from about 567.59 s to about 310.92 s even though the JAX-Hartree route takes 20 "
+        "iterations and 41 Hartree solves instead of 18 iterations and 37 solves. The dominant "
+        "benefit therefore comes from faster individual Hartree solves, not from reducing the "
+        "number of calls."
     ),
     note=(
-        "Very rough triplet-only SCF profiling baseline for the current JAX hot path on the repaired "
-        "A-grid+patch+kinetic-trial-fix route. The optimized path does not change the SCF algorithm "
-        "or Hartree physics; it only adds step-local reuse for local-only energy evaluation inputs."
+        "Very rough triplet-only SCF profiling baseline for the Hartree backend switch on the "
+        "repaired A-grid+patch+kinetic-trial-fix route. Timing values are filled from the latest "
+        "audit run and should be interpreted as rough wall-time references, not formal benchmarks."
     ),
 )
 
