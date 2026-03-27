@@ -2295,6 +2295,45 @@ class H2JaxEigensolverHotpathReuseRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxScfHotpathRouteBaseline:
+    """Recorded A-grid SCF hot-path profiling result for one spin state and route."""
+
+    spin_state_label: str
+    use_jax_block_kernels: bool
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    eigensolver_wall_time_seconds: float
+    energy_evaluation_wall_time_seconds: float
+    density_update_wall_time_seconds: float
+    bookkeeping_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
+class H2JaxScfHotpathRegressionBaseline:
+    """Recorded A-grid SCF hot-path profiling baseline after JAX handoff."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    triplet_old_route: H2JaxScfHotpathRouteBaseline
+    triplet_jax_route: H2JaxScfHotpathRouteBaseline
+    singlet_old_route: H2JaxScfHotpathRouteBaseline | None
+    singlet_jax_route: H2JaxScfHotpathRouteBaseline | None
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2467,9 +2506,99 @@ H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE = H2JaxEigensolverHotpathReuseRegressi
 )
 
 
+H2_JAX_SCF_HOTPATH_BASELINE = H2JaxScfHotpathRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    triplet_old_route=H2JaxScfHotpathRouteBaseline(
+        spin_state_label="triplet",
+        use_jax_block_kernels=False,
+        converged=True,
+        iteration_count=18,
+        final_total_energy_ha=-1.2214418066604806,
+        final_lowest_eigenvalue_ha=-0.4168423341628571,
+        final_density_residual=0.004552787297010315,
+        total_wall_time_seconds=724.5313918269967,
+        average_iteration_wall_time_seconds=40.251743990388704,
+        eigensolver_wall_time_seconds=434.59398937699007,
+        energy_evaluation_wall_time_seconds=289.75772428499477,
+        density_update_wall_time_seconds=0.09753895502217347,
+        bookkeeping_wall_time_seconds=0.08213920998969115,
+    ),
+    triplet_jax_route=H2JaxScfHotpathRouteBaseline(
+        spin_state_label="triplet",
+        use_jax_block_kernels=True,
+        converged=True,
+        iteration_count=18,
+        final_total_energy_ha=-1.2214447513523696,
+        final_lowest_eigenvalue_ha=-0.4168390115357246,
+        final_density_residual=0.004951321275927076,
+        total_wall_time_seconds=613.7521552780017,
+        average_iteration_wall_time_seconds=34.097341959888986,
+        eigensolver_wall_time_seconds=338.9236460610264,
+        energy_evaluation_wall_time_seconds=274.67114807197504,
+        density_update_wall_time_seconds=0.08512964200781425,
+        bookkeeping_wall_time_seconds=0.07223150299250847,
+    ),
+    singlet_old_route=H2JaxScfHotpathRouteBaseline(
+        spin_state_label="singlet",
+        use_jax_block_kernels=False,
+        converged=False,
+        iteration_count=10,
+        final_total_energy_ha=-0.1408486512266819,
+        final_lowest_eigenvalue_ha=-0.4361423023175884,
+        final_density_residual=0.3336218796629846,
+        total_wall_time_seconds=430.8440534900001,
+        average_iteration_wall_time_seconds=43.08440534900001,
+        eigensolver_wall_time_seconds=219.9329558509853,
+        energy_evaluation_wall_time_seconds=210.7553523260067,
+        density_update_wall_time_seconds=0.1056408599979477,
+        bookkeeping_wall_time_seconds=0.05010445301013533,
+    ),
+    singlet_jax_route=H2JaxScfHotpathRouteBaseline(
+        spin_state_label="singlet",
+        use_jax_block_kernels=True,
+        converged=False,
+        iteration_count=10,
+        final_total_energy_ha=-0.14689331535515016,
+        final_lowest_eigenvalue_ha=-0.4440994383951656,
+        final_density_residual=0.3336247606043798,
+        total_wall_time_seconds=419.7974512669971,
+        average_iteration_wall_time_seconds=41.97974512669971,
+        eigensolver_wall_time_seconds=211.97360892900178,
+        energy_evaluation_wall_time_seconds=207.70101472899842,
+        density_update_wall_time_seconds=0.07198377999884542,
+        bookkeeping_wall_time_seconds=0.05084382899804041,
+    ),
+    diagnosis=(
+        "After wiring the optimized JAX fixed-potential hot path into the A-grid SCF dry-run loop, "
+        "the H2 triplet route becomes measurably faster end-to-end without changing the outer SCF "
+        "algorithm or the local-only physics. The triplet case still converges and its total wall "
+        "time drops from about 724.53 s on the old hot path to about 613.75 s on the JAX hot path. "
+        "The rough breakdown shows that the dominant cost is no longer tiny block linear algebra; it "
+        "is split mainly between repeated fixed-potential eigensolver work and repeated single-point "
+        "energy evaluation, which currently includes the monitor-grid Hartree/Poisson path. The "
+        "singlet auxiliary 10-step reference also gets slightly faster, but it remains unconverged, "
+        "so the profiling conclusion should still be anchored to triplet."
+    ),
+    note=(
+        "Very rough H2 A-grid SCF hot-path profiling baseline after wiring the already-correct JAX "
+        "block kernels into the dry-run loop. Triplet is the main converged profiling case; singlet "
+        "is only a 10-step auxiliary reference. Nonlocal remains absent from the A-grid path."
+    ),
+)
+
+
 __all__ = [
     "H2JaxEigensolverHotpathReuseRegressionBaseline",
     "H2JaxEigensolverHotpathRegressionBaseline",
+    "H2JaxScfHotpathRegressionBaseline",
+    "H2JaxScfHotpathRouteBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
     "H2JaxKernelConsistencyPoissonBaseline",
     "H2JaxKernelConsistencyReductionsBaseline",
@@ -2521,6 +2650,7 @@ __all__ = [
     "H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE",
     "H2_JAX_EIGENSOLVER_HOTPATH_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
+    "H2_JAX_SCF_HOTPATH_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_TRIAL_FIX_BASELINE",

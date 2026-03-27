@@ -29,6 +29,7 @@ It is not yet a general SCF framework and it is not the final production path.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 
@@ -159,6 +160,7 @@ class H2ScfDryRunParameterSummary:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
+    use_jax_block_kernels: bool
     includes_nonlocal: bool
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
@@ -189,6 +191,7 @@ class H2StaticLocalScfDryRunResult:
     spin: int
     occupations: SpinOccupations
     parameter_summary: H2ScfDryRunParameterSummary
+    use_jax_block_kernels: bool
     cycle_breaker_enabled: bool
     cycle_breaker_weight: float
     cycle_breaker_triggered_iterations: tuple[int, ...]
@@ -214,6 +217,16 @@ class H2StaticLocalScfDryRunResult:
     lowest_eigenvalue: float | None
     solve_up: FixedPotentialEigensolverResult | None
     solve_down: FixedPotentialEigensolverResult | None
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    eigensolver_wall_time_seconds: float
+    energy_evaluation_wall_time_seconds: float
+    density_update_wall_time_seconds: float
+    bookkeeping_wall_time_seconds: float
+    eigensolver_iteration_wall_time_seconds: tuple[float, ...]
+    energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
+    density_update_iteration_wall_time_seconds: tuple[float, ...]
+    bookkeeping_iteration_wall_time_seconds: tuple[float, ...]
 
 
 def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
@@ -607,6 +620,7 @@ def _monitor_grid_scf_parameter_summary(
     patch_parameters: LocalPotentialPatchParameters,
     *,
     kinetic_version: str,
+    use_jax_block_kernels: bool,
     cycle_breaker_enabled: bool,
     cycle_breaker_weight: float,
     diis_enabled: bool,
@@ -623,6 +637,7 @@ def _monitor_grid_scf_parameter_summary(
         correction_strength=float(patch_parameters.correction_strength),
         interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
         kinetic_version=kinetic_version,
+        use_jax_block_kernels=bool(use_jax_block_kernels),
         includes_nonlocal=False,
         cycle_breaker_enabled=bool(cycle_breaker_enabled),
         cycle_breaker_weight=float(cycle_breaker_weight),
@@ -1141,6 +1156,7 @@ def run_h2_monitor_grid_scf_dry_run(
     eigensolver_tolerance: float = 1.0e-3,
     eigensolver_ncv: int = 20,
     kinetic_version: str = "trial_fix",
+    use_jax_block_kernels: bool = False,
     enable_cycle_breaker: bool = False,
     cycle_breaker_weight: float = 0.5,
     enable_diis: bool = False,
@@ -1189,6 +1205,15 @@ def run_h2_monitor_grid_scf_dry_run(
     diis_used_iterations: list[int] = []
     diis_history_sizes: list[int] = []
     diis_fallback_iterations: list[int] = []
+    iteration_eigensolver_times: list[float] = []
+    iteration_energy_evaluation_times: list[float] = []
+    iteration_density_update_times: list[float] = []
+    iteration_bookkeeping_times: list[float] = []
+    eigensolver_wall_time = 0.0
+    energy_evaluation_wall_time = 0.0
+    density_update_wall_time = 0.0
+    total_wall_start = perf_counter()
+    initial_energy_start = perf_counter()
     final_energy = evaluate_static_local_single_point_energy(
         rho_up=rho_up,
         rho_down=rho_down,
@@ -1201,12 +1226,15 @@ def run_h2_monitor_grid_scf_dry_run(
         patch_parameters=patch_parameters,
         kinetic_version=kinetic_version,
     )
+    energy_evaluation_wall_time += perf_counter() - initial_energy_start
     converged = False
 
     for iteration in range(1, max_iterations + 1):
+        iteration_start = perf_counter()
         solve_up = None
         solve_down = None
 
+        eigensolver_start = perf_counter()
         if occupations.n_alpha > 0:
             solve_up = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
@@ -1221,6 +1249,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 use_monitor_patch=True,
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
+                use_jax_block_kernels=use_jax_block_kernels,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -1242,11 +1271,15 @@ def run_h2_monitor_grid_scf_dry_run(
                 use_monitor_patch=True,
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
+                use_jax_block_kernels=use_jax_block_kernels,
             )
             orbitals_down = solve_down.orbitals
         else:
             orbitals_down = _empty_orbital_block(grid_geometry)
+        eigensolver_elapsed = perf_counter() - eigensolver_start
+        eigensolver_wall_time += eigensolver_elapsed
 
+        density_update_start = perf_counter()
         rho_up_out = _renormalize_density(
             _build_density_from_occupied_orbitals(
                 orbitals_up,
@@ -1276,6 +1309,10 @@ def run_h2_monitor_grid_scf_dry_run(
             rho_down_out=rho_down_out,
             grid_geometry=grid_geometry,
         )
+        density_update_elapsed = perf_counter() - density_update_start
+        density_update_wall_time += density_update_elapsed
+
+        energy_evaluation_start = perf_counter()
         energy = evaluate_static_local_single_point_energy(
             rho_up=rho_up_out,
             rho_down=rho_down_out,
@@ -1288,6 +1325,10 @@ def run_h2_monitor_grid_scf_dry_run(
             patch_parameters=patch_parameters,
             kinetic_version=kinetic_version,
         )
+        energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
+        energy_evaluation_wall_time += energy_evaluation_elapsed
+
+        bookkeeping_start = perf_counter()
         energy_change = None if previous_energy_total is None else energy.total - previous_energy_total
         residual_up, residual_down = _density_residual_fields(
             rho_up_in=rho_up,
@@ -1413,6 +1454,12 @@ def run_h2_monitor_grid_scf_dry_run(
         guess_up = orbitals_up
         guess_down = orbitals_down
         previous_energy_total = energy.total
+        bookkeeping_elapsed = perf_counter() - bookkeeping_start
+
+        iteration_eigensolver_times.append(float(eigensolver_elapsed))
+        iteration_energy_evaluation_times.append(float(energy_evaluation_elapsed))
+        iteration_density_update_times.append(float(density_update_elapsed))
+        iteration_bookkeeping_times.append(float(bookkeeping_elapsed))
 
     lowest_eigenvalue = None
     if final_eigenvalues_up.size:
@@ -1420,6 +1467,18 @@ def run_h2_monitor_grid_scf_dry_run(
     if final_eigenvalues_down.size:
         candidate = float(final_eigenvalues_down[0])
         lowest_eigenvalue = candidate if lowest_eigenvalue is None else min(lowest_eigenvalue, candidate)
+
+    total_wall_time_seconds = float(perf_counter() - total_wall_start)
+    iteration_count = len(history)
+    average_iteration_wall_time_seconds = (
+        None if iteration_count == 0 else float(total_wall_time_seconds / iteration_count)
+    )
+    bookkeeping_wall_time_seconds = float(
+        total_wall_time_seconds
+        - eigensolver_wall_time
+        - energy_evaluation_wall_time
+        - density_update_wall_time
+    )
 
     return H2StaticLocalScfDryRunResult(
         path_type="monitor_a_grid_plus_patch",
@@ -1431,12 +1490,14 @@ def run_h2_monitor_grid_scf_dry_run(
         parameter_summary=_monitor_grid_scf_parameter_summary(
             patch_parameters,
             kinetic_version=kinetic_version,
+            use_jax_block_kernels=use_jax_block_kernels,
             cycle_breaker_enabled=enable_cycle_breaker,
             cycle_breaker_weight=cycle_breaker_weight,
             diis_enabled=enable_diis,
             diis_warmup_iterations=diis_warmup_iterations,
             diis_history_length=diis_history_length,
         ),
+        use_jax_block_kernels=bool(use_jax_block_kernels),
         cycle_breaker_enabled=bool(enable_cycle_breaker),
         cycle_breaker_weight=float(cycle_breaker_weight),
         cycle_breaker_triggered_iterations=tuple(cycle_breaker_triggered_iterations),
@@ -1462,4 +1523,14 @@ def run_h2_monitor_grid_scf_dry_run(
         lowest_eigenvalue=lowest_eigenvalue,
         solve_up=final_solve_up,
         solve_down=final_solve_down,
+        total_wall_time_seconds=total_wall_time_seconds,
+        average_iteration_wall_time_seconds=average_iteration_wall_time_seconds,
+        eigensolver_wall_time_seconds=float(eigensolver_wall_time),
+        energy_evaluation_wall_time_seconds=float(energy_evaluation_wall_time),
+        density_update_wall_time_seconds=float(density_update_wall_time),
+        bookkeeping_wall_time_seconds=bookkeeping_wall_time_seconds,
+        eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
+        energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
+        density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),
+        bookkeeping_iteration_wall_time_seconds=tuple(iteration_bookkeeping_times),
     )

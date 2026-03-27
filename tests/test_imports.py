@@ -429,3 +429,17 @@ def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.old_k1_route.use_jax_block_kernels is False
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.jax_k1_route.use_jax_block_kernels is True
     assert H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE.optimized_jax_k1_route.use_jax_cached_kernels is True
+
+
+def test_import_h2_jax_scf_hotpath_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_scf_hotpath_audit import run_h2_jax_scf_hotpath_audit
+
+    assert callable(run_h2_jax_scf_hotpath_audit)
+
+
+def test_import_h2_jax_scf_hotpath_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_SCF_HOTPATH_BASELINE
+
+    assert H2_JAX_SCF_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_SCF_HOTPATH_BASELINE.triplet_old_route.use_jax_block_kernels is False
+    assert H2_JAX_SCF_HOTPATH_BASELINE.triplet_jax_route.use_jax_block_kernels is True

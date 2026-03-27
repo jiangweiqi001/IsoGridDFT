@@ -61,6 +61,8 @@ That first JAX slice has now been pushed one step further into the fixed-potenti
 
 The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
 
+That optimized JAX hot path is now also being threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -73,6 +75,7 @@ What is present today:
 - a first minimal H2 SCF single-point driver for the singlet and triplet candidates
 - a first JAX runtime layer plus a first batch of JAX hot kernels for weighted reductions, monitor-grid Poisson, and the local-only A-grid Hamiltonian apply, while keeping the audit and fallback layers intact
 - a first JAX handoff into the fixed-potential eigensolver block hot path, while keeping the outer eigensolver iteration and SCF control flow in Python
+- a first very rough H2 A-grid SCF hot-path profiling audit for checking whether that same JAX eigensolver handoff improves end-to-end triplet dry-run timing
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
@@ -110,6 +113,7 @@ They currently cover:
 - a very small H2 `k=2` subspace audit for checking whether the repaired A-grid+patch+trial-fix near-degenerate pair can be rotated into a more interpretable bonding/antibonding-like basis before any SCF dry-run
 - a first H2 A-grid+patch+kinetic-trial-fix SCF dry-run audit for checking whether the new monitor-grid main line can actually sustain multi-step singlet/triplet SCF iteration without nonlocal
 - a dedicated H2 singlet stability audit for checking whether the current A-grid two-cycle can be suppressed by a very small conservative mixing change and a minimal DIIS prototype, without adding a larger SCF stabilization framework
+- a very rough H2 A-grid SCF hot-path audit for checking whether the current JAX eigensolver block handoff actually improves end-to-end triplet dry-run timing and where the remaining SCF bottlenecks sit
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -202,5 +206,6 @@ python -m isogrid.audit.h2_monitor_grid_kinetic_green_identity_audit
 python -m isogrid.audit.h2_monitor_grid_orbital_shape_audit
 python -m isogrid.audit.h2_monitor_grid_k2_subspace_audit
 python -m isogrid.audit.h2_monitor_grid_diis_scf_audit
+python -m isogrid.audit.h2_jax_scf_hotpath_audit
 ```
 
