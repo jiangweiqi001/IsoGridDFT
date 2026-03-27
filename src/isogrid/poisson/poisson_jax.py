@@ -42,6 +42,7 @@ class MonitorPoissonJaxSolveDiagnostics:
     build_wall_time_seconds: float = 0.0
     rhs_assembly_wall_time_seconds: float = 0.0
     cg_wall_time_seconds: float = 0.0
+    cg_other_overhead_wall_time_seconds: float = 0.0
     matvec_call_count: int = 0
     matvec_wall_time_seconds: float = 0.0
     used_cached_operator: bool = False
@@ -240,6 +241,7 @@ def _run_jax_cg(
         iteration_count=iteration_count,
         residual_max=residual_max,
         converged=converged,
+        cg_other_overhead_wall_time_seconds=0.0,
         matvec_call_count=int(matvec_call_count),
         matvec_wall_time_seconds=float(matvec_wall_time_seconds),
     )
@@ -314,6 +316,10 @@ def solve_open_boundary_poisson_monitor_jax(
         build_wall_time_seconds=float(build_elapsed),
         rhs_assembly_wall_time_seconds=float(rhs_elapsed),
         cg_wall_time_seconds=float(cg_elapsed),
+        cg_other_overhead_wall_time_seconds=max(
+            0.0,
+            float(cg_elapsed) - float(diagnostics.matvec_wall_time_seconds),
+        ),
         matvec_call_count=int(diagnostics.matvec_call_count),
         matvec_wall_time_seconds=float(diagnostics.matvec_wall_time_seconds),
         used_cached_operator=bool(use_cached_operator),

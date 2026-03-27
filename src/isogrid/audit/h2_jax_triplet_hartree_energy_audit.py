@@ -1,4 +1,4 @@
-"""Very rough triplet-only SCF audit for JAX Hartree repeated-solve reuse.
+"""Very rough triplet-only SCF audit for JAX Hartree CG/matvec profiling.
 
 This audit keeps the A-grid H2 dry-run restricted to the current local-only
 Hamiltonian
@@ -10,17 +10,21 @@ and the kinetic trial-fix branch. It compares two otherwise identical JAX-backed
 SCF routes on the already-converged H2 triplet case:
 
 - jax-hartree-baseline: JAX Poisson backend without explicit repeated-solve reuse
-- jax-hartree-optimized: the same JAX backend with cached operator reuse enabled
+- jax-hartree-profiled: the same JAX backend with cached operator reuse enabled
 
 The goal is not a formal benchmark. It is a small, auditable profile that
-answers whether repeated monitor-grid Poisson solves in the SCF loop are paying
-avoidable build/compile overhead and whether a thin cache actually lowers the
-dominant Hartree bucket.
+answers where the remaining single-solve cost sits inside the JAX Hartree path:
+
+- how much of the CG bucket is actual matvec work
+- how much is other per-iteration CG overhead
+- how first solve differs from repeated steady-state solves
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+
+import numpy as np
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
@@ -86,9 +90,19 @@ class H2TripletHartreeEnergyRouteResult:
     average_hartree_build_wall_time_seconds: float | None
     average_hartree_rhs_assembly_wall_time_seconds: float | None
     average_hartree_cg_wall_time_seconds: float | None
+    average_hartree_cg_other_overhead_wall_time_seconds: float | None
     average_hartree_matvec_call_count: float | None
     average_hartree_matvec_wall_time_seconds: float | None
     average_hartree_matvec_wall_time_per_call_seconds: float | None
+    average_hartree_cg_iteration_wall_time_seconds: float | None
+    average_hartree_matvec_wall_time_per_iteration_seconds: float | None
+    average_hartree_other_cg_overhead_wall_time_per_iteration_seconds: float | None
+    first_hartree_matvec_call_count: int | None
+    repeated_hartree_matvec_call_count_average: float | None
+    first_hartree_matvec_wall_time_seconds: float | None
+    repeated_hartree_matvec_average_wall_time_seconds: float | None
+    first_hartree_matvec_wall_time_per_call_seconds: float | None
+    repeated_hartree_matvec_wall_time_per_call_seconds: float | None
     hartree_cached_operator_usage_count: int
     hartree_cached_operator_first_solve_count: int
     timing_breakdown: H2TripletHartreeEnergyTimingBreakdown
@@ -103,6 +117,12 @@ class H2TripletHartreeEnergyAuditResult:
     jax_hartree_baseline_route: H2TripletHartreeEnergyRouteResult
     jax_hartree_optimized_route: H2TripletHartreeEnergyRouteResult
     note: str
+
+
+def _average(values: tuple[float, ...] | tuple[int, ...]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values) / len(values))
 
 
 def _monitor_parameter_summary(result: H2StaticLocalScfDryRunResult) -> str:
@@ -135,6 +155,48 @@ def _build_route_result(
     *,
     path_label: str,
 ) -> H2TripletHartreeEnergyRouteResult:
+    solve_times = result.hartree_solve_wall_time_seconds_history
+    cg_iterations = result.hartree_cg_iterations_history
+    cg_times = result.hartree_cg_wall_time_seconds_history
+    matvec_counts = result.hartree_matvec_call_count_history
+    matvec_times = result.hartree_matvec_wall_time_seconds_history
+    repeated_cg_iterations = cg_iterations[1:]
+    repeated_matvec_counts = matvec_counts[1:]
+    repeated_matvec_times = matvec_times[1:]
+    average_other_cg_overhead = (
+        None
+        if not cg_times or not matvec_times
+        else float(np.mean([max(0.0, cg - mv) for cg, mv in zip(cg_times, matvec_times, strict=False)]))
+    )
+    average_iteration_wall = (
+        None
+        if not cg_times or not cg_iterations or sum(cg_iterations) == 0
+        else float(sum(cg_times) / sum(cg_iterations))
+    )
+    average_matvec_per_iteration = (
+        None
+        if not matvec_times or not cg_iterations or sum(cg_iterations) == 0
+        else float(sum(matvec_times) / sum(cg_iterations))
+    )
+    average_other_overhead_per_iteration = (
+        None
+        if average_iteration_wall is None or average_matvec_per_iteration is None
+        else max(0.0, average_iteration_wall - average_matvec_per_iteration)
+    )
+    first_matvec_per_call = (
+        None
+        if not matvec_times or not matvec_counts or matvec_counts[0] == 0
+        else float(matvec_times[0] / matvec_counts[0])
+    )
+    repeated_matvec_average = _average(repeated_matvec_times)
+    repeated_matvec_count_average = _average(repeated_matvec_counts)
+    repeated_matvec_per_call = (
+        None
+        if repeated_matvec_average is None
+        or repeated_matvec_count_average is None
+        or repeated_matvec_count_average == 0.0
+        else float(repeated_matvec_average / repeated_matvec_count_average)
+    )
     return H2TripletHartreeEnergyRouteResult(
         path_label=path_label,
         spin_state_label=result.spin_state_label,
@@ -175,11 +237,23 @@ def _build_route_result(
             result.average_hartree_rhs_assembly_wall_time_seconds
         ),
         average_hartree_cg_wall_time_seconds=result.average_hartree_cg_wall_time_seconds,
+        average_hartree_cg_other_overhead_wall_time_seconds=average_other_cg_overhead,
         average_hartree_matvec_call_count=result.average_hartree_matvec_call_count,
         average_hartree_matvec_wall_time_seconds=result.average_hartree_matvec_wall_time_seconds,
         average_hartree_matvec_wall_time_per_call_seconds=(
             result.average_hartree_matvec_wall_time_per_call_seconds
         ),
+        average_hartree_cg_iteration_wall_time_seconds=average_iteration_wall,
+        average_hartree_matvec_wall_time_per_iteration_seconds=average_matvec_per_iteration,
+        average_hartree_other_cg_overhead_wall_time_per_iteration_seconds=(
+            average_other_overhead_per_iteration
+        ),
+        first_hartree_matvec_call_count=(None if not matvec_counts else int(matvec_counts[0])),
+        repeated_hartree_matvec_call_count_average=repeated_matvec_count_average,
+        first_hartree_matvec_wall_time_seconds=(None if not matvec_times else float(matvec_times[0])),
+        repeated_hartree_matvec_average_wall_time_seconds=repeated_matvec_average,
+        first_hartree_matvec_wall_time_per_call_seconds=first_matvec_per_call,
+        repeated_hartree_matvec_wall_time_per_call_seconds=repeated_matvec_per_call,
         hartree_cached_operator_usage_count=int(result.hartree_cached_operator_usage_count),
         hartree_cached_operator_first_solve_count=int(result.hartree_cached_operator_first_solve_count),
         timing_breakdown=H2TripletHartreeEnergyTimingBreakdown(
@@ -255,7 +329,7 @@ def run_h2_jax_triplet_hartree_energy_audit(
         jax_hartree_baseline_route=jax_hartree_baseline_route,
         jax_hartree_optimized_route=jax_hartree_optimized_route,
         note=(
-            "Triplet-only A-grid SCF audit for JAX Hartree repeated-solve reuse. "
+            "Triplet-only A-grid SCF audit for JAX Hartree single-solve / repeated-solve CG profiling. "
             "Both routes keep the JAX eigensolver hot path and step-local static-local reuse "
             "enabled; the only intended difference is whether the JAX Poisson operator callable "
             "is cached and reused across repeated solves inside the same SCF route. "
@@ -304,13 +378,29 @@ def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
         f"boundary={0.0 if route.average_hartree_boundary_condition_wall_time_seconds is None else route.average_hartree_boundary_condition_wall_time_seconds:.6f}, "
         f"build={0.0 if route.average_hartree_build_wall_time_seconds is None else route.average_hartree_build_wall_time_seconds:.6f}, "
         f"rhs={0.0 if route.average_hartree_rhs_assembly_wall_time_seconds is None else route.average_hartree_rhs_assembly_wall_time_seconds:.6f}, "
-        f"cg={0.0 if route.average_hartree_cg_wall_time_seconds is None else route.average_hartree_cg_wall_time_seconds:.6f}"
+        f"cg={0.0 if route.average_hartree_cg_wall_time_seconds is None else route.average_hartree_cg_wall_time_seconds:.6f}, "
+        f"cg_other={0.0 if route.average_hartree_cg_other_overhead_wall_time_seconds is None else route.average_hartree_cg_other_overhead_wall_time_seconds:.6f}"
     )
     print(
         "    matvec avg: "
         f"calls={route.average_hartree_matvec_call_count}, "
         f"wall={route.average_hartree_matvec_wall_time_seconds}, "
         f"per_call={route.average_hartree_matvec_wall_time_per_call_seconds}"
+    )
+    print(
+        "    first/repeated matvec: "
+        f"first_calls={route.first_hartree_matvec_call_count}, "
+        f"first_wall={route.first_hartree_matvec_wall_time_seconds}, "
+        f"first_per_call={route.first_hartree_matvec_wall_time_per_call_seconds}, "
+        f"repeated_calls_avg={route.repeated_hartree_matvec_call_count_average}, "
+        f"repeated_wall_avg={route.repeated_hartree_matvec_average_wall_time_seconds}, "
+        f"repeated_per_call={route.repeated_hartree_matvec_wall_time_per_call_seconds}"
+    )
+    print(
+        "    per-iteration avg [s]: "
+        f"cg={route.average_hartree_cg_iteration_wall_time_seconds}, "
+        f"matvec={route.average_hartree_matvec_wall_time_per_iteration_seconds}, "
+        f"other_cg={route.average_hartree_other_cg_overhead_wall_time_per_iteration_seconds}"
     )
     print(
         "    cache stats: "

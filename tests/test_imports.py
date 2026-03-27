@@ -466,3 +466,11 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
         H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.use_jax_hartree_cached_operator
         is True
     )
+    assert (
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.average_hartree_cg_other_overhead_wall_time_seconds
+        is not None
+    )
+    assert (
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.first_hartree_matvec_call_count
+        == 401
+    )

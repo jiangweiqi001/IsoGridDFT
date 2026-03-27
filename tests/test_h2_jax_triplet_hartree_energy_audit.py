@@ -50,9 +50,19 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         average_hartree_build_wall_time_seconds=0.3,
         average_hartree_rhs_assembly_wall_time_seconds=0.4,
         average_hartree_cg_wall_time_seconds=4.1,
+        average_hartree_cg_other_overhead_wall_time_seconds=0.6,
         average_hartree_matvec_call_count=401.0,
         average_hartree_matvec_wall_time_seconds=3.5,
         average_hartree_matvec_wall_time_per_call_seconds=0.0087,
+        average_hartree_cg_iteration_wall_time_seconds=0.01025,
+        average_hartree_matvec_wall_time_per_iteration_seconds=0.00875,
+        average_hartree_other_cg_overhead_wall_time_per_iteration_seconds=0.0015,
+        first_hartree_matvec_call_count=401,
+        repeated_hartree_matvec_call_count_average=401.0,
+        first_hartree_matvec_wall_time_seconds=3.7,
+        repeated_hartree_matvec_average_wall_time_seconds=3.45,
+        first_hartree_matvec_wall_time_per_call_seconds=0.0092,
+        repeated_hartree_matvec_wall_time_per_call_seconds=0.0086,
         hartree_cached_operator_usage_count=37,
         hartree_cached_operator_first_solve_count=1,
         timing_breakdown=H2TripletHartreeEnergyTimingBreakdown(
@@ -93,5 +103,8 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     assert route.hartree_solve_call_count == 37
     assert route.first_hartree_solve_wall_time_seconds == 12.0
     assert route.average_hartree_matvec_call_count == 401.0
+    assert route.average_hartree_cg_other_overhead_wall_time_seconds == 0.6
+    assert route.first_hartree_matvec_call_count == 401
+    assert route.repeated_hartree_matvec_wall_time_per_call_seconds == 0.0086
     assert route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
     assert audit_result.jax_hartree_optimized_route.final_total_energy_ha == -1.22
