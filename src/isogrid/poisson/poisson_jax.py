@@ -38,6 +38,7 @@ class MonitorPoissonJaxSolveDiagnostics:
     residual_max: float
     converged: bool
     cg_impl: str = "baseline"
+    cg_preconditioner: str = "none"
     total_wall_time_seconds: float = 0.0
     boundary_condition_wall_time_seconds: float = 0.0
     build_wall_time_seconds: float = 0.0
@@ -62,6 +63,7 @@ class MonitorPoissonJaxCachedSolveKernels:
     boundary_laplacian: object
     matvec: object
     matvec_probe: object
+    inverse_preconditioner_diagonal: object
 
 
 _MONITOR_POISSON_JAX_KERNEL_CACHE: dict[
@@ -74,6 +76,7 @@ _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE: dict[
 ] = {}
 _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS: MonitorPoissonJaxSolveDiagnostics | None = None
 _VALID_MONITOR_POISSON_JAX_CG_IMPLS = {"baseline", "jax_loop"}
+_VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS = {"none", "diag", "jacobi"}
 
 
 def apply_monitor_open_boundary_poisson_operator_jax(
@@ -161,6 +164,56 @@ def _normalize_monitor_poisson_jax_cg_impl(cg_impl: str) -> str:
     return normalized
 
 
+def _normalize_monitor_poisson_jax_cg_preconditioner(cg_preconditioner: str) -> str:
+    normalized = cg_preconditioner.strip().lower()
+    if normalized not in _VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS:
+        raise ValueError(
+            "cg_preconditioner must be `none`, `diag`, or `jacobi`; "
+            f"received `{cg_preconditioner}`."
+        )
+    if normalized == "jacobi":
+        return "diag"
+    return normalized
+
+
+def _logical_spacing(logical_coordinates: np.ndarray) -> float:
+    coordinates = np.asarray(logical_coordinates, dtype=np.float64)
+    spacings = np.diff(coordinates)
+    if not np.allclose(spacings, spacings[0]):
+        raise ValueError(
+            "The current monitor-grid JAX Poisson kernels expect uniform logical axes."
+        )
+    return float(spacings[0])
+
+
+def _build_monitor_open_boundary_inverse_preconditioner_diagonal_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+    gather,
+):
+    jax = get_configured_jax()
+    jnp = jax.numpy
+    inverse_metric = np.asarray(grid_geometry.inverse_metric_tensor, dtype=np.float64)
+    dx = _logical_spacing(grid_geometry.logical_x)
+    dy = _logical_spacing(grid_geometry.logical_y)
+    dz = _logical_spacing(grid_geometry.logical_z)
+    diagonal_surrogate = 2.0 * (
+        inverse_metric[..., 0, 0] / (dx * dx)
+        + inverse_metric[..., 1, 1] / (dy * dy)
+        + inverse_metric[..., 2, 2] / (dz * dz)
+    )
+    positive_values = diagonal_surrogate[np.isfinite(diagonal_surrogate) & (diagonal_surrogate > 0.0)]
+    if positive_values.size == 0:
+        raise ValueError(
+            "The monitor-grid Poisson diagonal surrogate must stay positive to build the "
+            "very small Jacobi preconditioner."
+        )
+    floor = max(1.0e-12, 1.0e-10 * float(np.median(positive_values)))
+    safe_diagonal = np.maximum(diagonal_surrogate, floor)
+    gathered = gather(safe_diagonal)
+    return jnp.asarray(1.0 / gathered, dtype=jnp.float64)
+
+
 def _build_monitor_poisson_jax_cache_key(
     grid_geometry: MonitorGridGeometry,
 ) -> tuple[int, tuple[int, int, int]]:
@@ -177,6 +230,10 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
         boundary_laplacian, matvec, matvec_probe = build_monitor_open_boundary_poisson_matvec_jax(
             grid_geometry=grid_geometry,
         )
+        inverse_preconditioner_diagonal = _build_monitor_open_boundary_inverse_preconditioner_diagonal_jax(
+            grid_geometry=grid_geometry,
+            gather=gather,
+        )
         return (
             MonitorPoissonJaxCachedSolveKernels(
                 interior_mask=interior_mask,
@@ -186,6 +243,7 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
                 boundary_laplacian=boundary_laplacian,
                 matvec=matvec,
                 matvec_probe=matvec_probe,
+                inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
             ),
             False,
         )
@@ -199,6 +257,10 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
     boundary_laplacian, matvec, matvec_probe = build_monitor_open_boundary_poisson_matvec_jax(
         grid_geometry=grid_geometry,
     )
+    inverse_preconditioner_diagonal = _build_monitor_open_boundary_inverse_preconditioner_diagonal_jax(
+        grid_geometry=grid_geometry,
+        gather=gather,
+    )
     cached = MonitorPoissonJaxCachedSolveKernels(
         interior_mask=interior_mask,
         interior_size=interior_size,
@@ -207,6 +269,7 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
         boundary_laplacian=boundary_laplacian,
         matvec=matvec,
         matvec_probe=matvec_probe,
+        inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
     )
     _MONITOR_POISSON_JAX_KERNEL_CACHE[cache_key] = cached
     return cached, True
@@ -215,9 +278,11 @@ def _get_monitor_open_boundary_poisson_kernels_jax(
 def _run_jax_cg(
     *,
     matvec,
+    inverse_preconditioner_diagonal,
     rhs,
     tolerance: float,
     max_iterations: int,
+    cg_preconditioner: str,
 ):
     jax = get_configured_jax()
     jnp = jax.numpy
@@ -232,11 +297,17 @@ def _run_jax_cg(
         matvec_call_count += 1
         return result
 
+    def _apply_preconditioner(residual):
+        if cg_preconditioner == "diag":
+            return inverse_preconditioner_diagonal * residual
+        return residual
+
     rhs_values = jnp.asarray(rhs, dtype=jnp.float64)
     x = jnp.zeros_like(rhs_values)
     r = rhs_values - _timed_matvec(x)
-    p = r
-    rr = jnp.vdot(r, r)
+    z = _apply_preconditioner(r)
+    p = z
+    rz = jnp.vdot(r, z)
 
     converged = False
     iteration_count = 0
@@ -246,7 +317,7 @@ def _run_jax_cg(
         denominator = jnp.vdot(p, ap)
         if float(jnp.abs(denominator)) <= 1.0e-20:
             break
-        alpha = rr / denominator
+        alpha = rz / denominator
         x = x + alpha * p
         r = r - alpha * ap
         residual_max = float(jnp.max(jnp.abs(r)))
@@ -254,12 +325,13 @@ def _run_jax_cg(
         if residual_max < tolerance:
             converged = True
             break
-        rr_new = jnp.vdot(r, r)
-        if float(jnp.abs(rr)) <= 1.0e-30:
+        z = _apply_preconditioner(r)
+        rz_new = jnp.vdot(r, z)
+        if float(jnp.abs(rz)) <= 1.0e-30:
             break
-        beta = rr_new / rr
-        p = r + beta * p
-        rr = rr_new
+        beta = rz_new / rz
+        p = z + beta * p
+        rz = rz_new
 
     return np.asarray(x, dtype=np.float64), MonitorPoissonJaxSolveDiagnostics(
         solver_method="jax_cg_monitor",
@@ -267,6 +339,7 @@ def _run_jax_cg(
         residual_max=residual_max,
         converged=converged,
         cg_impl="baseline",
+        cg_preconditioner=cg_preconditioner,
         cg_other_overhead_wall_time_seconds=0.0,
         matvec_call_count=int(matvec_call_count),
         matvec_wall_time_seconds=float(matvec_wall_time_seconds),
@@ -277,32 +350,41 @@ def _run_jax_cg(
 def _build_jax_loop_cg_solver(
     *,
     matvec,
+    inverse_preconditioner_diagonal,
     tolerance: float,
     max_iterations: int,
+    cg_preconditioner: str,
 ):
     jax = get_configured_jax()
     jnp = jax.numpy
     lax = jax.lax
     tolerance_value = float(tolerance)
     max_iterations_value = int(max_iterations)
+    normalized_preconditioner = _normalize_monitor_poisson_jax_cg_preconditioner(cg_preconditioner)
+
+    def _apply_preconditioner(residual):
+        if normalized_preconditioner == "diag":
+            return inverse_preconditioner_diagonal * residual
+        return residual
 
     @jax.jit
     def _solve(rhs_values):
         rhs_values = jnp.asarray(rhs_values, dtype=jnp.float64)
         x0 = jnp.zeros_like(rhs_values)
         r0 = rhs_values - matvec(x0)
-        p0 = r0
-        rr0 = jnp.vdot(r0, r0)
+        z0 = _apply_preconditioner(r0)
+        p0 = z0
+        rz0 = jnp.vdot(r0, z0)
         residual0 = jnp.max(jnp.abs(r0))
 
         def _body(_, state):
-            active, iteration_count, x, r, p, rr, residual_max = state
+            active, iteration_count, x, r, z, p, rz, residual_max = state
 
             def _inactive(_state):
                 return _state
 
             def _active(_state):
-                _, iteration_count, x, r, p, rr, residual_max = _state
+                _, iteration_count, x, r, z, p, rz, residual_max = _state
                 ap = matvec(p)
                 denominator = jnp.vdot(p, ap)
                 denominator_ok = jnp.abs(denominator) > 1.0e-20
@@ -313,20 +395,19 @@ def _build_jax_loop_cg_solver(
                         iteration_count,
                         x,
                         r,
+                        z,
                         p,
-                        rr,
+                        rz,
                         residual_max,
                     )
 
                 def _denominator_ok(__):
-                    alpha = rr / denominator
+                    alpha = rz / denominator
                     x_next = x + alpha * p
                     r_next = r - alpha * ap
                     residual_next = jnp.max(jnp.abs(r_next))
                     iteration_next = iteration_count + 1
                     converged_next = residual_next < tolerance_value
-                    rr_next = jnp.vdot(r_next, r_next)
-                    rr_ok = jnp.abs(rr) > 1.0e-30
 
                     def _converged(___):
                         return (
@@ -334,38 +415,45 @@ def _build_jax_loop_cg_solver(
                             iteration_next,
                             x_next,
                             r_next,
+                            z,
                             p,
-                            rr_next,
+                            rz,
                             residual_next,
                         )
 
                     def _not_converged(___):
+                        z_next = _apply_preconditioner(r_next)
+                        rz_next = jnp.vdot(r_next, z_next)
+                        rz_ok = jnp.abs(rz) > 1.0e-30
+
                         def _rr_fail(____):
                             return (
                                 jnp.asarray(False),
                                 iteration_next,
                                 x_next,
                                 r_next,
+                                z_next,
                                 p,
-                                rr_next,
+                                rz_next,
                                 residual_next,
                             )
 
                         def _rr_ok(____):
-                            beta = rr_next / rr
-                            p_next = r_next + beta * p
+                            beta = rz_next / rz
+                            p_next = z_next + beta * p
                             still_active = iteration_next < max_iterations_value
                             return (
                                 still_active,
                                 iteration_next,
                                 x_next,
                                 r_next,
+                                z_next,
                                 p_next,
-                                rr_next,
+                                rz_next,
                                 residual_next,
                             )
 
-                        return lax.cond(rr_ok, _rr_ok, _rr_fail, operand=None)
+                        return lax.cond(rz_ok, _rr_ok, _rr_fail, operand=None)
 
                     return lax.cond(converged_next, _converged, _not_converged, operand=None)
 
@@ -382,13 +470,17 @@ def _build_jax_loop_cg_solver(
                 jnp.asarray(0, dtype=jnp.int32),
                 x0,
                 r0,
+                z0,
                 p0,
-                rr0,
+                rz0,
                 residual0,
             ),
         )
-        active, iteration_count, x, r, _, _, residual_max = final_state
-        converged = jnp.logical_not(active)
+        active, iteration_count, x, r, _, _, _, residual_max = final_state
+        converged = jnp.logical_and(
+            jnp.logical_not(active),
+            residual_max < tolerance_value,
+        )
         return x, iteration_count, residual_max, converged
 
     return _solve
@@ -399,13 +491,15 @@ def _build_monitor_poisson_cg_loop_cache_key(
     *,
     tolerance: float,
     max_iterations: int,
-) -> tuple[int, tuple[int, int, int], int, int]:
+    cg_preconditioner: str,
+) -> tuple[int, tuple[int, int, int], int, int, str]:
     tolerance_key = int(round(float(tolerance) * 1.0e16))
     return (
         id(grid_geometry),
         tuple(grid_geometry.spec.shape),
         int(max_iterations),
         tolerance_key,
+        cg_preconditioner,
     )
 
 
@@ -413,21 +507,26 @@ def _get_monitor_poisson_cg_loop_solver(
     *,
     grid_geometry: MonitorGridGeometry,
     matvec,
+    inverse_preconditioner_diagonal,
     tolerance: float,
     max_iterations: int,
     use_cached_operator: bool,
+    cg_preconditioner: str,
 ):
     if not use_cached_operator:
         return _build_jax_loop_cg_solver(
             matvec=matvec,
+            inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
             tolerance=tolerance,
             max_iterations=max_iterations,
+            cg_preconditioner=cg_preconditioner,
         )
 
     cache_key = _build_monitor_poisson_cg_loop_cache_key(
         grid_geometry,
         tolerance=tolerance,
         max_iterations=max_iterations,
+        cg_preconditioner=cg_preconditioner,
     )
     cached_solver = _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE.get(cache_key)
     if cached_solver is not None:
@@ -435,8 +534,10 @@ def _get_monitor_poisson_cg_loop_solver(
 
     cached_solver = _build_jax_loop_cg_solver(
         matvec=matvec,
+        inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
         tolerance=tolerance,
         max_iterations=max_iterations,
+        cg_preconditioner=cg_preconditioner,
     )
     _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE[cache_key] = cached_solver
     return cached_solver
@@ -473,17 +574,21 @@ def _run_jax_cg_loop(
     grid_geometry: MonitorGridGeometry,
     matvec,
     matvec_probe,
+    inverse_preconditioner_diagonal,
     rhs,
     tolerance: float,
     max_iterations: int,
     use_cached_operator: bool,
+    cg_preconditioner: str,
 ):
     solver = _get_monitor_poisson_cg_loop_solver(
         grid_geometry=grid_geometry,
         matvec=matvec,
+        inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
         tolerance=tolerance,
         max_iterations=max_iterations,
         use_cached_operator=use_cached_operator,
+        cg_preconditioner=cg_preconditioner,
     )
     jax = get_configured_jax()
     jnp = jax.numpy
@@ -506,6 +611,7 @@ def _run_jax_cg_loop(
         residual_max=float(residual_max),
         converged=bool(converged),
         cg_impl="jax_loop",
+        cg_preconditioner=cg_preconditioner,
         cg_wall_time_seconds=float(solve_elapsed),
         cg_other_overhead_wall_time_seconds=max(
             0.0,
@@ -526,6 +632,7 @@ def solve_open_boundary_poisson_monitor_jax(
     max_iterations: int = 400,
     use_cached_operator: bool = False,
     cg_impl: str = "baseline",
+    cg_preconditioner: str = "none",
 ) -> tuple[OpenBoundaryPoissonResult, MonitorPoissonJaxSolveDiagnostics]:
     """Solve the monitor-grid open-boundary Poisson problem with JAX CG."""
 
@@ -534,6 +641,9 @@ def solve_open_boundary_poisson_monitor_jax(
     solve_start = perf_counter()
     density = validate_density_field(rho, grid_geometry=grid_geometry)
     normalized_cg_impl = _normalize_monitor_poisson_jax_cg_impl(cg_impl)
+    normalized_cg_preconditioner = _normalize_monitor_poisson_jax_cg_preconditioner(
+        cg_preconditioner
+    )
     boundary_start = perf_counter()
     boundary_condition = _compute_multipole_boundary_condition(
         grid_geometry=grid_geometry,
@@ -553,6 +663,7 @@ def solve_open_boundary_poisson_monitor_jax(
     boundary_laplacian = kernels.boundary_laplacian
     matvec = kernels.matvec
     matvec_probe = kernels.matvec_probe
+    inverse_preconditioner_diagonal = kernels.inverse_preconditioner_diagonal
     jax = get_configured_jax()
     jnp = jax.numpy
 
@@ -572,19 +683,23 @@ def solve_open_boundary_poisson_monitor_jax(
             grid_geometry=grid_geometry,
             matvec=matvec,
             matvec_probe=matvec_probe,
+            inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
             rhs=rhs_interior,
             tolerance=tolerance,
             max_iterations=max_iterations,
             use_cached_operator=use_cached_operator,
+            cg_preconditioner=normalized_cg_preconditioner,
         )
         cg_elapsed = diagnostics.cg_wall_time_seconds
     else:
         cg_start = perf_counter()
         interior_solution, diagnostics = _run_jax_cg(
             matvec=matvec,
+            inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
             rhs=rhs_interior,
             tolerance=tolerance,
             max_iterations=max_iterations,
+            cg_preconditioner=normalized_cg_preconditioner,
         )
         cg_elapsed = perf_counter() - cg_start
     full_interior = np.asarray(scatter(jnp.asarray(interior_solution, dtype=jnp.float64)), dtype=np.float64)
@@ -597,6 +712,7 @@ def solve_open_boundary_poisson_monitor_jax(
         residual_max=diagnostics.residual_max,
         converged=diagnostics.converged,
         cg_impl=normalized_cg_impl,
+        cg_preconditioner=normalized_cg_preconditioner,
         total_wall_time_seconds=float(total_elapsed),
         boundary_condition_wall_time_seconds=float(boundary_elapsed),
         build_wall_time_seconds=float(build_elapsed),
