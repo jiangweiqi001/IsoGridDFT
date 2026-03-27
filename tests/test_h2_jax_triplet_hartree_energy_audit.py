@@ -23,10 +23,11 @@ def test_h2_jax_triplet_hartree_energy_module_imports() -> None:
 
 def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     route = H2TripletHartreeEnergyRouteResult(
-        path_label="jax-hartree",
+        path_label="jax-hartree-optimized",
         spin_state_label="triplet",
         kinetic_version="trial_fix",
         hartree_backend="jax",
+        use_jax_hartree_cached_operator=True,
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
         converged=True,
@@ -37,6 +38,14 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         total_wall_time_seconds=600.0,
         average_iteration_wall_time_seconds=33.3,
         hartree_solve_call_count=37,
+        average_hartree_solve_wall_time_seconds=5.0,
+        first_hartree_solve_wall_time_seconds=12.0,
+        repeated_hartree_solve_average_wall_time_seconds=4.8,
+        average_hartree_cg_iterations=400.0,
+        first_hartree_cg_iterations=400,
+        repeated_hartree_cg_iteration_average=400.0,
+        hartree_cached_operator_usage_count=37,
+        hartree_cached_operator_first_solve_count=1,
         timing_breakdown=H2TripletHartreeEnergyTimingBreakdown(
             eigensolver_wall_time_seconds=100.0,
             static_local_prepare_wall_time_seconds=250.0,
@@ -64,13 +73,15 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         ),
     )
     audit_result = H2TripletHartreeEnergyAuditResult(
-        baseline_route=route,
-        jax_hartree_route=route,
+        jax_hartree_baseline_route=route,
+        jax_hartree_optimized_route=route,
         note="triplet profiling smoke",
     )
 
     assert route.hartree_backend == "jax"
+    assert route.use_jax_hartree_cached_operator is True
     assert route.use_step_local_static_local_reuse is True
     assert route.hartree_solve_call_count == 37
+    assert route.first_hartree_solve_wall_time_seconds == 12.0
     assert route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
-    assert audit_result.jax_hartree_route.final_total_energy_ha == -1.22
+    assert audit_result.jax_hartree_optimized_route.final_total_energy_ha == -1.22

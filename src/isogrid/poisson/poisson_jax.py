@@ -14,6 +14,7 @@ audit/fallback layer.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from time import perf_counter
 
 import numpy as np
 
@@ -37,6 +38,29 @@ class MonitorPoissonJaxSolveDiagnostics:
     iteration_count: int
     residual_max: float
     converged: bool
+    total_wall_time_seconds: float = 0.0
+    build_wall_time_seconds: float = 0.0
+    cg_wall_time_seconds: float = 0.0
+    used_cached_operator: bool = False
+    first_solve_for_cached_operator: bool = False
+
+
+@dataclass(frozen=True)
+class MonitorPoissonJaxCachedSolveKernels:
+    """Cached monitor-grid JAX Poisson kernels for one geometry context."""
+
+    interior_mask: np.ndarray
+    interior_size: int
+    scatter: object
+    gather: object
+    matvec: object
+
+
+_MONITOR_POISSON_JAX_KERNEL_CACHE: dict[
+    tuple[int, tuple[int, int, int]],
+    MonitorPoissonJaxCachedSolveKernels,
+] = {}
+_LAST_MONITOR_POISSON_JAX_DIAGNOSTICS: MonitorPoissonJaxSolveDiagnostics | None = None
 
 
 def apply_monitor_open_boundary_poisson_operator_jax(
@@ -95,6 +119,63 @@ def build_monitor_open_boundary_poisson_matvec_jax(
     return _matvec
 
 
+def clear_monitor_poisson_jax_kernel_cache() -> None:
+    """Clear the thin monitor-grid JAX Poisson kernel cache."""
+
+    global _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS
+    _MONITOR_POISSON_JAX_KERNEL_CACHE.clear()
+    _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS = None
+
+
+def get_last_monitor_poisson_jax_solve_diagnostics() -> MonitorPoissonJaxSolveDiagnostics | None:
+    """Return the most recent monitor-grid JAX Poisson solve diagnostics."""
+
+    return _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS
+
+
+def _build_monitor_poisson_jax_cache_key(
+    grid_geometry: MonitorGridGeometry,
+) -> tuple[int, tuple[int, int, int]]:
+    return (id(grid_geometry), tuple(grid_geometry.spec.shape))
+
+
+def _get_monitor_open_boundary_poisson_kernels_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+    use_cached_operator: bool,
+) -> tuple[MonitorPoissonJaxCachedSolveKernels, bool]:
+    if not use_cached_operator:
+        interior_mask, interior_size, scatter, gather = _build_monitor_interior_scatter(grid_geometry)
+        matvec = build_monitor_open_boundary_poisson_matvec_jax(grid_geometry=grid_geometry)
+        return (
+            MonitorPoissonJaxCachedSolveKernels(
+                interior_mask=interior_mask,
+                interior_size=interior_size,
+                scatter=scatter,
+                gather=gather,
+                matvec=matvec,
+            ),
+            False,
+        )
+
+    cache_key = _build_monitor_poisson_jax_cache_key(grid_geometry)
+    cached = _MONITOR_POISSON_JAX_KERNEL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached, False
+
+    interior_mask, interior_size, scatter, gather = _build_monitor_interior_scatter(grid_geometry)
+    matvec = build_monitor_open_boundary_poisson_matvec_jax(grid_geometry=grid_geometry)
+    cached = MonitorPoissonJaxCachedSolveKernels(
+        interior_mask=interior_mask,
+        interior_size=interior_size,
+        scatter=scatter,
+        gather=gather,
+        matvec=matvec,
+    )
+    _MONITOR_POISSON_JAX_KERNEL_CACHE[cache_key] = cached
+    return cached, True
+
+
 def _run_jax_cg(
     *,
     matvec,
@@ -148,16 +229,29 @@ def solve_open_boundary_poisson_monitor_jax(
     multipole_order: int = 2,
     tolerance: float = 1.0e-8,
     max_iterations: int = 400,
+    use_cached_operator: bool = False,
 ) -> tuple[OpenBoundaryPoissonResult, MonitorPoissonJaxSolveDiagnostics]:
     """Solve the monitor-grid open-boundary Poisson problem with JAX CG."""
 
+    global _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS
+
+    solve_start = perf_counter()
     density = validate_density_field(rho, grid_geometry=grid_geometry)
     boundary_condition = _compute_multipole_boundary_condition(
         grid_geometry=grid_geometry,
         rho=density,
         multipole_order=multipole_order,
     )
-    interior_mask, _, scatter, gather = _build_monitor_interior_scatter(grid_geometry)
+    build_start = perf_counter()
+    kernels, first_cached_solve = _get_monitor_open_boundary_poisson_kernels_jax(
+        grid_geometry=grid_geometry,
+        use_cached_operator=use_cached_operator,
+    )
+    build_elapsed = perf_counter() - build_start
+    interior_mask = kernels.interior_mask
+    scatter = kernels.scatter
+    gather = kernels.gather
+    matvec = kernels.matvec
     jax = get_configured_jax()
     jnp = jax.numpy
 
@@ -170,16 +264,30 @@ def solve_open_boundary_poisson_monitor_jax(
         ),
         dtype=np.float64,
     )
-    matvec = build_monitor_open_boundary_poisson_matvec_jax(grid_geometry=grid_geometry)
+    cg_start = perf_counter()
     interior_solution, diagnostics = _run_jax_cg(
         matvec=matvec,
         rhs=gather(rhs_full),
         tolerance=tolerance,
         max_iterations=max_iterations,
     )
+    cg_elapsed = perf_counter() - cg_start
     full_interior = np.asarray(scatter(jnp.asarray(interior_solution, dtype=jnp.float64)), dtype=np.float64)
     potential = np.array(boundary_condition.boundary_values, copy=True)
     potential[interior_mask] = full_interior[interior_mask]
+    total_elapsed = perf_counter() - solve_start
+    diagnostics = MonitorPoissonJaxSolveDiagnostics(
+        solver_method=diagnostics.solver_method,
+        iteration_count=diagnostics.iteration_count,
+        residual_max=diagnostics.residual_max,
+        converged=diagnostics.converged,
+        total_wall_time_seconds=float(total_elapsed),
+        build_wall_time_seconds=float(build_elapsed),
+        cg_wall_time_seconds=float(cg_elapsed),
+        used_cached_operator=bool(use_cached_operator),
+        first_solve_for_cached_operator=bool(use_cached_operator and first_cached_solve),
+    )
+    _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS = diagnostics
     result = OpenBoundaryPoissonResult(
         rho=density,
         potential=potential,
@@ -198,6 +306,8 @@ def solve_open_boundary_poisson_monitor_jax(
 
 __all__ = [
     "MonitorPoissonJaxSolveDiagnostics",
+    "clear_monitor_poisson_jax_kernel_cache",
+    "get_last_monitor_poisson_jax_solve_diagnostics",
     "apply_monitor_open_boundary_poisson_operator_jax",
     "build_monitor_open_boundary_poisson_matvec_jax",
     "solve_open_boundary_poisson_monitor_jax",

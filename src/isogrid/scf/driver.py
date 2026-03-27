@@ -66,6 +66,8 @@ from isogrid.pseudo import evaluate_nonlocal_ionic_action
 from isogrid.pseudo import LocalPotentialPatchParameters
 from isogrid.pseudo import load_case_gth_pseudo_data
 from isogrid.xc import evaluate_lsda_terms
+from isogrid.poisson.poisson_jax import clear_monitor_poisson_jax_kernel_cache
+from isogrid.poisson.poisson_jax import get_last_monitor_poisson_jax_solve_diagnostics
 
 _SUPPORTED_CASE_NAME = H2_BENCHMARK_CASE.name
 _ZERO_BLOCK_DTYPE = np.float64
@@ -164,6 +166,7 @@ class H2ScfDryRunParameterSummary:
     interpolation_neighbors: int
     kinetic_version: str
     hartree_backend: str
+    use_jax_hartree_cached_operator: bool
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     includes_nonlocal: bool
@@ -208,6 +211,7 @@ class H2StaticLocalScfDryRunResult:
     occupations: SpinOccupations
     parameter_summary: H2ScfDryRunParameterSummary
     hartree_backend: str
+    use_jax_hartree_cached_operator: bool
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     cycle_breaker_enabled: bool
@@ -251,6 +255,14 @@ class H2StaticLocalScfDryRunResult:
     density_update_wall_time_seconds: float
     bookkeeping_wall_time_seconds: float
     hartree_solve_call_count: int
+    average_hartree_solve_wall_time_seconds: float | None
+    first_hartree_solve_wall_time_seconds: float | None
+    repeated_hartree_solve_average_wall_time_seconds: float | None
+    average_hartree_cg_iterations: float | None
+    first_hartree_cg_iterations: int | None
+    repeated_hartree_cg_iteration_average: float | None
+    hartree_cached_operator_usage_count: int
+    hartree_cached_operator_first_solve_count: int
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -649,6 +661,7 @@ def _monitor_grid_scf_parameter_summary(
     *,
     kinetic_version: str,
     hartree_backend: str,
+    use_jax_hartree_cached_operator: bool,
     use_jax_block_kernels: bool,
     use_step_local_static_local_reuse: bool,
     cycle_breaker_enabled: bool,
@@ -668,6 +681,7 @@ def _monitor_grid_scf_parameter_summary(
         interpolation_neighbors=int(patch_parameters.interpolation_neighbors),
         kinetic_version=kinetic_version,
         hartree_backend=hartree_backend,
+        use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         includes_nonlocal=False,
@@ -710,6 +724,25 @@ def _detect_monitor_grid_singlet_alternation(
         grid_geometry=grid_geometry,
     )
     return bool(distance_to_two_steps_ago < 0.95 * distance_to_previous)
+
+
+def _record_last_jax_hartree_solve_diagnostics(
+    *,
+    enabled: bool,
+    solve_times: list[float],
+    cg_iterations: list[int],
+    cached_use_flags: list[bool],
+    cached_first_flags: list[bool],
+) -> None:
+    if not enabled:
+        return
+    diagnostics = get_last_monitor_poisson_jax_solve_diagnostics()
+    if diagnostics is None:
+        return
+    solve_times.append(float(diagnostics.total_wall_time_seconds))
+    cg_iterations.append(int(diagnostics.iteration_count))
+    cached_use_flags.append(bool(diagnostics.used_cached_operator))
+    cached_first_flags.append(bool(diagnostics.first_solve_for_cached_operator))
 
 
 def _density_residual_fields(
@@ -830,6 +863,7 @@ def evaluate_static_local_single_point_energy(
     patch_parameters: LocalPotentialPatchParameters | None = None,
     kinetic_version: str = "production",
     hartree_backend: str = "python",
+    use_jax_hartree_cached_operator: bool = False,
 ) -> SinglePointEnergyComponents:
     """Evaluate the local-only single-point energy on either supported grid.
 
@@ -928,6 +962,7 @@ def evaluate_static_local_single_point_energy(
         grid_geometry=grid_geometry,
         rho=rho_total,
         backend=hartree_backend,
+        use_jax_cached_operator=use_jax_hartree_cached_operator,
     )
     lsda_evaluation = evaluate_lsda_terms(
         rho_up=rho_up_field,
@@ -1318,6 +1353,7 @@ def run_h2_monitor_grid_scf_dry_run(
     eigensolver_ncv: int = 20,
     kinetic_version: str = "trial_fix",
     hartree_backend: str = "python",
+    use_jax_hartree_cached_operator: bool = False,
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -1353,6 +1389,10 @@ def run_h2_monitor_grid_scf_dry_run(
             "hartree_backend must be `python` or `jax`; "
             f"received `{hartree_backend}`."
         )
+    if use_jax_hartree_cached_operator and normalized_hartree_backend != "jax":
+        raise ValueError(
+            "use_jax_hartree_cached_operator requires hartree_backend='jax'."
+        )
 
     occupations = resolve_h2_spin_occupations(spin_label=spin_label, case=case)
     rho_up, rho_down, guess_up, guess_down = build_h2_initial_density_guess(
@@ -1378,6 +1418,10 @@ def run_h2_monitor_grid_scf_dry_run(
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
     iteration_bookkeeping_times: list[float] = []
+    hartree_solve_times: list[float] = []
+    hartree_cg_iterations: list[int] = []
+    hartree_cached_use_flags: list[bool] = []
+    hartree_cached_first_flags: list[bool] = []
     eigensolver_wall_time = 0.0
     static_local_prepare_wall_time = 0.0
     hartree_solve_wall_time = 0.0
@@ -1396,6 +1440,8 @@ def run_h2_monitor_grid_scf_dry_run(
         if use_step_local_static_local_reuse
         else None
     )
+    if normalized_hartree_backend == "jax":
+        clear_monitor_poisson_jax_kernel_cache()
     total_wall_start = perf_counter()
     if use_step_local_static_local_reuse:
         initial_context, initial_profile = prepare_fixed_potential_static_local_operator_profiled(
@@ -1409,12 +1455,20 @@ def run_h2_monitor_grid_scf_dry_run(
             kinetic_version=kinetic_version,
             base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
             hartree_backend=normalized_hartree_backend,
+            use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
         )
         static_local_prepare_wall_time += initial_profile.total_wall_time_seconds
         hartree_solve_wall_time += initial_profile.hartree_resolve_wall_time_seconds
         local_ionic_resolve_wall_time += initial_profile.local_ionic_resolve_wall_time_seconds
         xc_resolve_wall_time += initial_profile.xc_resolve_wall_time_seconds
         hartree_solve_call_count += 1
+        _record_last_jax_hartree_solve_diagnostics(
+            enabled=(normalized_hartree_backend == "jax"),
+            solve_times=hartree_solve_times,
+            cg_iterations=hartree_cg_iterations,
+            cached_use_flags=hartree_cached_use_flags,
+            cached_first_flags=hartree_cached_first_flags,
+        )
         initial_energy_start = perf_counter()
         final_energy, initial_energy_profile = evaluate_static_local_single_point_energy_from_context(
             initial_context,
@@ -1442,9 +1496,17 @@ def run_h2_monitor_grid_scf_dry_run(
             patch_parameters=patch_parameters,
             kinetic_version=kinetic_version,
             hartree_backend=normalized_hartree_backend,
+            use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
         )
         energy_evaluation_wall_time += perf_counter() - initial_energy_start
         hartree_solve_call_count += 1
+        _record_last_jax_hartree_solve_diagnostics(
+            enabled=(normalized_hartree_backend == "jax"),
+            solve_times=hartree_solve_times,
+            cg_iterations=hartree_cg_iterations,
+            cached_use_flags=hartree_cached_use_flags,
+            cached_first_flags=hartree_cached_first_flags,
+        )
     converged = False
 
     for iteration in range(1, max_iterations + 1):
@@ -1472,6 +1534,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         kinetic_version=kinetic_version,
                         base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
                         hartree_backend=normalized_hartree_backend,
+                        use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                     )
                 )
                 static_local_prepare_wall_time += up_preparation_profile.total_wall_time_seconds
@@ -1482,6 +1545,13 @@ def run_h2_monitor_grid_scf_dry_run(
                     up_preparation_profile.total_wall_time_seconds
                 )
                 hartree_solve_call_count += 1
+                _record_last_jax_hartree_solve_diagnostics(
+                    enabled=(normalized_hartree_backend == "jax"),
+                    solve_times=hartree_solve_times,
+                    cg_iterations=hartree_cg_iterations,
+                    cached_use_flags=hartree_cached_use_flags,
+                    cached_first_flags=hartree_cached_first_flags,
+                )
             solve_up = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
                 rho_up=rho_up,
@@ -1500,6 +1570,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 operator_preparation_profile=up_preparation_profile,
                 base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
                 hartree_backend=normalized_hartree_backend,
+                use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -1521,6 +1592,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         kinetic_version=kinetic_version,
                         base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
                         hartree_backend=normalized_hartree_backend,
+                        use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                     )
                 )
                 static_local_prepare_wall_time += down_preparation_profile.total_wall_time_seconds
@@ -1531,6 +1603,13 @@ def run_h2_monitor_grid_scf_dry_run(
                     down_preparation_profile.total_wall_time_seconds
                 )
                 hartree_solve_call_count += 1
+                _record_last_jax_hartree_solve_diagnostics(
+                    enabled=(normalized_hartree_backend == "jax"),
+                    solve_times=hartree_solve_times,
+                    cg_iterations=hartree_cg_iterations,
+                    cached_use_flags=hartree_cached_use_flags,
+                    cached_first_flags=hartree_cached_first_flags,
+                )
             solve_down = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
                 rho_up=rho_up,
@@ -1549,6 +1628,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 operator_preparation_profile=down_preparation_profile,
                 base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
                 hartree_backend=normalized_hartree_backend,
+                use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             )
             orbitals_down = solve_down.orbitals
         else:
@@ -1632,6 +1712,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     kinetic_version=kinetic_version,
                     base_local_ionic_evaluation=cached_base_local_ionic_evaluation,
                     hartree_backend=normalized_hartree_backend,
+                    use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                 )
             )
             static_local_prepare_wall_time += energy_preparation_profile.total_wall_time_seconds
@@ -1641,6 +1722,13 @@ def run_h2_monitor_grid_scf_dry_run(
             )
             xc_resolve_wall_time += energy_preparation_profile.xc_resolve_wall_time_seconds
             hartree_solve_call_count += 1
+            _record_last_jax_hartree_solve_diagnostics(
+                enabled=(normalized_hartree_backend == "jax"),
+                solve_times=hartree_solve_times,
+                cg_iterations=hartree_cg_iterations,
+                cached_use_flags=hartree_cached_use_flags,
+                cached_first_flags=hartree_cached_first_flags,
+            )
             energy, energy_profile = evaluate_static_local_single_point_energy_from_context(
                 energy_context,
                 orbitals_up=orbitals_up,
@@ -1665,8 +1753,16 @@ def run_h2_monitor_grid_scf_dry_run(
                 patch_parameters=patch_parameters,
                 kinetic_version=kinetic_version,
                 hartree_backend=normalized_hartree_backend,
+                use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             )
             hartree_solve_call_count += 1
+            _record_last_jax_hartree_solve_diagnostics(
+                enabled=(normalized_hartree_backend == "jax"),
+                solve_times=hartree_solve_times,
+                cg_iterations=hartree_cg_iterations,
+                cached_use_flags=hartree_cached_use_flags,
+                cached_first_flags=hartree_cached_first_flags,
+            )
         energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
         energy_evaluation_wall_time += energy_evaluation_elapsed
 
@@ -1815,6 +1911,28 @@ def run_h2_monitor_grid_scf_dry_run(
     average_iteration_wall_time_seconds = (
         None if iteration_count == 0 else float(total_wall_time_seconds / iteration_count)
     )
+    average_hartree_solve_wall_time_seconds = (
+        None if not hartree_solve_times else float(np.mean(hartree_solve_times))
+    )
+    first_hartree_solve_wall_time_seconds = (
+        None if not hartree_solve_times else float(hartree_solve_times[0])
+    )
+    repeated_hartree_solve_average_wall_time_seconds = (
+        None
+        if len(hartree_solve_times) <= 1
+        else float(np.mean(hartree_solve_times[1:]))
+    )
+    average_hartree_cg_iterations = (
+        None if not hartree_cg_iterations else float(np.mean(hartree_cg_iterations))
+    )
+    first_hartree_cg_iterations = (
+        None if not hartree_cg_iterations else int(hartree_cg_iterations[0])
+    )
+    repeated_hartree_cg_iteration_average = (
+        None
+        if len(hartree_cg_iterations) <= 1
+        else float(np.mean(hartree_cg_iterations[1:]))
+    )
     bookkeeping_wall_time_seconds = float(
         total_wall_time_seconds
         - eigensolver_wall_time
@@ -1833,6 +1951,7 @@ def run_h2_monitor_grid_scf_dry_run(
             patch_parameters,
             kinetic_version=kinetic_version,
             hartree_backend=normalized_hartree_backend,
+            use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             use_jax_block_kernels=use_jax_block_kernels,
             use_step_local_static_local_reuse=use_step_local_static_local_reuse,
             cycle_breaker_enabled=enable_cycle_breaker,
@@ -1842,6 +1961,7 @@ def run_h2_monitor_grid_scf_dry_run(
             diis_history_length=diis_history_length,
         ),
         hartree_backend=normalized_hartree_backend,
+        use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         cycle_breaker_enabled=bool(enable_cycle_breaker),
@@ -1885,6 +2005,14 @@ def run_h2_monitor_grid_scf_dry_run(
         density_update_wall_time_seconds=float(density_update_wall_time),
         bookkeeping_wall_time_seconds=bookkeeping_wall_time_seconds,
         hartree_solve_call_count=int(hartree_solve_call_count),
+        average_hartree_solve_wall_time_seconds=average_hartree_solve_wall_time_seconds,
+        first_hartree_solve_wall_time_seconds=first_hartree_solve_wall_time_seconds,
+        repeated_hartree_solve_average_wall_time_seconds=repeated_hartree_solve_average_wall_time_seconds,
+        average_hartree_cg_iterations=average_hartree_cg_iterations,
+        first_hartree_cg_iterations=first_hartree_cg_iterations,
+        repeated_hartree_cg_iteration_average=repeated_hartree_cg_iteration_average,
+        hartree_cached_operator_usage_count=int(sum(hartree_cached_use_flags)),
+        hartree_cached_operator_first_solve_count=int(sum(hartree_cached_first_flags)),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
         density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),
