@@ -1,4 +1,4 @@
-"""Very rough triplet-only SCF audit for the JAX Hartree PCG feasibility path.
+"""Very rough triplet-only SCF audit for the JAX Hartree stronger-PCG path.
 
 This audit keeps the A-grid H2 dry-run restricted to the current local-only
 Hamiltonian
@@ -11,13 +11,15 @@ SCF routes on the already-converged H2 triplet case:
 
 - jax-hartree-cgloop: cached JAX Hartree operator with `cg_impl="jax_loop"`
   and no preconditioner
-- jax-hartree-pcg: the same JAX-native CG inner loop plus one very small
-  diagonal/Jacobi preconditioner
+- jax-hartree-pcg-stronger: the same JAX-native CG inner loop plus one stronger
+  metric-aware line preconditioner that exactly solves the 1D tridiagonal
+  block along the stiffest logical axis while ignoring the weaker transverse
+  couplings
 
 The goal is not a formal benchmark. It is a small, auditable profile that
-answers whether a very small preconditioner is enough to push the still-large
-Hartree iteration count down, and whether that matters end-to-end for the H2
-triplet SCF dry-run.
+answers whether a stronger-but-still-small preconditioner can push the
+still-large Hartree iteration count down enough to matter end-to-end for the
+H2 triplet SCF dry-run.
 """
 
 from __future__ import annotations
@@ -145,9 +147,10 @@ class H2TripletHartreeEnergyAuditResult:
     """Top-level triplet-only SCF audit for the JAX Hartree PCG prototype."""
 
     jax_hartree_cgloop_route: H2TripletHartreeEnergyRouteResult
-    jax_hartree_pcg_route: H2TripletHartreeEnergyRouteResult
+    jax_hartree_pcg_stronger_route: H2TripletHartreeEnergyRouteResult
     single_solve_cgloop: H2TripletHartreeSingleSolveResult
-    single_solve_pcg: H2TripletHartreeSingleSolveResult
+    single_solve_diag: H2TripletHartreeSingleSolveResult | None
+    single_solve_pcg_stronger: H2TripletHartreeSingleSolveResult
     note: str
 
 
@@ -326,7 +329,12 @@ def _run_route(
     case: BenchmarkCase,
     cg_preconditioner: str,
 ) -> tuple[H2TripletHartreeEnergyRouteResult, H2StaticLocalScfDryRunResult]:
-    path_label = "jax-hartree-pcg" if cg_preconditioner == "diag" else "jax-hartree-cgloop"
+    if cg_preconditioner == "none":
+        path_label = "jax-hartree-cgloop"
+    elif cg_preconditioner == "line":
+        path_label = "jax-hartree-pcg-stronger"
+    else:
+        path_label = f"jax-hartree-{cg_preconditioner}"
     raw_result = run_h2_monitor_grid_scf_dry_run(
         "triplet",
         case=case,
@@ -376,7 +384,13 @@ def _run_single_solve(
         else float(diagnostics.matvec_wall_time_seconds / diagnostics.matvec_call_count)
     )
     return H2TripletHartreeSingleSolveResult(
-        path_label="single-solve-pcg" if cg_preconditioner == "diag" else "single-solve-cgloop",
+        path_label=(
+            "single-solve-cgloop"
+            if cg_preconditioner == "none"
+            else "single-solve-diag"
+            if cg_preconditioner == "diag"
+            else "single-solve-pcg-stronger"
+        ),
         cg_impl="jax_loop",
         cg_preconditioner=cg_preconditioner,
         converged=bool(diagnostics.converged),
@@ -399,10 +413,10 @@ def _run_single_solve(
 def run_h2_jax_triplet_hartree_energy_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2TripletHartreeEnergyAuditResult:
-    """Run the triplet-only SCF profiling audit for the JAX Hartree PCG prototype."""
+    """Run the triplet-only SCF profiling audit for the stronger JAX Hartree PCG path."""
 
     jax_hartree_cgloop_route, cgloop_raw = _run_route(case=case, cg_preconditioner="none")
-    jax_hartree_pcg_route, _ = _run_route(case=case, cg_preconditioner="diag")
+    jax_hartree_pcg_stronger_route, _ = _run_route(case=case, cg_preconditioner="line")
     occupations = resolve_h2_spin_occupations("triplet", case=case)
     initial_rho_up, initial_rho_down, _, _ = build_h2_initial_density_guess(
         occupations=occupations,
@@ -411,18 +425,24 @@ def run_h2_jax_triplet_hartree_energy_audit(
     )
     rho_total = np.asarray(initial_rho_up + initial_rho_down, dtype=np.float64)
     single_solve_cgloop = _run_single_solve(rho_total=rho_total, cg_preconditioner="none")
-    single_solve_pcg = _run_single_solve(rho_total=rho_total, cg_preconditioner="diag")
+    single_solve_diag = _run_single_solve(rho_total=rho_total, cg_preconditioner="diag")
+    single_solve_pcg_stronger = _run_single_solve(
+        rho_total=rho_total,
+        cg_preconditioner="line",
+    )
     return H2TripletHartreeEnergyAuditResult(
         jax_hartree_cgloop_route=jax_hartree_cgloop_route,
-        jax_hartree_pcg_route=jax_hartree_pcg_route,
+        jax_hartree_pcg_stronger_route=jax_hartree_pcg_stronger_route,
         single_solve_cgloop=single_solve_cgloop,
-        single_solve_pcg=single_solve_pcg,
+        single_solve_diag=single_solve_diag,
+        single_solve_pcg_stronger=single_solve_pcg_stronger,
         note=(
-            "Triplet-only A-grid SCF audit for the JAX Hartree PCG feasibility path. "
-            "Both routes keep the JAX eigensolver hot path, step-local static-local reuse, "
+            "Triplet-only A-grid SCF audit for the JAX Hartree stronger-PCG feasibility path. "
+            "Both main routes keep the JAX eigensolver hot path, step-local static-local reuse, "
             "cached Hartree operator reuse, and `cg_impl='jax_loop'` enabled; the only intended "
-            "difference is `cg_preconditioner='none'` versus the very small "
-            "`cg_preconditioner='diag'` route. The `static_local_prepare` and `hartree_solve` "
+            "difference is `cg_preconditioner='none'` versus the stronger "
+            "`cg_preconditioner='line'` route. The current tiny `diag` route is retained only "
+            "as a same-density single-solve reference. The `static_local_prepare` and `hartree_solve` "
             "buckets are diagnostic and overlap with `eigensolver` / `energy_eval`; they should "
             "not be summed with the total wall time. For `cg_impl='jax_loop'`, matvec timing "
             "remains probe-based and should be interpreted as an approximate attribution."
@@ -536,19 +556,21 @@ def print_h2_jax_triplet_hartree_energy_summary(
     print(f"note: {result.note}")
     print()
     _print_single_solve(result.single_solve_cgloop)
-    _print_single_solve(result.single_solve_pcg)
+    if result.single_solve_diag is not None:
+        _print_single_solve(result.single_solve_diag)
+    _print_single_solve(result.single_solve_pcg_stronger)
     print()
     _print_route(result.jax_hartree_cgloop_route)
-    _print_route(result.jax_hartree_pcg_route)
+    _print_route(result.jax_hartree_pcg_stronger_route)
     print()
     print(
         "  total timing delta [s]: "
-        f"{result.jax_hartree_pcg_route.total_wall_time_seconds - result.jax_hartree_cgloop_route.total_wall_time_seconds:+.6f}"
+        f"{result.jax_hartree_pcg_stronger_route.total_wall_time_seconds - result.jax_hartree_cgloop_route.total_wall_time_seconds:+.6f}"
     )
     if result.jax_hartree_cgloop_route.total_wall_time_seconds > 0.0:
         print(
-            "  timing ratio (pcg/cgloop): "
-            f"{result.jax_hartree_pcg_route.total_wall_time_seconds / result.jax_hartree_cgloop_route.total_wall_time_seconds:.6f}"
+            "  timing ratio (pcg_stronger/cgloop): "
+            f"{result.jax_hartree_pcg_stronger_route.total_wall_time_seconds / result.jax_hartree_cgloop_route.total_wall_time_seconds:.6f}"
         )
 
 

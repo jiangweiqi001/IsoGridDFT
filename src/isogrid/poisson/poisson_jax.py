@@ -66,9 +66,39 @@ class MonitorPoissonJaxCachedSolveKernels:
     inverse_preconditioner_diagonal: object
 
 
+@dataclass(frozen=True)
+class MonitorPoissonJaxSeparablePreconditionerContext:
+    """Cached separable preconditioner data for one monitor-grid geometry."""
+
+    interior_shape: tuple[int, int, int]
+    coefficient_x: float
+    coefficient_y: float
+    coefficient_z: float
+    apply: object
+
+
+@dataclass(frozen=True)
+class MonitorPoissonJaxLinePreconditionerContext:
+    """Cached metric-aware line preconditioner for one monitor-grid geometry."""
+
+    axis: int
+    axis_label: str
+    line_length: int
+    average_line_diagonal_shift: float
+    apply: object
+
+
 _MONITOR_POISSON_JAX_KERNEL_CACHE: dict[
     tuple[int, tuple[int, int, int]],
     MonitorPoissonJaxCachedSolveKernels,
+] = {}
+_MONITOR_POISSON_JAX_SEPARABLE_PRECONDITIONER_CACHE: dict[
+    tuple[int, tuple[int, int, int]],
+    MonitorPoissonJaxSeparablePreconditionerContext,
+] = {}
+_MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE: dict[
+    tuple[int, tuple[int, int, int]],
+    MonitorPoissonJaxLinePreconditionerContext,
 ] = {}
 _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE: dict[
     tuple[int, tuple[int, int, int], int, int],
@@ -76,7 +106,7 @@ _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE: dict[
 ] = {}
 _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS: MonitorPoissonJaxSolveDiagnostics | None = None
 _VALID_MONITOR_POISSON_JAX_CG_IMPLS = {"baseline", "jax_loop"}
-_VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS = {"none", "diag", "jacobi"}
+_VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS = {"none", "diag", "jacobi", "separable", "line"}
 
 
 def apply_monitor_open_boundary_poisson_operator_jax(
@@ -144,6 +174,8 @@ def clear_monitor_poisson_jax_kernel_cache() -> None:
 
     global _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS
     _MONITOR_POISSON_JAX_KERNEL_CACHE.clear()
+    _MONITOR_POISSON_JAX_SEPARABLE_PRECONDITIONER_CACHE.clear()
+    _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE.clear()
     _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE.clear()
     _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS = None
 
@@ -168,7 +200,7 @@ def _normalize_monitor_poisson_jax_cg_preconditioner(cg_preconditioner: str) -> 
     normalized = cg_preconditioner.strip().lower()
     if normalized not in _VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS:
         raise ValueError(
-            "cg_preconditioner must be `none`, `diag`, or `jacobi`; "
+            "cg_preconditioner must be `none`, `diag`, `jacobi`, `separable`, or `line`; "
             f"received `{cg_preconditioner}`."
         )
     if normalized == "jacobi":
@@ -212,6 +244,272 @@ def _build_monitor_open_boundary_inverse_preconditioner_diagonal_jax(
     safe_diagonal = np.maximum(diagonal_surrogate, floor)
     gathered = gather(safe_diagonal)
     return jnp.asarray(1.0 / gathered, dtype=jnp.float64)
+
+
+def _axis_stiffness_from_monitor_operator_diagonal(
+    *,
+    jacobian: np.ndarray,
+    diagonal_flux_weight: np.ndarray,
+    spacing: float,
+    axis: int,
+) -> float:
+    center_slice = [slice(1, -1), slice(1, -1), slice(1, -1)]
+    lower_slice = [slice(1, -1), slice(1, -1), slice(1, -1)]
+    upper_slice = [slice(1, -1), slice(1, -1), slice(1, -1)]
+    center_slice[axis] = slice(1, -1)
+    lower_slice[axis] = slice(0, -2)
+    upper_slice[axis] = slice(2, None)
+    center = diagonal_flux_weight[tuple(center_slice)]
+    lower = diagonal_flux_weight[tuple(lower_slice)]
+    upper = diagonal_flux_weight[tuple(upper_slice)]
+    jacobian_center = jacobian[1:-1, 1:-1, 1:-1]
+    diagonal_contribution = (
+        0.5 * (center + lower) + 0.5 * (center + upper)
+    ) / (jacobian_center * spacing * spacing)
+    coefficient = 0.5 * float(np.mean(diagonal_contribution)) * (spacing * spacing)
+    if not np.isfinite(coefficient) or coefficient <= 0.0:
+        raise ValueError(
+            "The separable monitor-grid preconditioner requires positive axis stiffness "
+            "coefficients."
+        )
+    return coefficient
+
+
+def _build_dirichlet_sine_basis_matrix(size: int) -> np.ndarray:
+    indices = np.arange(1, size + 1, dtype=np.float64)
+    basis = np.sin(np.pi * np.outer(indices, indices) / (size + 1))
+    basis *= np.sqrt(2.0 / (size + 1))
+    return np.asarray(basis, dtype=np.float64)
+
+
+def _build_monitor_open_boundary_separable_preconditioner_context_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+) -> MonitorPoissonJaxSeparablePreconditionerContext:
+    jax = get_configured_jax()
+    jnp = jax.numpy
+    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.float64)
+    inverse_metric = np.asarray(grid_geometry.inverse_metric_tensor, dtype=np.float64)
+    dx = _logical_spacing(grid_geometry.logical_x)
+    dy = _logical_spacing(grid_geometry.logical_y)
+    dz = _logical_spacing(grid_geometry.logical_z)
+    nx, ny, nz = grid_geometry.spec.shape
+    interior_shape = (nx - 2, ny - 2, nz - 2)
+    if min(interior_shape) <= 0:
+        raise ValueError(
+            "The separable monitor-grid preconditioner requires at least one interior point per axis."
+        )
+
+    jacobian_weighted_metric_x = jacobian * inverse_metric[..., 0, 0]
+    jacobian_weighted_metric_y = jacobian * inverse_metric[..., 1, 1]
+    jacobian_weighted_metric_z = jacobian * inverse_metric[..., 2, 2]
+    coefficient_x = _axis_stiffness_from_monitor_operator_diagonal(
+        jacobian=jacobian,
+        diagonal_flux_weight=jacobian_weighted_metric_x,
+        spacing=dx,
+        axis=0,
+    )
+    coefficient_y = _axis_stiffness_from_monitor_operator_diagonal(
+        jacobian=jacobian,
+        diagonal_flux_weight=jacobian_weighted_metric_y,
+        spacing=dy,
+        axis=1,
+    )
+    coefficient_z = _axis_stiffness_from_monitor_operator_diagonal(
+        jacobian=jacobian,
+        diagonal_flux_weight=jacobian_weighted_metric_z,
+        spacing=dz,
+        axis=2,
+    )
+
+    sine_x = jnp.asarray(_build_dirichlet_sine_basis_matrix(interior_shape[0]), dtype=jnp.float64)
+    sine_y = jnp.asarray(_build_dirichlet_sine_basis_matrix(interior_shape[1]), dtype=jnp.float64)
+    sine_z = jnp.asarray(_build_dirichlet_sine_basis_matrix(interior_shape[2]), dtype=jnp.float64)
+    modes_x = np.arange(1, interior_shape[0] + 1, dtype=np.float64)
+    modes_y = np.arange(1, interior_shape[1] + 1, dtype=np.float64)
+    modes_z = np.arange(1, interior_shape[2] + 1, dtype=np.float64)
+    eigenvalues_x = 4.0 * np.sin(np.pi * modes_x / (2.0 * (interior_shape[0] + 1))) ** 2 / (dx * dx)
+    eigenvalues_y = 4.0 * np.sin(np.pi * modes_y / (2.0 * (interior_shape[1] + 1))) ** 2 / (dy * dy)
+    eigenvalues_z = 4.0 * np.sin(np.pi * modes_z / (2.0 * (interior_shape[2] + 1))) ** 2 / (dz * dz)
+    inverse_eigenvalues = (
+        coefficient_x * eigenvalues_x[:, None, None]
+        + coefficient_y * eigenvalues_y[None, :, None]
+        + coefficient_z * eigenvalues_z[None, None, :]
+    )
+    floor = max(1.0e-12, 1.0e-12 * float(np.max(inverse_eigenvalues)))
+    safe_inverse_eigenvalues = jnp.asarray(1.0 / np.maximum(inverse_eigenvalues, floor), dtype=jnp.float64)
+
+    @jax.jit
+    def _apply(interior_residual):
+        field = jnp.reshape(interior_residual, interior_shape)
+        spectral = jnp.einsum("ia,jb,kc,abc->ijk", sine_x, sine_y, sine_z, field)
+        solved = spectral * safe_inverse_eigenvalues
+        restored = jnp.einsum("ai,bj,ck,ijk->abc", sine_x, sine_y, sine_z, solved)
+        return jnp.reshape(restored, (-1,))
+
+    return MonitorPoissonJaxSeparablePreconditionerContext(
+        interior_shape=interior_shape,
+        coefficient_x=float(coefficient_x),
+        coefficient_y=float(coefficient_y),
+        coefficient_z=float(coefficient_z),
+        apply=_apply,
+    )
+
+
+def _get_monitor_open_boundary_separable_preconditioner_context_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+    use_cached_operator: bool,
+) -> tuple[MonitorPoissonJaxSeparablePreconditionerContext, bool]:
+    if not use_cached_operator:
+        return (
+            _build_monitor_open_boundary_separable_preconditioner_context_jax(
+                grid_geometry=grid_geometry,
+            ),
+            False,
+        )
+
+    cache_key = _build_monitor_poisson_jax_cache_key(grid_geometry)
+    cached = _MONITOR_POISSON_JAX_SEPARABLE_PRECONDITIONER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached, False
+
+    cached = _build_monitor_open_boundary_separable_preconditioner_context_jax(
+        grid_geometry=grid_geometry,
+    )
+    _MONITOR_POISSON_JAX_SEPARABLE_PRECONDITIONER_CACHE[cache_key] = cached
+    return cached, True
+
+
+def _build_monitor_open_boundary_line_preconditioner_context_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+) -> MonitorPoissonJaxLinePreconditionerContext:
+    jax = get_configured_jax()
+    jnp = jax.numpy
+    lax_linalg = jax.lax.linalg
+    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.float64)
+    inverse_metric = np.asarray(grid_geometry.inverse_metric_tensor, dtype=np.float64)
+    dx = _logical_spacing(grid_geometry.logical_x)
+    dy = _logical_spacing(grid_geometry.logical_y)
+    dz = _logical_spacing(grid_geometry.logical_z)
+    spacings = (dx, dy, dz)
+    diagonal_flux_weights = (
+        jacobian * inverse_metric[..., 0, 0],
+        jacobian * inverse_metric[..., 1, 1],
+        jacobian * inverse_metric[..., 2, 2],
+    )
+    stiffness_coefficients = tuple(
+        _axis_stiffness_from_monitor_operator_diagonal(
+            jacobian=jacobian,
+            diagonal_flux_weight=diagonal_flux_weights[axis],
+            spacing=spacings[axis],
+            axis=axis,
+        )
+        for axis in range(3)
+    )
+    stiffness_scores = tuple(
+        2.0 * stiffness_coefficients[axis] / (spacings[axis] * spacings[axis])
+        for axis in range(3)
+    )
+    axis = int(np.argmax(np.asarray(stiffness_scores, dtype=np.float64)))
+    axis_label = "xyz"[axis]
+    spacing = spacings[axis]
+    diagonal_flux_weight = diagonal_flux_weights[axis]
+    jacobian_center = jacobian[1:-1, 1:-1, 1:-1]
+    axis_lower_coefficients: list[np.ndarray] = []
+    axis_upper_coefficients: list[np.ndarray] = []
+    diagonal_contributions: list[np.ndarray] = []
+    for axis_index, (axis_spacing, axis_diagonal_flux_weight) in enumerate(
+        zip(spacings, diagonal_flux_weights, strict=False)
+    ):
+        lower_slice = [slice(1, -1), slice(1, -1), slice(1, -1)]
+        upper_slice = [slice(1, -1), slice(1, -1), slice(1, -1)]
+        lower_slice[axis_index] = slice(0, -2)
+        upper_slice[axis_index] = slice(2, None)
+        center = axis_diagonal_flux_weight[1:-1, 1:-1, 1:-1]
+        lower = axis_diagonal_flux_weight[tuple(lower_slice)]
+        upper = axis_diagonal_flux_weight[tuple(upper_slice)]
+        lower_coefficient = 0.5 * (center + lower) / (
+            jacobian_center * axis_spacing * axis_spacing
+        )
+        upper_coefficient = 0.5 * (center + upper) / (
+            jacobian_center * axis_spacing * axis_spacing
+        )
+        axis_lower_coefficients.append(lower_coefficient)
+        axis_upper_coefficients.append(upper_coefficient)
+        diagonal_contributions.append(lower_coefficient + upper_coefficient)
+
+    lower_coefficient = axis_lower_coefficients[axis]
+    upper_coefficient = axis_upper_coefficients[axis]
+    full_diagonal = sum(diagonal_contributions)
+
+    lower_diagonal = np.zeros_like(full_diagonal, dtype=np.float64)
+    upper_diagonal = np.zeros_like(full_diagonal, dtype=np.float64)
+    if axis == 0:
+        lower_diagonal[1:, :, :] = -lower_coefficient[1:, :, :]
+        upper_diagonal[:-1, :, :] = -upper_coefficient[:-1, :, :]
+    elif axis == 1:
+        lower_diagonal[:, 1:, :] = -lower_coefficient[:, 1:, :]
+        upper_diagonal[:, :-1, :] = -upper_coefficient[:, :-1, :]
+    else:
+        lower_diagonal[:, :, 1:] = -lower_coefficient[:, :, 1:]
+        upper_diagonal[:, :, :-1] = -upper_coefficient[:, :, :-1]
+
+    diagonal_lines = np.moveaxis(full_diagonal, axis, -1)
+    lower_lines = np.moveaxis(lower_diagonal, axis, -1)
+    upper_lines = np.moveaxis(upper_diagonal, axis, -1)
+    line_length = diagonal_lines.shape[-1]
+    diagonal_lines = jnp.asarray(diagonal_lines, dtype=jnp.float64)
+    lower_lines = jnp.asarray(lower_lines, dtype=jnp.float64)
+    upper_lines = jnp.asarray(upper_lines, dtype=jnp.float64)
+    interior_shape = tuple(int(length - 2) for length in grid_geometry.spec.shape)
+
+    @jax.jit
+    def _apply(interior_residual):
+        field = jnp.reshape(interior_residual, interior_shape)
+        rhs = jnp.moveaxis(field, axis, -1)
+        solved = lax_linalg.tridiagonal_solve(
+            lower_lines,
+            diagonal_lines,
+            upper_lines,
+            rhs[..., None],
+        )[..., 0]
+        restored = jnp.moveaxis(solved, -1, axis)
+        return jnp.reshape(restored, (-1,))
+
+    return MonitorPoissonJaxLinePreconditionerContext(
+        axis=axis,
+        axis_label=axis_label,
+        line_length=int(line_length),
+        average_line_diagonal_shift=float(np.mean(full_diagonal - (lower_coefficient + upper_coefficient))),
+        apply=_apply,
+    )
+
+
+def _get_monitor_open_boundary_line_preconditioner_context_jax(
+    *,
+    grid_geometry: MonitorGridGeometry,
+    use_cached_operator: bool,
+) -> tuple[MonitorPoissonJaxLinePreconditionerContext, bool]:
+    if not use_cached_operator:
+        return (
+            _build_monitor_open_boundary_line_preconditioner_context_jax(
+                grid_geometry=grid_geometry,
+            ),
+            False,
+        )
+
+    cache_key = _build_monitor_poisson_jax_cache_key(grid_geometry)
+    cached = _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE.get(cache_key)
+    if cached is not None:
+        return cached, False
+
+    cached = _build_monitor_open_boundary_line_preconditioner_context_jax(
+        grid_geometry=grid_geometry,
+    )
+    _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE[cache_key] = cached
+    return cached, True
 
 
 def _build_monitor_poisson_jax_cache_key(
@@ -279,6 +577,8 @@ def _run_jax_cg(
     *,
     matvec,
     inverse_preconditioner_diagonal,
+    separable_preconditioner_apply,
+    line_preconditioner_apply,
     rhs,
     tolerance: float,
     max_iterations: int,
@@ -300,6 +600,10 @@ def _run_jax_cg(
     def _apply_preconditioner(residual):
         if cg_preconditioner == "diag":
             return inverse_preconditioner_diagonal * residual
+        if cg_preconditioner == "separable":
+            return separable_preconditioner_apply(residual)
+        if cg_preconditioner == "line":
+            return line_preconditioner_apply(residual)
         return residual
 
     rhs_values = jnp.asarray(rhs, dtype=jnp.float64)
@@ -351,6 +655,8 @@ def _build_jax_loop_cg_solver(
     *,
     matvec,
     inverse_preconditioner_diagonal,
+    separable_preconditioner_apply,
+    line_preconditioner_apply,
     tolerance: float,
     max_iterations: int,
     cg_preconditioner: str,
@@ -365,6 +671,10 @@ def _build_jax_loop_cg_solver(
     def _apply_preconditioner(residual):
         if normalized_preconditioner == "diag":
             return inverse_preconditioner_diagonal * residual
+        if normalized_preconditioner == "separable":
+            return separable_preconditioner_apply(residual)
+        if normalized_preconditioner == "line":
+            return line_preconditioner_apply(residual)
         return residual
 
     @jax.jit
@@ -508,6 +818,8 @@ def _get_monitor_poisson_cg_loop_solver(
     grid_geometry: MonitorGridGeometry,
     matvec,
     inverse_preconditioner_diagonal,
+    separable_preconditioner_apply,
+    line_preconditioner_apply,
     tolerance: float,
     max_iterations: int,
     use_cached_operator: bool,
@@ -517,6 +829,8 @@ def _get_monitor_poisson_cg_loop_solver(
         return _build_jax_loop_cg_solver(
             matvec=matvec,
             inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
+            separable_preconditioner_apply=separable_preconditioner_apply,
+            line_preconditioner_apply=line_preconditioner_apply,
             tolerance=tolerance,
             max_iterations=max_iterations,
             cg_preconditioner=cg_preconditioner,
@@ -535,6 +849,8 @@ def _get_monitor_poisson_cg_loop_solver(
     cached_solver = _build_jax_loop_cg_solver(
         matvec=matvec,
         inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
+        separable_preconditioner_apply=separable_preconditioner_apply,
+        line_preconditioner_apply=line_preconditioner_apply,
         tolerance=tolerance,
         max_iterations=max_iterations,
         cg_preconditioner=cg_preconditioner,
@@ -575,6 +891,8 @@ def _run_jax_cg_loop(
     matvec,
     matvec_probe,
     inverse_preconditioner_diagonal,
+    separable_preconditioner_apply,
+    line_preconditioner_apply,
     rhs,
     tolerance: float,
     max_iterations: int,
@@ -585,6 +903,8 @@ def _run_jax_cg_loop(
         grid_geometry=grid_geometry,
         matvec=matvec,
         inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
+        separable_preconditioner_apply=separable_preconditioner_apply,
+        line_preconditioner_apply=line_preconditioner_apply,
         tolerance=tolerance,
         max_iterations=max_iterations,
         use_cached_operator=use_cached_operator,
@@ -656,6 +976,20 @@ def solve_open_boundary_poisson_monitor_jax(
         grid_geometry=grid_geometry,
         use_cached_operator=use_cached_operator,
     )
+    separable_preconditioner_apply = None
+    if normalized_cg_preconditioner == "separable":
+        separable_context, _ = _get_monitor_open_boundary_separable_preconditioner_context_jax(
+            grid_geometry=grid_geometry,
+            use_cached_operator=use_cached_operator,
+        )
+        separable_preconditioner_apply = separable_context.apply
+    line_preconditioner_apply = None
+    if normalized_cg_preconditioner == "line":
+        line_context, _ = _get_monitor_open_boundary_line_preconditioner_context_jax(
+            grid_geometry=grid_geometry,
+            use_cached_operator=use_cached_operator,
+        )
+        line_preconditioner_apply = line_context.apply
     build_elapsed = perf_counter() - build_start
     interior_mask = kernels.interior_mask
     scatter = kernels.scatter
@@ -684,6 +1018,8 @@ def solve_open_boundary_poisson_monitor_jax(
             matvec=matvec,
             matvec_probe=matvec_probe,
             inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
+            separable_preconditioner_apply=separable_preconditioner_apply,
+            line_preconditioner_apply=line_preconditioner_apply,
             rhs=rhs_interior,
             tolerance=tolerance,
             max_iterations=max_iterations,
@@ -696,6 +1032,8 @@ def solve_open_boundary_poisson_monitor_jax(
         interior_solution, diagnostics = _run_jax_cg(
             matvec=matvec,
             inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
+            separable_preconditioner_apply=separable_preconditioner_apply,
+            line_preconditioner_apply=line_preconditioner_apply,
             rhs=rhs_interior,
             tolerance=tolerance,
             max_iterations=max_iterations,

@@ -53,7 +53,7 @@ That same follow-up has now narrowed one step further to a `k=2` near-degenerate
 
 The current next step has now become a first H2 SCF dry-run on the repaired A-grid+patch+kinetic-trial-fix line. This remains a local-only monitor-grid dry-run: nonlocal is still absent, and the current H2 verdict should be read from the dedicated SCF dry-run audit rather than from any claim of production readiness.
 
-The current follow-up on that monitor-grid SCF line is intentionally very small: H2 triplet dry-run already converges, while the singlet route is now under a dedicated stability audit to see whether its two-cycle oscillation can be suppressed by a more conservative linear mixing choice and one minimal DIIS prototype before any broader SCF handoff is attempted.
+The current follow-up on that monitor-grid SCF line is intentionally narrow: H2 triplet dry-run already converges, while the singlet route is under a dedicated stability audit and the triplet route is now being used to profile and optimize the JAX Hartree backend, including stronger-but-still-small preconditioner prototypes, before any broader SCF handoff is attempted.
 
 The first JAX migration slice has now started as well, but it is intentionally narrow: only already-stable hot kernels are being moved first, namely weighted reductions / block linear algebra, the repaired monitor-grid Poisson CG hot path, and the local-only A-grid Hamiltonian matvec. Nonlocal, the SCF outer control flow, and the eigensolver outer iteration still remain on their current Python/SciPy auditable routes.
 
@@ -61,7 +61,7 @@ That first JAX slice has now been pushed one step further into the fixed-potenti
 
 The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
 
-That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines. The current follow-up is a triplet-only profiling slice on Poisson/Hartree and single-point energy evaluation, including an opt-in JAX Hartree backend plus repeated-solve compiled-kernel reuse check, a narrower JAX-native CG inner-loop prototype audit, and now a very small PCG feasibility check to see whether the remaining `~400` Hartree iterations can be reduced without changing the Poisson physics.
+That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines. The current follow-up is a triplet-only profiling slice on Poisson/Hartree and single-point energy evaluation, including an opt-in JAX Hartree backend plus repeated-solve compiled-kernel reuse check, a narrower JAX-native CG inner-loop prototype audit, and now a stronger-but-still-small PCG feasibility check to see whether the remaining `~400` Hartree iterations can be reduced without changing the Poisson physics.
 
 What is present today:
 
@@ -114,7 +114,7 @@ They currently cover:
 - a first H2 A-grid+patch+kinetic-trial-fix SCF dry-run audit for checking whether the new monitor-grid main line can actually sustain multi-step singlet/triplet SCF iteration without nonlocal
 - a dedicated H2 singlet stability audit for checking whether the current A-grid two-cycle can be suppressed by a very small conservative mixing change and a minimal DIIS prototype, without adding a larger SCF stabilization framework
 - a very rough H2 A-grid SCF hot-path audit for checking whether the current JAX eigensolver block handoff actually improves end-to-end triplet dry-run timing and where the remaining SCF bottlenecks sit
-- a triplet-only H2 A-grid SCF profiling audit for checking whether step-local reuse of Poisson/Hartree and local-only energy-evaluation inputs reduces repeated work inside one SCF step, whether the opt-in JAX Hartree backend lowers the remaining Poisson/Hartree hotspot, whether repeated JAX Poisson solves are actually reusing compiled operator kernels, and whether a very small PCG prototype can lower the remaining Hartree iteration count
+- a triplet-only H2 A-grid SCF profiling audit for checking whether step-local reuse of Poisson/Hartree and local-only energy-evaluation inputs reduces repeated work inside one SCF step, whether the opt-in JAX Hartree backend lowers the remaining Poisson/Hartree hotspot, whether repeated JAX Poisson solves are actually reusing compiled operator kernels, and whether stronger-but-still-small PCG prototypes can lower the remaining Hartree iteration count enough to matter end-to-end
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.

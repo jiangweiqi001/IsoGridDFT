@@ -1453,9 +1453,9 @@ def run_h2_monitor_grid_scf_dry_run(
             "jax_hartree_cg_impl requires hartree_backend='jax'."
         )
     normalized_jax_hartree_cg_preconditioner = jax_hartree_cg_preconditioner.strip().lower()
-    if normalized_jax_hartree_cg_preconditioner not in {"none", "diag", "jacobi"}:
+    if normalized_jax_hartree_cg_preconditioner not in {"none", "diag", "jacobi", "separable", "line"}:
         raise ValueError(
-            "jax_hartree_cg_preconditioner must be `none`, `diag`, or `jacobi`; "
+            "jax_hartree_cg_preconditioner must be `none`, `diag`, `jacobi`, `separable`, or `line`; "
             f"received `{jax_hartree_cg_preconditioner}`."
         )
     if normalized_jax_hartree_cg_preconditioner == "jacobi":
