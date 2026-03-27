@@ -36,6 +36,7 @@ def _route(*, use_jax_block_kernels: bool) -> H2FixedPotentialRouteResult:
         patch_embedded_correction_mha=77.815,
         centerline_samples=(),
         use_jax_block_kernels=use_jax_block_kernels,
+        use_jax_cached_kernels=use_jax_block_kernels,
         wall_time_seconds=0.1 if use_jax_block_kernels else 0.2,
     )
 
@@ -64,6 +65,7 @@ def test_construct_h2_jax_eigensolver_hotpath_result() -> None:
     )
 
     assert result.k1_comparison.jax_route.use_jax_block_kernels is True
+    assert result.k1_comparison.jax_route.use_jax_cached_kernels is True
     assert float(result.k1_comparison.jax_route.eigenvalues[0]) == -0.1866
     assert float(result.k1_comparison.residual_max_abs_diff) == 1.0e-12
     assert float(result.k1_comparison.orthogonality_abs_diff) == 1.0e-13

@@ -55,6 +55,16 @@ def test_import_local_hamiltonian_entrypoint() -> None:
     assert callable(apply_fixed_potential_static_local_operator_jax)
 
 
+def test_import_eigensolver_jax_cache_entrypoint() -> None:
+    from isogrid.ks.eigensolver_jax_cache import (
+        apply_fixed_potential_static_local_block_cached_jax,
+    )
+    from isogrid.ks.eigensolver_jax_cache import get_weighted_overlap_kernel_cached
+
+    assert callable(apply_fixed_potential_static_local_block_cached_jax)
+    assert callable(get_weighted_overlap_kernel_cached)
+
+
 def test_import_nonlocal_entrypoint() -> None:
     from isogrid.pseudo import evaluate_nonlocal_ionic_action
 
@@ -413,7 +423,9 @@ def test_import_h2_jax_eigensolver_hotpath_audit_entrypoint() -> None:
 
 def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_BASELINE
+    from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE
 
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.old_k1_route.use_jax_block_kernels is False
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.jax_k1_route.use_jax_block_kernels is True
+    assert H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE.optimized_jax_k1_route.use_jax_cached_kernels is True

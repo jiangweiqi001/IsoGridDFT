@@ -120,6 +120,7 @@ class FixedPotentialEigensolverResult:
     final_basis_orbitals: np.ndarray
     operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext
     use_jax_block_kernels: bool = False
+    use_jax_cached_kernels: bool = False
     wall_time_seconds: float | None = None
 
 
@@ -212,9 +213,9 @@ def weighted_overlap_matrix(
     """Return the weighted block overlap matrix under the cell-volume metric."""
 
     if use_jax_block_kernels and isinstance(grid_geometry, MonitorGridGeometry):
-        from isogrid.ops.reductions_jax import weighted_overlap_matrix_jax
+        from isogrid.ks.eigensolver_jax_cache import weighted_overlap_matrix_cached_jax
 
-        overlap = weighted_overlap_matrix_jax(
+        overlap = weighted_overlap_matrix_cached_jax(
             orbitals,
             grid_geometry.cell_volumes,
             other=other,
@@ -263,9 +264,9 @@ def weighted_orthonormalize_orbitals(
         return block.copy()
 
     if use_jax_block_kernels and isinstance(grid_geometry, MonitorGridGeometry):
-        from isogrid.ops.reductions_jax import weighted_orthonormalize_orbitals_jax
+        from isogrid.ks.eigensolver_jax_cache import weighted_orthonormalize_orbitals_cached_jax
 
-        orthonormal = weighted_orthonormalize_orbitals_jax(
+        orthonormal = weighted_orthonormalize_orbitals_cached_jax(
             block,
             grid_geometry.cell_volumes,
             require_full_rank=require_full_rank,
@@ -652,10 +653,10 @@ def apply_fixed_potential_static_local_block_jax_hotpath(
 ) -> np.ndarray:
     """Apply the frozen static-local Hamiltonian block through the JAX hot path."""
 
-    from isogrid.ks.hamiltonian_local_jax import apply_fixed_potential_static_local_block_jax
+    from isogrid.ks.eigensolver_jax_cache import apply_fixed_potential_static_local_block_cached_jax
 
     return np.asarray(
-        apply_fixed_potential_static_local_block_jax(
+        apply_fixed_potential_static_local_block_cached_jax(
             orbitals,
             operator_context=operator_context,
         ),
@@ -987,6 +988,7 @@ def _solve_weighted_fixed_potential_problem(
         final_basis_orbitals=np.asarray(orbitals, dtype=np.float64),
         operator_context=operator_context,
         use_jax_block_kernels=use_jax_block_kernels,
+        use_jax_cached_kernels=bool(use_jax_block_kernels),
         wall_time_seconds=float(wall_time_seconds),
     )
 

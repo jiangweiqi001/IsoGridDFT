@@ -155,6 +155,7 @@ class H2FixedPotentialEigensolverRouteBaseline:
     converged: bool
     kinetic_version: str = "production"
     use_jax_block_kernels: bool = False
+    use_jax_cached_kernels: bool = False
     wall_time_seconds: float | None = None
 
 
@@ -2273,6 +2274,27 @@ class H2JaxEigensolverHotpathRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxEigensolverHotpathReuseRegressionBaseline:
+    """Recorded compiled-kernel reuse/caching comparison on the JAX eigensolver hot path."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    old_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    preoptimization_jax_k1_wall_time_seconds: float
+    preoptimization_jax_k2_wall_time_seconds: float
+    optimized_jax_k1_route: H2FixedPotentialEigensolverRouteBaseline
+    optimized_jax_k2_route: H2FixedPotentialEigensolverRouteBaseline | None
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2380,7 +2402,73 @@ H2_JAX_EIGENSOLVER_HOTPATH_BASELINE = H2JaxEigensolverHotpathRegressionBaseline(
 )
 
 
+H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE = H2JaxEigensolverHotpathReuseRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    old_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.18662718689698515,),
+        max_residual_norm=0.0001483108390547803,
+        max_orthogonality_error=3.3306690738754696e-16,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=False,
+        use_jax_cached_kernels=False,
+        wall_time_seconds=5.467907413840294,
+    ),
+    preoptimization_jax_k1_wall_time_seconds=80.35037644766271,
+    preoptimization_jax_k2_wall_time_seconds=192.0402395427227,
+    optimized_jax_k1_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=1,
+        eigenvalues_ha=(-0.18662718689697616,),
+        max_residual_norm=0.0001483108390478155,
+        max_orthogonality_error=2.3314683517128287e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
+        use_jax_cached_kernels=True,
+        wall_time_seconds=3.5797004560008645,
+    ),
+    optimized_jax_k2_route=H2FixedPotentialEigensolverRouteBaseline(
+        path_type="monitor_a_grid_plus_patch",
+        target_orbitals=2,
+        eigenvalues_ha=(-0.18665843315846384, -0.18659573297125773),
+        max_residual_norm=0.00017589071378107762,
+        max_orthogonality_error=2.6645352591003757e-15,
+        converged=True,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
+        use_jax_cached_kernels=True,
+        wall_time_seconds=6.926582344807684,
+    ),
+    diagnosis=(
+        "The compiled-kernel reuse/caching pass hits the real bottleneck that remained after the "
+        "first JAX handoff. The JAX route still matches the old hot path to machine precision, but "
+        "the repeated closure construction and re-binding overhead are now collapsed enough that the "
+        "monitor-grid fixed-potential case turns from clearly slower to clearly faster. On the same "
+        "H2 trial-fix route, post-warmup k=1 timing drops from about 80.35 s before the reuse pass "
+        "to about 3.58 s after it, and k=2 drops from about 192.04 s to about 6.93 s. At this point "
+        "the dominant overhead is no longer JAX block-kernel setup; it has shifted back toward the "
+        "remaining Python/SciPy outer eigensolver work and the old-path matvec cost."
+    ),
+    note=(
+        "Regression baseline for the compiled-kernel reuse/caching pass on the H2 fixed-potential "
+        "JAX eigensolver hot path. It records the old hot path, the pre-optimization JAX timing "
+        "summary from the first handoff baseline, and the optimized JAX k=1/k=2 results."
+    ),
+)
+
+
 __all__ = [
+    "H2JaxEigensolverHotpathReuseRegressionBaseline",
     "H2JaxEigensolverHotpathRegressionBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
     "H2JaxKernelConsistencyPoissonBaseline",
@@ -2430,6 +2518,7 @@ __all__ = [
     "H2_GEOMETRY_CONSISTENCY_AUDIT_BASELINE",
     "H2_HARTREE_TAIL_RECHECK_BASELINE",
     "H2_DIIS_SCF_BASELINE",
+    "H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE",
     "H2_JAX_EIGENSOLVER_HOTPATH_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",

@@ -59,6 +59,8 @@ The first JAX migration slice has now started as well, but it is intentionally n
 
 That first JAX slice has now been pushed one step further into the fixed-potential eigensolver itself, but still only at the block hot path: `H @ psi_block`, weighted overlap / Gram, and block orthonormalization can now switch to JAX while the outer eigensolver iteration and SCF control logic remain in Python.
 
+The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

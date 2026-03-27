@@ -69,6 +69,7 @@ class H2FixedPotentialRouteResult:
     patch_embedded_correction_mha: float | None
     centerline_samples: tuple[H2FixedPotentialCenterlineSample, ...]
     use_jax_block_kernels: bool = False
+    use_jax_cached_kernels: bool = False
     wall_time_seconds: float | None = None
 
 
@@ -208,6 +209,7 @@ def _evaluate_route(
         solver_method=result.solver_method,
         solver_note=result.solver_note,
         use_jax_block_kernels=bool(result.use_jax_block_kernels),
+        use_jax_cached_kernels=bool(result.use_jax_cached_kernels),
         wall_time_seconds=result.wall_time_seconds,
         frozen_density_integral=float(integrate_field(rho_total, grid_geometry=grid_geometry)),
         rho_up_integral=float(integrate_field(rho_up, grid_geometry=grid_geometry)),
@@ -280,6 +282,7 @@ def _print_route_result(result: H2FixedPotentialRouteResult) -> None:
     print(f"path: {result.path_type}")
     print(f"  kinetic version: {result.kinetic_version}")
     print(f"  jax block hot path: {result.use_jax_block_kernels}")
+    print(f"  jax cache/reuse: {result.use_jax_cached_kernels}")
     print(f"  grid summary: {result.grid_parameter_summary}")
     print(f"  target orbitals: {result.target_orbitals}")
     print(f"  solver: {result.solver_method}")

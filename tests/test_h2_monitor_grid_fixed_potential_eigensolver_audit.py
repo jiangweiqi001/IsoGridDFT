@@ -59,4 +59,5 @@ def test_construct_h2_fixed_potential_route_result() -> None:
     assert float(route.residual_norms[0]) == 1.0e-3
     assert route.converged is False
     assert route.use_jax_block_kernels is False
+    assert route.use_jax_cached_kernels is False
     assert route.wall_time_seconds is None

@@ -79,6 +79,13 @@ def run_h2_jax_eigensolver_hotpath_audit(
         kinetic_version="trial_fix",
         use_jax_block_kernels=True,
     )
+    _evaluate_route(
+        case=case,
+        path_type="monitor_a_grid_plus_patch",
+        k=2,
+        kinetic_version="trial_fix",
+        use_jax_block_kernels=True,
+    )
 
     k1 = _build_comparison(
         old_route=_evaluate_route(
@@ -116,11 +123,12 @@ def run_h2_jax_eigensolver_hotpath_audit(
         k1_comparison=k1,
         k2_comparison=k2,
         note=(
-            "Very small H2 fixed-potential audit for the first JAX eigensolver block-hot-path "
-            "handoff. The outer eigensolver iteration, Ritz solve, and convergence control remain "
-            "in Python; only the block Hamiltonian apply and weighted block linear algebra are "
-            "switched between the old and JAX hot paths. Timing is only a rough post-warmup "
-            "reference and should not be interpreted as a benchmark."
+            "Very small H2 fixed-potential audit for the JAX eigensolver block-hot-path "
+            "handoff after the compiled-kernel reuse/caching pass. The outer eigensolver "
+            "iteration, Ritz solve, and convergence control remain in Python; only the block "
+            "Hamiltonian apply and weighted block linear algebra are switched between the old "
+            "and JAX hot paths. Timing is only a rough post-warmup reference and should not "
+            "be interpreted as a benchmark."
         ),
     )
 
@@ -140,6 +148,7 @@ def print_h2_jax_eigensolver_hotpath_summary(
         print(
             "  old route: "
             f"converged={comparison.old_route.converged}, "
+            f"cache={comparison.old_route.use_jax_cached_kernels}, "
             f"eigenvalues={comparison.old_route.eigenvalues.tolist()}, "
             f"residuals={comparison.old_route.residual_norms.tolist()}, "
             f"orth_err={comparison.old_route.max_orthogonality_error:.6e}, "
@@ -148,6 +157,7 @@ def print_h2_jax_eigensolver_hotpath_summary(
         print(
             "  jax route: "
             f"converged={comparison.jax_route.converged}, "
+            f"cache={comparison.jax_route.use_jax_cached_kernels}, "
             f"eigenvalues={comparison.jax_route.eigenvalues.tolist()}, "
             f"residuals={comparison.jax_route.residual_norms.tolist()}, "
             f"orth_err={comparison.jax_route.max_orthogonality_error:.6e}, "
