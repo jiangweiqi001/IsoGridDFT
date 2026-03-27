@@ -274,6 +274,13 @@ class H2StaticLocalScfDryRunResult:
     average_hartree_matvec_call_count: float | None
     average_hartree_matvec_wall_time_seconds: float | None
     average_hartree_matvec_wall_time_per_call_seconds: float | None
+    average_hartree_preconditioner_apply_count: float | None
+    average_hartree_preconditioner_apply_wall_time_seconds: float | None
+    average_hartree_preconditioner_apply_wall_time_per_call_seconds: float | None
+    average_hartree_preconditioner_setup_wall_time_seconds: float | None
+    average_hartree_preconditioner_axis_reorder_wall_time_seconds: float | None
+    average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds: float | None
+    average_hartree_preconditioner_other_overhead_wall_time_seconds: float | None
     hartree_cached_operator_usage_count: int
     hartree_cached_operator_first_solve_count: int
     hartree_solve_wall_time_seconds_history: tuple[float, ...]
@@ -284,6 +291,12 @@ class H2StaticLocalScfDryRunResult:
     hartree_cg_wall_time_seconds_history: tuple[float, ...]
     hartree_matvec_call_count_history: tuple[int, ...]
     hartree_matvec_wall_time_seconds_history: tuple[float, ...]
+    hartree_preconditioner_apply_count_history: tuple[int, ...]
+    hartree_preconditioner_apply_wall_time_seconds_history: tuple[float, ...]
+    hartree_preconditioner_setup_wall_time_seconds_history: tuple[float, ...]
+    hartree_preconditioner_axis_reorder_wall_time_seconds_history: tuple[float, ...]
+    hartree_preconditioner_tridiagonal_solve_wall_time_seconds_history: tuple[float, ...]
+    hartree_preconditioner_other_overhead_wall_time_seconds_history: tuple[float, ...]
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -764,6 +777,12 @@ def _record_last_jax_hartree_solve_diagnostics(
     cg_times: list[float] | None = None,
     matvec_call_counts: list[int] | None = None,
     matvec_times: list[float] | None = None,
+    preconditioner_apply_counts: list[int] | None = None,
+    preconditioner_apply_times: list[float] | None = None,
+    preconditioner_setup_times: list[float] | None = None,
+    preconditioner_axis_reorder_times: list[float] | None = None,
+    preconditioner_tridiagonal_solve_times: list[float] | None = None,
+    preconditioner_other_overhead_times: list[float] | None = None,
 ) -> None:
     if not enabled:
         return
@@ -786,6 +805,24 @@ def _record_last_jax_hartree_solve_diagnostics(
         matvec_call_counts.append(int(diagnostics.matvec_call_count))
     if matvec_times is not None:
         matvec_times.append(float(diagnostics.matvec_wall_time_seconds))
+    if preconditioner_apply_counts is not None:
+        preconditioner_apply_counts.append(int(diagnostics.preconditioner_apply_count))
+    if preconditioner_apply_times is not None:
+        preconditioner_apply_times.append(float(diagnostics.preconditioner_apply_wall_time_seconds))
+    if preconditioner_setup_times is not None:
+        preconditioner_setup_times.append(float(diagnostics.preconditioner_setup_wall_time_seconds))
+    if preconditioner_axis_reorder_times is not None:
+        preconditioner_axis_reorder_times.append(
+            float(diagnostics.preconditioner_axis_reorder_wall_time_seconds)
+        )
+    if preconditioner_tridiagonal_solve_times is not None:
+        preconditioner_tridiagonal_solve_times.append(
+            float(diagnostics.preconditioner_tridiagonal_solve_wall_time_seconds)
+        )
+    if preconditioner_other_overhead_times is not None:
+        preconditioner_other_overhead_times.append(
+            float(diagnostics.preconditioner_other_overhead_wall_time_seconds)
+        )
 
 
 def _density_residual_fields(
@@ -1509,6 +1546,12 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_cg_times: list[float] = []
     hartree_matvec_call_counts: list[int] = []
     hartree_matvec_times: list[float] = []
+    hartree_preconditioner_apply_counts: list[int] = []
+    hartree_preconditioner_apply_times: list[float] = []
+    hartree_preconditioner_setup_times: list[float] = []
+    hartree_preconditioner_axis_reorder_times: list[float] = []
+    hartree_preconditioner_tridiagonal_solve_times: list[float] = []
+    hartree_preconditioner_other_overhead_times: list[float] = []
     eigensolver_wall_time = 0.0
     static_local_prepare_wall_time = 0.0
     hartree_solve_wall_time = 0.0
@@ -1563,6 +1606,12 @@ def run_h2_monitor_grid_scf_dry_run(
             cg_times=hartree_cg_times,
             matvec_call_counts=hartree_matvec_call_counts,
             matvec_times=hartree_matvec_times,
+            preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+            preconditioner_apply_times=hartree_preconditioner_apply_times,
+            preconditioner_setup_times=hartree_preconditioner_setup_times,
+            preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+            preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+            preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
         )
         initial_energy_start = perf_counter()
         final_energy, initial_energy_profile = evaluate_static_local_single_point_energy_from_context(
@@ -1609,6 +1658,12 @@ def run_h2_monitor_grid_scf_dry_run(
             cg_times=hartree_cg_times,
             matvec_call_counts=hartree_matvec_call_counts,
             matvec_times=hartree_matvec_times,
+            preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+            preconditioner_apply_times=hartree_preconditioner_apply_times,
+            preconditioner_setup_times=hartree_preconditioner_setup_times,
+            preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+            preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+            preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
         )
     converged = False
 
@@ -1662,6 +1717,12 @@ def run_h2_monitor_grid_scf_dry_run(
                     cg_times=hartree_cg_times,
                     matvec_call_counts=hartree_matvec_call_counts,
                     matvec_times=hartree_matvec_times,
+                    preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+                    preconditioner_apply_times=hartree_preconditioner_apply_times,
+                    preconditioner_setup_times=hartree_preconditioner_setup_times,
+                    preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+                    preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+                    preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
                 )
             solve_up = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
@@ -1730,6 +1791,12 @@ def run_h2_monitor_grid_scf_dry_run(
                     cg_times=hartree_cg_times,
                     matvec_call_counts=hartree_matvec_call_counts,
                     matvec_times=hartree_matvec_times,
+                    preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+                    preconditioner_apply_times=hartree_preconditioner_apply_times,
+                    preconditioner_setup_times=hartree_preconditioner_setup_times,
+                    preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+                    preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+                    preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
                 )
             solve_down = solve_fixed_potential_static_local_eigenproblem(
                 grid_geometry=grid_geometry,
@@ -1859,6 +1926,12 @@ def run_h2_monitor_grid_scf_dry_run(
                 cg_times=hartree_cg_times,
                 matvec_call_counts=hartree_matvec_call_counts,
                 matvec_times=hartree_matvec_times,
+                preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+                preconditioner_apply_times=hartree_preconditioner_apply_times,
+                preconditioner_setup_times=hartree_preconditioner_setup_times,
+                preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+                preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+                preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
             )
             energy, energy_profile = evaluate_static_local_single_point_energy_from_context(
                 energy_context,
@@ -1901,6 +1974,12 @@ def run_h2_monitor_grid_scf_dry_run(
                 cg_times=hartree_cg_times,
                 matvec_call_counts=hartree_matvec_call_counts,
                 matvec_times=hartree_matvec_times,
+                preconditioner_apply_counts=hartree_preconditioner_apply_counts,
+                preconditioner_apply_times=hartree_preconditioner_apply_times,
+                preconditioner_setup_times=hartree_preconditioner_setup_times,
+                preconditioner_axis_reorder_times=hartree_preconditioner_axis_reorder_times,
+                preconditioner_tridiagonal_solve_times=hartree_preconditioner_tridiagonal_solve_times,
+                preconditioner_other_overhead_times=hartree_preconditioner_other_overhead_times,
             )
         energy_evaluation_elapsed = perf_counter() - energy_evaluation_start
         energy_evaluation_wall_time += energy_evaluation_elapsed
@@ -2107,6 +2186,45 @@ def run_h2_monitor_grid_scf_dry_run(
         if not hartree_matvec_times or not hartree_matvec_call_counts or sum(hartree_matvec_call_counts) == 0
         else float(sum(hartree_matvec_times) / sum(hartree_matvec_call_counts))
     )
+    average_hartree_preconditioner_apply_count = (
+        None
+        if not hartree_preconditioner_apply_counts
+        else float(np.mean(hartree_preconditioner_apply_counts))
+    )
+    average_hartree_preconditioner_apply_wall_time_seconds = (
+        None
+        if not hartree_preconditioner_apply_times
+        else float(np.mean(hartree_preconditioner_apply_times))
+    )
+    average_hartree_preconditioner_apply_wall_time_per_call_seconds = (
+        None
+        if not hartree_preconditioner_apply_times
+        or not hartree_preconditioner_apply_counts
+        or sum(hartree_preconditioner_apply_counts) == 0
+        else float(
+            sum(hartree_preconditioner_apply_times) / sum(hartree_preconditioner_apply_counts)
+        )
+    )
+    average_hartree_preconditioner_setup_wall_time_seconds = (
+        None
+        if not hartree_preconditioner_setup_times
+        else float(np.mean(hartree_preconditioner_setup_times))
+    )
+    average_hartree_preconditioner_axis_reorder_wall_time_seconds = (
+        None
+        if not hartree_preconditioner_axis_reorder_times
+        else float(np.mean(hartree_preconditioner_axis_reorder_times))
+    )
+    average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds = (
+        None
+        if not hartree_preconditioner_tridiagonal_solve_times
+        else float(np.mean(hartree_preconditioner_tridiagonal_solve_times))
+    )
+    average_hartree_preconditioner_other_overhead_wall_time_seconds = (
+        None
+        if not hartree_preconditioner_other_overhead_times
+        else float(np.mean(hartree_preconditioner_other_overhead_times))
+    )
     bookkeeping_wall_time_seconds = float(
         total_wall_time_seconds
         - eigensolver_wall_time
@@ -2198,6 +2316,13 @@ def run_h2_monitor_grid_scf_dry_run(
         average_hartree_matvec_call_count=average_hartree_matvec_call_count,
         average_hartree_matvec_wall_time_seconds=average_hartree_matvec_wall_time_seconds,
         average_hartree_matvec_wall_time_per_call_seconds=average_hartree_matvec_wall_time_per_call_seconds,
+        average_hartree_preconditioner_apply_count=average_hartree_preconditioner_apply_count,
+        average_hartree_preconditioner_apply_wall_time_seconds=average_hartree_preconditioner_apply_wall_time_seconds,
+        average_hartree_preconditioner_apply_wall_time_per_call_seconds=average_hartree_preconditioner_apply_wall_time_per_call_seconds,
+        average_hartree_preconditioner_setup_wall_time_seconds=average_hartree_preconditioner_setup_wall_time_seconds,
+        average_hartree_preconditioner_axis_reorder_wall_time_seconds=average_hartree_preconditioner_axis_reorder_wall_time_seconds,
+        average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds=average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds,
+        average_hartree_preconditioner_other_overhead_wall_time_seconds=average_hartree_preconditioner_other_overhead_wall_time_seconds,
         hartree_cached_operator_usage_count=int(sum(hartree_cached_use_flags)),
         hartree_cached_operator_first_solve_count=int(sum(hartree_cached_first_flags)),
         hartree_solve_wall_time_seconds_history=tuple(float(value) for value in hartree_solve_times),
@@ -2212,6 +2337,24 @@ def run_h2_monitor_grid_scf_dry_run(
         hartree_cg_wall_time_seconds_history=tuple(float(value) for value in hartree_cg_times),
         hartree_matvec_call_count_history=tuple(int(value) for value in hartree_matvec_call_counts),
         hartree_matvec_wall_time_seconds_history=tuple(float(value) for value in hartree_matvec_times),
+        hartree_preconditioner_apply_count_history=tuple(
+            int(value) for value in hartree_preconditioner_apply_counts
+        ),
+        hartree_preconditioner_apply_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_preconditioner_apply_times
+        ),
+        hartree_preconditioner_setup_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_preconditioner_setup_times
+        ),
+        hartree_preconditioner_axis_reorder_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_preconditioner_axis_reorder_times
+        ),
+        hartree_preconditioner_tridiagonal_solve_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_preconditioner_tridiagonal_solve_times
+        ),
+        hartree_preconditioner_other_overhead_wall_time_seconds_history=tuple(
+            float(value) for value in hartree_preconditioner_other_overhead_times
+        ),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
         density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),

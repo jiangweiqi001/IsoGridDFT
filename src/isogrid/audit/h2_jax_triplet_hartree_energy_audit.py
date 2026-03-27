@@ -105,6 +105,13 @@ class H2TripletHartreeEnergyRouteResult:
     average_hartree_matvec_call_count: float | None
     average_hartree_matvec_wall_time_seconds: float | None
     average_hartree_matvec_wall_time_per_call_seconds: float | None
+    average_hartree_preconditioner_apply_count: float | None
+    average_hartree_preconditioner_apply_wall_time_seconds: float | None
+    average_hartree_preconditioner_apply_wall_time_per_call_seconds: float | None
+    average_hartree_preconditioner_setup_wall_time_seconds: float | None
+    average_hartree_preconditioner_axis_reorder_wall_time_seconds: float | None
+    average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds: float | None
+    average_hartree_preconditioner_other_overhead_wall_time_seconds: float | None
     average_hartree_cg_iteration_wall_time_seconds: float | None
     average_hartree_matvec_wall_time_per_iteration_seconds: float | None
     average_hartree_other_cg_overhead_wall_time_per_iteration_seconds: float | None
@@ -135,10 +142,18 @@ class H2TripletHartreeSingleSolveResult:
     cg_wall_time_seconds: float
     matvec_wall_time_seconds: float
     cg_other_overhead_wall_time_seconds: float
+    preconditioner_apply_count: int
+    preconditioner_apply_wall_time_seconds: float
+    preconditioner_setup_wall_time_seconds: float
+    preconditioner_axis_reorder_wall_time_seconds: float
+    preconditioner_tridiagonal_solve_wall_time_seconds: float
+    preconditioner_other_overhead_wall_time_seconds: float
     matvec_call_count: int
     average_iteration_wall_time_seconds: float | None
     average_matvec_wall_time_seconds: float | None
     average_matvec_wall_time_per_call_seconds: float | None
+    average_preconditioner_apply_wall_time_seconds: float | None
+    average_preconditioner_apply_wall_time_per_call_seconds: float | None
     matvec_timing_is_estimated: bool
 
 
@@ -285,6 +300,27 @@ def _build_route_result(
         average_hartree_matvec_wall_time_per_call_seconds=(
             result.average_hartree_matvec_wall_time_per_call_seconds
         ),
+        average_hartree_preconditioner_apply_count=(
+            result.average_hartree_preconditioner_apply_count
+        ),
+        average_hartree_preconditioner_apply_wall_time_seconds=(
+            result.average_hartree_preconditioner_apply_wall_time_seconds
+        ),
+        average_hartree_preconditioner_apply_wall_time_per_call_seconds=(
+            result.average_hartree_preconditioner_apply_wall_time_per_call_seconds
+        ),
+        average_hartree_preconditioner_setup_wall_time_seconds=(
+            result.average_hartree_preconditioner_setup_wall_time_seconds
+        ),
+        average_hartree_preconditioner_axis_reorder_wall_time_seconds=(
+            result.average_hartree_preconditioner_axis_reorder_wall_time_seconds
+        ),
+        average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds=(
+            result.average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds
+        ),
+        average_hartree_preconditioner_other_overhead_wall_time_seconds=(
+            result.average_hartree_preconditioner_other_overhead_wall_time_seconds
+        ),
         average_hartree_cg_iteration_wall_time_seconds=average_iteration_wall,
         average_hartree_matvec_wall_time_per_iteration_seconds=average_matvec_per_iteration,
         average_hartree_other_cg_overhead_wall_time_per_iteration_seconds=(
@@ -378,6 +414,14 @@ def _run_single_solve(
         if diagnostics.iteration_count <= 0
         else float(diagnostics.cg_wall_time_seconds / diagnostics.iteration_count)
     )
+    average_preconditioner_apply_wall = (
+        None
+        if diagnostics.preconditioner_apply_count <= 0
+        else float(
+            diagnostics.preconditioner_apply_wall_time_seconds
+            / diagnostics.preconditioner_apply_count
+        )
+    )
     average_matvec_wall = (
         None
         if diagnostics.matvec_call_count <= 0
@@ -402,10 +446,28 @@ def _run_single_solve(
         cg_other_overhead_wall_time_seconds=float(
             diagnostics.cg_other_overhead_wall_time_seconds
         ),
+        preconditioner_apply_count=int(diagnostics.preconditioner_apply_count),
+        preconditioner_apply_wall_time_seconds=float(
+            diagnostics.preconditioner_apply_wall_time_seconds
+        ),
+        preconditioner_setup_wall_time_seconds=float(
+            diagnostics.preconditioner_setup_wall_time_seconds
+        ),
+        preconditioner_axis_reorder_wall_time_seconds=float(
+            diagnostics.preconditioner_axis_reorder_wall_time_seconds
+        ),
+        preconditioner_tridiagonal_solve_wall_time_seconds=float(
+            diagnostics.preconditioner_tridiagonal_solve_wall_time_seconds
+        ),
+        preconditioner_other_overhead_wall_time_seconds=float(
+            diagnostics.preconditioner_other_overhead_wall_time_seconds
+        ),
         matvec_call_count=int(diagnostics.matvec_call_count),
         average_iteration_wall_time_seconds=average_iteration_wall,
         average_matvec_wall_time_seconds=average_matvec_wall,
         average_matvec_wall_time_per_call_seconds=average_matvec_wall,
+        average_preconditioner_apply_wall_time_seconds=average_preconditioner_apply_wall,
+        average_preconditioner_apply_wall_time_per_call_seconds=average_preconditioner_apply_wall,
         matvec_timing_is_estimated=bool(diagnostics.matvec_timing_is_estimated),
     )
 
@@ -496,6 +558,15 @@ def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
         f"cg_other={0.0 if route.average_hartree_cg_other_overhead_wall_time_seconds is None else route.average_hartree_cg_other_overhead_wall_time_seconds:.6f}"
     )
     print(
+        "    preconditioner avg [s]: "
+        f"count={route.average_hartree_preconditioner_apply_count}, "
+        f"apply={route.average_hartree_preconditioner_apply_wall_time_seconds}, "
+        f"setup={route.average_hartree_preconditioner_setup_wall_time_seconds}, "
+        f"reorder={route.average_hartree_preconditioner_axis_reorder_wall_time_seconds}, "
+        f"tridiag={route.average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds}, "
+        f"other={route.average_hartree_preconditioner_other_overhead_wall_time_seconds}"
+    )
+    print(
         "    matvec avg: "
         f"calls={route.average_hartree_matvec_call_count}, "
         f"wall={route.average_hartree_matvec_wall_time_seconds}, "
@@ -539,9 +610,19 @@ def _print_single_solve(result: H2TripletHartreeSingleSolveResult) -> None:
         f"cg_other={result.cg_other_overhead_wall_time_seconds:.6f}"
     )
     print(
+        "    preconditioner [s]: "
+        f"count={result.preconditioner_apply_count}, "
+        f"apply={result.preconditioner_apply_wall_time_seconds:.6f}, "
+        f"setup={result.preconditioner_setup_wall_time_seconds:.6f}, "
+        f"reorder={result.preconditioner_axis_reorder_wall_time_seconds:.6f}, "
+        f"tridiag={result.preconditioner_tridiagonal_solve_wall_time_seconds:.6f}, "
+        f"other={result.preconditioner_other_overhead_wall_time_seconds:.6f}"
+    )
+    print(
         "    averages [s]: "
         f"per_iter={0.0 if result.average_iteration_wall_time_seconds is None else result.average_iteration_wall_time_seconds:.6f}, "
         f"per_matvec={0.0 if result.average_matvec_wall_time_per_call_seconds is None else result.average_matvec_wall_time_per_call_seconds:.6f}, "
+        f"per_prec={0.0 if result.average_preconditioner_apply_wall_time_per_call_seconds is None else result.average_preconditioner_apply_wall_time_per_call_seconds:.6f}, "
         f"matvec_calls={result.matvec_call_count}"
     )
     print(f"    matvec_timing_is_estimated: {result.matvec_timing_is_estimated}")

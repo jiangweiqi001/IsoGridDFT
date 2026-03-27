@@ -60,6 +60,13 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         average_hartree_matvec_call_count=401.0,
         average_hartree_matvec_wall_time_seconds=3.5,
         average_hartree_matvec_wall_time_per_call_seconds=0.0087,
+        average_hartree_preconditioner_apply_count=0.0,
+        average_hartree_preconditioner_apply_wall_time_seconds=0.0,
+        average_hartree_preconditioner_apply_wall_time_per_call_seconds=None,
+        average_hartree_preconditioner_setup_wall_time_seconds=0.0,
+        average_hartree_preconditioner_axis_reorder_wall_time_seconds=0.0,
+        average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds=0.0,
+        average_hartree_preconditioner_other_overhead_wall_time_seconds=0.0,
         average_hartree_cg_iteration_wall_time_seconds=0.01025,
         average_hartree_matvec_wall_time_per_iteration_seconds=0.00875,
         average_hartree_other_cg_overhead_wall_time_per_iteration_seconds=0.0015,
@@ -132,6 +139,13 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         average_hartree_matvec_call_count=271.0,
         average_hartree_matvec_wall_time_seconds=0.36,
         average_hartree_matvec_wall_time_per_call_seconds=0.0013,
+        average_hartree_preconditioner_apply_count=270.0,
+        average_hartree_preconditioner_apply_wall_time_seconds=0.37,
+        average_hartree_preconditioner_apply_wall_time_per_call_seconds=0.00137,
+        average_hartree_preconditioner_setup_wall_time_seconds=0.0007,
+        average_hartree_preconditioner_axis_reorder_wall_time_seconds=0.176,
+        average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds=0.362,
+        average_hartree_preconditioner_other_overhead_wall_time_seconds=0.0,
         average_hartree_cg_iteration_wall_time_seconds=0.018,
         average_hartree_matvec_wall_time_per_iteration_seconds=0.0013,
         average_hartree_other_cg_overhead_wall_time_per_iteration_seconds=0.0006,
@@ -180,10 +194,18 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         cg_wall_time_seconds=2.0,
         matvec_wall_time_seconds=1.2,
         cg_other_overhead_wall_time_seconds=0.8,
+        preconditioner_apply_count=0,
+        preconditioner_apply_wall_time_seconds=0.0,
+        preconditioner_setup_wall_time_seconds=0.0,
+        preconditioner_axis_reorder_wall_time_seconds=0.0,
+        preconditioner_tridiagonal_solve_wall_time_seconds=0.0,
+        preconditioner_other_overhead_wall_time_seconds=0.0,
         matvec_call_count=401,
         average_iteration_wall_time_seconds=0.005,
         average_matvec_wall_time_seconds=0.003,
         average_matvec_wall_time_per_call_seconds=0.003,
+        average_preconditioner_apply_wall_time_seconds=None,
+        average_preconditioner_apply_wall_time_per_call_seconds=None,
         matvec_timing_is_estimated=True,
     )
     diag_single_solve = H2TripletHartreeSingleSolveResult(
@@ -197,10 +219,18 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         cg_wall_time_seconds=1.7,
         matvec_wall_time_seconds=1.1,
         cg_other_overhead_wall_time_seconds=0.6,
+        preconditioner_apply_count=321,
+        preconditioner_apply_wall_time_seconds=0.0,
+        preconditioner_setup_wall_time_seconds=0.0,
+        preconditioner_axis_reorder_wall_time_seconds=0.0,
+        preconditioner_tridiagonal_solve_wall_time_seconds=0.0,
+        preconditioner_other_overhead_wall_time_seconds=0.0,
         matvec_call_count=321,
         average_iteration_wall_time_seconds=0.0053,
         average_matvec_wall_time_seconds=0.0034,
         average_matvec_wall_time_per_call_seconds=0.0034,
+        average_preconditioner_apply_wall_time_seconds=0.0,
+        average_preconditioner_apply_wall_time_per_call_seconds=0.0,
         matvec_timing_is_estimated=True,
     )
     pcg_stronger_single_solve = H2TripletHartreeSingleSolveResult(
@@ -214,10 +244,18 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
         cg_wall_time_seconds=3.1,
         matvec_wall_time_seconds=1.6,
         cg_other_overhead_wall_time_seconds=1.5,
+        preconditioner_apply_count=283,
+        preconditioner_apply_wall_time_seconds=0.5,
+        preconditioner_setup_wall_time_seconds=0.02,
+        preconditioner_axis_reorder_wall_time_seconds=0.07,
+        preconditioner_tridiagonal_solve_wall_time_seconds=0.38,
+        preconditioner_other_overhead_wall_time_seconds=0.05,
         matvec_call_count=284,
         average_iteration_wall_time_seconds=0.011,
         average_matvec_wall_time_seconds=0.0056,
         average_matvec_wall_time_per_call_seconds=0.0056,
+        average_preconditioner_apply_wall_time_seconds=0.0018,
+        average_preconditioner_apply_wall_time_per_call_seconds=0.0018,
         matvec_timing_is_estimated=True,
     )
     audit_result = H2TripletHartreeEnergyAuditResult(
@@ -244,10 +282,12 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     assert cgloop_route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
     assert pcg_stronger_route.cg_preconditioner == "line"
     assert pcg_stronger_route.average_hartree_cg_iterations == 270.0
+    assert pcg_stronger_route.average_hartree_preconditioner_tridiagonal_solve_wall_time_seconds == 0.362
     assert cgloop_single_solve.cg_impl == "jax_loop"
     assert cgloop_single_solve.cg_preconditioner == "none"
     assert diag_single_solve.cg_preconditioner == "diag"
     assert pcg_stronger_single_solve.cg_preconditioner == "line"
+    assert pcg_stronger_single_solve.preconditioner_tridiagonal_solve_wall_time_seconds == 0.38
     assert pcg_stronger_single_solve.average_matvec_wall_time_per_call_seconds == 0.0056
     assert audit_result.jax_hartree_cgloop_route.final_total_energy_ha == -1.22
     assert audit_result.jax_hartree_pcg_stronger_route.final_total_energy_ha == -1.2195

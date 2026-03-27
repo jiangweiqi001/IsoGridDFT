@@ -48,6 +48,13 @@ class MonitorPoissonJaxSolveDiagnostics:
     matvec_call_count: int = 0
     matvec_wall_time_seconds: float = 0.0
     matvec_timing_is_estimated: bool = False
+    preconditioner_apply_count: int = 0
+    preconditioner_setup_wall_time_seconds: float = 0.0
+    preconditioner_apply_wall_time_seconds: float = 0.0
+    preconditioner_axis_reorder_wall_time_seconds: float = 0.0
+    preconditioner_tridiagonal_solve_wall_time_seconds: float = 0.0
+    preconditioner_other_overhead_wall_time_seconds: float = 0.0
+    preconditioner_timing_is_estimated: bool = False
     used_cached_operator: bool = False
     first_solve_for_cached_operator: bool = False
 
@@ -85,7 +92,12 @@ class MonitorPoissonJaxLinePreconditionerContext:
     axis_label: str
     line_length: int
     average_line_diagonal_shift: float
+    setup_wall_time_seconds: float
     apply: object
+    apply_probe: object
+    reorder_to_lines_probe: object
+    axis_reorder_probe: object
+    tridiagonal_solve_probe: object
 
 
 _MONITOR_POISSON_JAX_KERNEL_CACHE: dict[
@@ -385,6 +397,7 @@ def _build_monitor_open_boundary_line_preconditioner_context_jax(
     *,
     grid_geometry: MonitorGridGeometry,
 ) -> MonitorPoissonJaxLinePreconditionerContext:
+    setup_start = perf_counter()
     jax = get_configured_jax()
     jnp = jax.numpy
     lax_linalg = jax.lax.linalg
@@ -466,24 +479,48 @@ def _build_monitor_open_boundary_line_preconditioner_context_jax(
     interior_shape = tuple(int(length - 2) for length in grid_geometry.spec.shape)
 
     @jax.jit
-    def _apply(interior_residual):
+    def _reorder_to_lines(interior_residual):
         field = jnp.reshape(interior_residual, interior_shape)
-        rhs = jnp.moveaxis(field, axis, -1)
-        solved = lax_linalg.tridiagonal_solve(
+        return jnp.moveaxis(field, axis, -1)
+
+    @jax.jit
+    def _tridiagonal_only(rhs_lines):
+        return lax_linalg.tridiagonal_solve(
             lower_lines,
             diagonal_lines,
             upper_lines,
-            rhs[..., None],
+            rhs_lines[..., None],
         )[..., 0]
-        restored = jnp.moveaxis(solved, -1, axis)
+
+    @jax.jit
+    def _restore_from_lines(solved_lines):
+        restored = jnp.moveaxis(solved_lines, -1, axis)
         return jnp.reshape(restored, (-1,))
+
+    @jax.jit
+    def _apply(interior_residual):
+        rhs = _reorder_to_lines(interior_residual)
+        solved = _tridiagonal_only(rhs)
+        return _restore_from_lines(solved)
+
+    @jax.jit
+    def _axis_reorder_probe(interior_residual):
+        rhs = _reorder_to_lines(interior_residual)
+        return _restore_from_lines(rhs)
+
+    setup_elapsed = perf_counter() - setup_start
 
     return MonitorPoissonJaxLinePreconditionerContext(
         axis=axis,
         axis_label=axis_label,
         line_length=int(line_length),
         average_line_diagonal_shift=float(np.mean(full_diagonal - (lower_coefficient + upper_coefficient))),
+        setup_wall_time_seconds=float(setup_elapsed),
         apply=_apply,
+        apply_probe=_apply,
+        reorder_to_lines_probe=_reorder_to_lines,
+        axis_reorder_probe=_axis_reorder_probe,
+        tridiagonal_solve_probe=_tridiagonal_only,
     )
 
 
@@ -885,6 +922,71 @@ def _estimate_matvec_wall_time_seconds(
     return float(single_call_elapsed * call_count)
 
 
+def _estimate_monitor_poisson_jax_preconditioner_apply_count(
+    *,
+    iteration_count: int,
+    converged: bool,
+    cg_preconditioner: str,
+) -> int:
+    if cg_preconditioner == "none":
+        return 0
+    if iteration_count <= 0:
+        return 0
+    return int(iteration_count if converged else iteration_count + 1)
+
+
+def _time_jax_probe_call(*, probe, values) -> float:
+    if probe is None:
+        return 0.0
+    warmup = probe(values)
+    if hasattr(warmup, "block_until_ready"):
+        warmup.block_until_ready()
+    else:
+        np.asarray(warmup, dtype=np.float64)
+    start = perf_counter()
+    output = probe(values)
+    if hasattr(output, "block_until_ready"):
+        output.block_until_ready()
+    else:
+        np.asarray(output, dtype=np.float64)
+    return float(perf_counter() - start)
+
+
+def _estimate_line_preconditioner_wall_times(
+    *,
+    line_context: MonitorPoissonJaxLinePreconditionerContext | None,
+    interior_values: np.ndarray,
+    apply_count: int,
+) -> tuple[float, float, float, float]:
+    if line_context is None or apply_count <= 0:
+        return 0.0, 0.0, 0.0, 0.0
+
+    jax = get_configured_jax()
+    jnp = jax.numpy
+    values = jnp.asarray(interior_values, dtype=jnp.float64)
+    rhs_lines = line_context.reorder_to_lines_probe(values)
+    if hasattr(rhs_lines, "block_until_ready"):
+        rhs_lines.block_until_ready()
+    else:
+        np.asarray(rhs_lines, dtype=np.float64)
+    rhs_lines = line_context.reorder_to_lines_probe(values)
+    if hasattr(rhs_lines, "block_until_ready"):
+        rhs_lines.block_until_ready()
+    else:
+        np.asarray(rhs_lines, dtype=np.float64)
+    total_single = _time_jax_probe_call(probe=line_context.apply_probe, values=values)
+    reorder_single = _time_jax_probe_call(probe=line_context.axis_reorder_probe, values=values)
+    tridiagonal_single = _time_jax_probe_call(
+        probe=line_context.tridiagonal_solve_probe,
+        values=rhs_lines,
+    )
+    total = float(total_single * apply_count)
+    reorder = float(reorder_single * apply_count)
+    tridiagonal = float(tridiagonal_single * apply_count)
+    other = max(0.0, total - reorder - tridiagonal)
+    return total, reorder, tridiagonal, other
+
+
 def _run_jax_cg_loop(
     *,
     grid_geometry: MonitorGridGeometry,
@@ -892,6 +994,7 @@ def _run_jax_cg_loop(
     matvec_probe,
     inverse_preconditioner_diagonal,
     separable_preconditioner_apply,
+    line_preconditioner_context: MonitorPoissonJaxLinePreconditionerContext | None,
     line_preconditioner_apply,
     rhs,
     tolerance: float,
@@ -925,6 +1028,21 @@ def _run_jax_cg_loop(
         interior_values=np.asarray(rhs_values, dtype=np.float64),
         call_count=matvec_call_count,
     )
+    preconditioner_apply_count = _estimate_monitor_poisson_jax_preconditioner_apply_count(
+        iteration_count=iteration_count_value,
+        converged=bool(converged),
+        cg_preconditioner=cg_preconditioner,
+    )
+    (
+        estimated_preconditioner_apply_wall_time_seconds,
+        estimated_preconditioner_axis_reorder_wall_time_seconds,
+        estimated_preconditioner_tridiagonal_solve_wall_time_seconds,
+        estimated_preconditioner_other_overhead_wall_time_seconds,
+    ) = _estimate_line_preconditioner_wall_times(
+        line_context=line_preconditioner_context,
+        interior_values=np.asarray(rhs_values, dtype=np.float64),
+        apply_count=preconditioner_apply_count,
+    )
     return np.asarray(solution, dtype=np.float64), MonitorPoissonJaxSolveDiagnostics(
         solver_method="jax_cg_monitor",
         iteration_count=iteration_count_value,
@@ -940,6 +1058,20 @@ def _run_jax_cg_loop(
         matvec_call_count=matvec_call_count,
         matvec_wall_time_seconds=float(estimated_matvec_wall_time_seconds),
         matvec_timing_is_estimated=True,
+        preconditioner_apply_count=int(preconditioner_apply_count),
+        preconditioner_apply_wall_time_seconds=float(
+            estimated_preconditioner_apply_wall_time_seconds
+        ),
+        preconditioner_axis_reorder_wall_time_seconds=float(
+            estimated_preconditioner_axis_reorder_wall_time_seconds
+        ),
+        preconditioner_tridiagonal_solve_wall_time_seconds=float(
+            estimated_preconditioner_tridiagonal_solve_wall_time_seconds
+        ),
+        preconditioner_other_overhead_wall_time_seconds=float(
+            estimated_preconditioner_other_overhead_wall_time_seconds
+        ),
+        preconditioner_timing_is_estimated=bool(preconditioner_apply_count > 0),
     )
 
 
@@ -983,9 +1115,11 @@ def solve_open_boundary_poisson_monitor_jax(
             use_cached_operator=use_cached_operator,
         )
         separable_preconditioner_apply = separable_context.apply
+    line_context = None
+    line_context_built_this_solve = False
     line_preconditioner_apply = None
     if normalized_cg_preconditioner == "line":
-        line_context, _ = _get_monitor_open_boundary_line_preconditioner_context_jax(
+        line_context, line_context_built_this_solve = _get_monitor_open_boundary_line_preconditioner_context_jax(
             grid_geometry=grid_geometry,
             use_cached_operator=use_cached_operator,
         )
@@ -1019,6 +1153,7 @@ def solve_open_boundary_poisson_monitor_jax(
             matvec_probe=matvec_probe,
             inverse_preconditioner_diagonal=inverse_preconditioner_diagonal,
             separable_preconditioner_apply=separable_preconditioner_apply,
+            line_preconditioner_context=line_context,
             line_preconditioner_apply=line_preconditioner_apply,
             rhs=rhs_interior,
             tolerance=tolerance,
@@ -1065,6 +1200,23 @@ def solve_open_boundary_poisson_monitor_jax(
         matvec_call_count=int(diagnostics.matvec_call_count),
         matvec_wall_time_seconds=float(diagnostics.matvec_wall_time_seconds),
         matvec_timing_is_estimated=bool(diagnostics.matvec_timing_is_estimated),
+        preconditioner_apply_count=int(diagnostics.preconditioner_apply_count),
+        preconditioner_setup_wall_time_seconds=(
+            0.0
+            if line_context is None or not line_context_built_this_solve
+            else float(line_context.setup_wall_time_seconds)
+        ),
+        preconditioner_apply_wall_time_seconds=float(diagnostics.preconditioner_apply_wall_time_seconds),
+        preconditioner_axis_reorder_wall_time_seconds=float(
+            diagnostics.preconditioner_axis_reorder_wall_time_seconds
+        ),
+        preconditioner_tridiagonal_solve_wall_time_seconds=float(
+            diagnostics.preconditioner_tridiagonal_solve_wall_time_seconds
+        ),
+        preconditioner_other_overhead_wall_time_seconds=float(
+            diagnostics.preconditioner_other_overhead_wall_time_seconds
+        ),
+        preconditioner_timing_is_estimated=bool(diagnostics.preconditioner_timing_is_estimated),
         used_cached_operator=bool(use_cached_operator),
         first_solve_for_cached_operator=bool(use_cached_operator and first_cached_solve),
     )
