@@ -61,7 +61,7 @@ That first JAX slice has now been pushed one step further into the fixed-potenti
 
 The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
 
-That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines. The current follow-up is a triplet-only profiling slice on Poisson/Hartree and single-point energy evaluation, including an opt-in JAX Hartree backend plus repeated-solve compiled-kernel reuse check, and a narrower CG inner-loop / matvec audit to determine whether the remaining Hartree cost is dominated by the CG body itself or by monitor-grid matvec work.
+That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines. The current follow-up is a triplet-only profiling slice on Poisson/Hartree and single-point energy evaluation, including an opt-in JAX Hartree backend plus repeated-solve compiled-kernel reuse check, and a narrower JAX-native CG inner-loop prototype audit to determine whether the remaining Hartree cost is dominated by the CG body itself or by monitor-grid matvec work.
 
 What is present today:
 

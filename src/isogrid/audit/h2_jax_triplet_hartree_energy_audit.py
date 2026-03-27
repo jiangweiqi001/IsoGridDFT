@@ -1,4 +1,4 @@
-"""Very rough triplet-only SCF audit for JAX Hartree CG/matvec profiling.
+"""Very rough triplet-only SCF audit for the JAX Hartree CG inner-loop prototype.
 
 This audit keeps the A-grid H2 dry-run restricted to the current local-only
 Hamiltonian
@@ -9,8 +9,8 @@ with the repaired monitor-grid Hartree path, patch-assisted local ionic slice,
 and the kinetic trial-fix branch. It compares two otherwise identical JAX-backed
 SCF routes on the already-converged H2 triplet case:
 
-- jax-hartree-baseline: JAX Poisson backend without explicit repeated-solve reuse
-- jax-hartree-profiled: the same JAX backend with cached operator reuse enabled
+- jax-hartree-baseline: cached JAX Hartree operator with the current baseline CG loop
+- jax-hartree-cgloop: cached JAX Hartree operator with a JAX-native CG inner-loop prototype
 
 The goal is not a formal benchmark. It is a small, auditable profile that
 answers where the remaining single-solve cost sits inside the JAX Hartree path:
@@ -28,6 +28,10 @@ import numpy as np
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import build_h2_local_patch_development_monitor_grid
+from isogrid.poisson import solve_hartree_potential
+from isogrid.poisson.poisson_jax import clear_monitor_poisson_jax_kernel_cache
+from isogrid.poisson.poisson_jax import get_last_monitor_poisson_jax_solve_diagnostics
 from isogrid.scf import H2StaticLocalScfDryRunResult
 from isogrid.scf import SinglePointEnergyComponents
 from isogrid.scf import run_h2_monitor_grid_scf_dry_run
@@ -67,9 +71,11 @@ class H2TripletHartreeEnergyRouteResult:
     spin_state_label: str
     kinetic_version: str
     hartree_backend: str
+    cg_impl: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     use_jax_hartree_cached_operator: bool
+    matvec_timing_is_estimated: bool
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -111,11 +117,33 @@ class H2TripletHartreeEnergyRouteResult:
 
 
 @dataclass(frozen=True)
+class H2TripletHartreeSingleSolveResult:
+    """Same-density single-solve comparison for one JAX CG implementation."""
+
+    path_label: str
+    cg_impl: str
+    converged: bool
+    residual_max: float
+    iteration_count: int
+    total_solve_time_seconds: float
+    cg_wall_time_seconds: float
+    matvec_wall_time_seconds: float
+    cg_other_overhead_wall_time_seconds: float
+    matvec_call_count: int
+    average_iteration_wall_time_seconds: float | None
+    average_matvec_wall_time_seconds: float | None
+    average_matvec_wall_time_per_call_seconds: float | None
+    matvec_timing_is_estimated: bool
+
+
+@dataclass(frozen=True)
 class H2TripletHartreeEnergyAuditResult:
-    """Top-level triplet-only SCF audit for JAX Hartree repeated solves."""
+    """Top-level triplet-only SCF audit for the JAX Hartree CG prototype."""
 
     jax_hartree_baseline_route: H2TripletHartreeEnergyRouteResult
-    jax_hartree_optimized_route: H2TripletHartreeEnergyRouteResult
+    jax_hartree_cgloop_route: H2TripletHartreeEnergyRouteResult
+    single_solve_baseline: H2TripletHartreeSingleSolveResult
+    single_solve_cgloop: H2TripletHartreeSingleSolveResult
     note: str
 
 
@@ -128,7 +156,7 @@ def _average(values: tuple[float, ...] | tuple[int, ...]) -> float | None:
 def _monitor_parameter_summary(result: H2StaticLocalScfDryRunResult) -> str:
     parameters = result.parameter_summary
     return (
-        "A-grid+patch+trial-fix triplet SCF JAX Hartree repeated-solve audit: "
+        "A-grid+patch+trial-fix triplet SCF JAX Hartree CG-loop audit: "
         f"shape={parameters.grid_shape}, "
         f"box={parameters.box_half_extents_bohr}, "
         f"weight_scale={parameters.weight_scale:.2f}, "
@@ -140,6 +168,7 @@ def _monitor_parameter_summary(result: H2StaticLocalScfDryRunResult) -> str:
         f"kinetic={parameters.kinetic_version}, "
         f"hartree_backend={parameters.hartree_backend}, "
         f"use_jax_hartree_cached_operator={parameters.use_jax_hartree_cached_operator}, "
+        f"jax_hartree_cg_impl={parameters.jax_hartree_cg_impl}, "
         f"use_jax_block_kernels={parameters.use_jax_block_kernels}, "
         f"use_step_local_static_local_reuse={parameters.use_step_local_static_local_reuse}, "
         f"mixing={_A_GRID_DRY_RUN_MIXING:.2f}, "
@@ -155,18 +184,20 @@ def _build_route_result(
     *,
     path_label: str,
 ) -> H2TripletHartreeEnergyRouteResult:
-    solve_times = result.hartree_solve_wall_time_seconds_history
     cg_iterations = result.hartree_cg_iterations_history
     cg_times = result.hartree_cg_wall_time_seconds_history
     matvec_counts = result.hartree_matvec_call_count_history
     matvec_times = result.hartree_matvec_wall_time_seconds_history
-    repeated_cg_iterations = cg_iterations[1:]
     repeated_matvec_counts = matvec_counts[1:]
     repeated_matvec_times = matvec_times[1:]
     average_other_cg_overhead = (
         None
         if not cg_times or not matvec_times
-        else float(np.mean([max(0.0, cg - mv) for cg, mv in zip(cg_times, matvec_times, strict=False)]))
+        else float(
+            np.mean(
+                [max(0.0, cg - mv) for cg, mv in zip(cg_times, matvec_times, strict=False)]
+            )
+        )
     )
     average_iteration_wall = (
         None
@@ -202,9 +233,11 @@ def _build_route_result(
         spin_state_label=result.spin_state_label,
         kinetic_version=result.kinetic_version,
         hartree_backend=result.hartree_backend,
+        cg_impl=result.jax_hartree_cg_impl,
         use_jax_block_kernels=bool(result.use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(result.use_step_local_static_local_reuse),
         use_jax_hartree_cached_operator=bool(result.use_jax_hartree_cached_operator),
+        matvec_timing_is_estimated=(result.jax_hartree_cg_impl == "jax_loop"),
         converged=bool(result.converged),
         iteration_count=int(result.iteration_count),
         final_total_energy_ha=float(result.energy.total),
@@ -285,56 +318,99 @@ def _build_route_result(
 def _run_route(
     *,
     case: BenchmarkCase,
-    use_jax_hartree_cached_operator: bool,
-) -> H2TripletHartreeEnergyRouteResult:
-    path_label = (
-        "jax-hartree-optimized"
-        if use_jax_hartree_cached_operator
-        else "jax-hartree-baseline"
+    cg_impl: str,
+) -> tuple[H2TripletHartreeEnergyRouteResult, H2StaticLocalScfDryRunResult]:
+    path_label = "jax-hartree-cgloop" if cg_impl == "jax_loop" else "jax-hartree-baseline"
+    raw_result = run_h2_monitor_grid_scf_dry_run(
+        "triplet",
+        case=case,
+        max_iterations=_TRIPLET_MAX_ITERATIONS,
+        mixing=_A_GRID_DRY_RUN_MIXING,
+        density_tolerance=_A_GRID_DRY_RUN_DENSITY_TOLERANCE,
+        energy_tolerance=_A_GRID_DRY_RUN_ENERGY_TOLERANCE,
+        eigensolver_tolerance=_A_GRID_DRY_RUN_EIGENSOLVER_TOLERANCE,
+        eigensolver_ncv=_A_GRID_DRY_RUN_EIGENSOLVER_NCV,
+        kinetic_version="trial_fix",
+        hartree_backend="jax",
+        use_jax_hartree_cached_operator=True,
+        jax_hartree_cg_impl=cg_impl,
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
     )
-    return _build_route_result(
-        run_h2_monitor_grid_scf_dry_run(
-            "triplet",
-            case=case,
-            max_iterations=_TRIPLET_MAX_ITERATIONS,
-            mixing=_A_GRID_DRY_RUN_MIXING,
-            density_tolerance=_A_GRID_DRY_RUN_DENSITY_TOLERANCE,
-            energy_tolerance=_A_GRID_DRY_RUN_ENERGY_TOLERANCE,
-            eigensolver_tolerance=_A_GRID_DRY_RUN_EIGENSOLVER_TOLERANCE,
-            eigensolver_ncv=_A_GRID_DRY_RUN_EIGENSOLVER_NCV,
-            kinetic_version="trial_fix",
-            hartree_backend="jax",
-            use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
-            use_jax_block_kernels=True,
-            use_step_local_static_local_reuse=True,
+    return _build_route_result(raw_result, path_label=path_label), raw_result
+
+
+def _run_single_solve(
+    *,
+    rho_total: np.ndarray,
+    cg_impl: str,
+) -> H2TripletHartreeSingleSolveResult:
+    grid_geometry = build_h2_local_patch_development_monitor_grid()
+    clear_monitor_poisson_jax_kernel_cache()
+    solve_hartree_potential(
+        grid_geometry=grid_geometry,
+        rho=rho_total,
+        backend="jax",
+        use_jax_cached_operator=True,
+        cg_impl=cg_impl,
+    )
+    diagnostics = get_last_monitor_poisson_jax_solve_diagnostics()
+    if diagnostics is None:
+        raise RuntimeError("Expected JAX Hartree solve diagnostics for single-solve audit.")
+    average_iteration_wall = (
+        None
+        if diagnostics.iteration_count <= 0
+        else float(diagnostics.cg_wall_time_seconds / diagnostics.iteration_count)
+    )
+    average_matvec_wall = (
+        None
+        if diagnostics.matvec_call_count <= 0
+        else float(diagnostics.matvec_wall_time_seconds / diagnostics.matvec_call_count)
+    )
+    return H2TripletHartreeSingleSolveResult(
+        path_label="single-solve-cgloop" if cg_impl == "jax_loop" else "single-solve-baseline",
+        cg_impl=cg_impl,
+        converged=bool(diagnostics.converged),
+        residual_max=float(diagnostics.residual_max),
+        iteration_count=int(diagnostics.iteration_count),
+        total_solve_time_seconds=float(diagnostics.total_wall_time_seconds),
+        cg_wall_time_seconds=float(diagnostics.cg_wall_time_seconds),
+        matvec_wall_time_seconds=float(diagnostics.matvec_wall_time_seconds),
+        cg_other_overhead_wall_time_seconds=float(
+            diagnostics.cg_other_overhead_wall_time_seconds
         ),
-        path_label=path_label,
+        matvec_call_count=int(diagnostics.matvec_call_count),
+        average_iteration_wall_time_seconds=average_iteration_wall,
+        average_matvec_wall_time_seconds=average_matvec_wall,
+        average_matvec_wall_time_per_call_seconds=average_matvec_wall,
+        matvec_timing_is_estimated=bool(diagnostics.matvec_timing_is_estimated),
     )
 
 
 def run_h2_jax_triplet_hartree_energy_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2TripletHartreeEnergyAuditResult:
-    """Run the triplet-only SCF profiling audit for JAX Hartree reuse."""
+    """Run the triplet-only SCF profiling audit for the JAX Hartree CG prototype."""
 
-    jax_hartree_baseline_route = _run_route(
-        case=case,
-        use_jax_hartree_cached_operator=False,
-    )
-    jax_hartree_optimized_route = _run_route(
-        case=case,
-        use_jax_hartree_cached_operator=True,
-    )
+    jax_hartree_baseline_route, baseline_raw = _run_route(case=case, cg_impl="baseline")
+    jax_hartree_cgloop_route, _ = _run_route(case=case, cg_impl="jax_loop")
+    rho_total = np.asarray(baseline_raw.rho_up + baseline_raw.rho_down, dtype=np.float64)
+    single_solve_baseline = _run_single_solve(rho_total=rho_total, cg_impl="baseline")
+    single_solve_cgloop = _run_single_solve(rho_total=rho_total, cg_impl="jax_loop")
     return H2TripletHartreeEnergyAuditResult(
         jax_hartree_baseline_route=jax_hartree_baseline_route,
-        jax_hartree_optimized_route=jax_hartree_optimized_route,
+        jax_hartree_cgloop_route=jax_hartree_cgloop_route,
+        single_solve_baseline=single_solve_baseline,
+        single_solve_cgloop=single_solve_cgloop,
         note=(
-            "Triplet-only A-grid SCF audit for JAX Hartree single-solve / repeated-solve CG profiling. "
-            "Both routes keep the JAX eigensolver hot path and step-local static-local reuse "
-            "enabled; the only intended difference is whether the JAX Poisson operator callable "
-            "is cached and reused across repeated solves inside the same SCF route. "
-            "The `static_local_prepare` and `hartree_solve` buckets are diagnostic and overlap "
-            "with `eigensolver` / `energy_eval`; they should not be summed with the total wall time."
+            "Triplet-only A-grid SCF audit for the JAX Hartree CG inner-loop prototype. "
+            "Both routes keep the JAX eigensolver hot path, step-local static-local reuse, "
+            "and cached Hartree operator reuse enabled; the only intended difference is "
+            "`cg_impl=baseline` versus `cg_impl=jax_loop`. The `static_local_prepare` and "
+            "`hartree_solve` buckets are diagnostic and overlap with `eigensolver` / "
+            "`energy_eval`; they should not be summed with the total wall time. "
+            "For `cg_impl=jax_loop`, matvec timing is estimated from a probe call and "
+            "should be interpreted as an approximate attribution."
         ),
     )
 
@@ -342,7 +418,9 @@ def run_h2_jax_triplet_hartree_energy_audit(
 def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
     print(f"  route: {route.path_label}")
     print(f"    hartree_backend: {route.hartree_backend}")
+    print(f"    cg_impl: {route.cg_impl}")
     print(f"    use_jax_hartree_cached_operator: {route.use_jax_hartree_cached_operator}")
+    print(f"    matvec_timing_is_estimated: {route.matvec_timing_is_estimated}")
     print(f"    converged: {route.converged}")
     print(f"    iterations: {route.iteration_count}")
     print(f"    final total energy [Ha]: {route.final_total_energy_ha:.12f}")
@@ -410,25 +488,50 @@ def _print_route(route: H2TripletHartreeEnergyRouteResult) -> None:
     )
 
 
+def _print_single_solve(result: H2TripletHartreeSingleSolveResult) -> None:
+    print(f"  single solve: {result.path_label}")
+    print(
+        f"    cg_impl={result.cg_impl}, converged={result.converged}, "
+        f"iterations={result.iteration_count}, residual={result.residual_max:.6e}"
+    )
+    print(
+        "    timing [s]: "
+        f"total={result.total_solve_time_seconds:.6f}, "
+        f"cg={result.cg_wall_time_seconds:.6f}, "
+        f"matvec={result.matvec_wall_time_seconds:.6f}, "
+        f"cg_other={result.cg_other_overhead_wall_time_seconds:.6f}"
+    )
+    print(
+        "    averages [s]: "
+        f"per_iter={0.0 if result.average_iteration_wall_time_seconds is None else result.average_iteration_wall_time_seconds:.6f}, "
+        f"per_matvec={0.0 if result.average_matvec_wall_time_per_call_seconds is None else result.average_matvec_wall_time_per_call_seconds:.6f}, "
+        f"matvec_calls={result.matvec_call_count}"
+    )
+    print(f"    matvec_timing_is_estimated: {result.matvec_timing_is_estimated}")
+
+
 def print_h2_jax_triplet_hartree_energy_summary(
     result: H2TripletHartreeEnergyAuditResult,
 ) -> None:
     """Print the compact triplet profiling summary."""
 
-    print("IsoGridDFT H2 triplet JAX Hartree repeated-solve audit")
+    print("IsoGridDFT H2 triplet JAX Hartree CG inner-loop audit")
     print(f"note: {result.note}")
     print()
+    _print_single_solve(result.single_solve_baseline)
+    _print_single_solve(result.single_solve_cgloop)
+    print()
     _print_route(result.jax_hartree_baseline_route)
-    _print_route(result.jax_hartree_optimized_route)
+    _print_route(result.jax_hartree_cgloop_route)
     print()
     print(
         "  total timing delta [s]: "
-        f"{result.jax_hartree_optimized_route.total_wall_time_seconds - result.jax_hartree_baseline_route.total_wall_time_seconds:+.6f}"
+        f"{result.jax_hartree_cgloop_route.total_wall_time_seconds - result.jax_hartree_baseline_route.total_wall_time_seconds:+.6f}"
     )
     if result.jax_hartree_baseline_route.total_wall_time_seconds > 0.0:
         print(
-            "  timing ratio (optimized/baseline): "
-            f"{result.jax_hartree_optimized_route.total_wall_time_seconds / result.jax_hartree_baseline_route.total_wall_time_seconds:.6f}"
+            "  timing ratio (cgloop/baseline): "
+            f"{result.jax_hartree_cgloop_route.total_wall_time_seconds / result.jax_hartree_baseline_route.total_wall_time_seconds:.6f}"
         )
 
 

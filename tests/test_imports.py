@@ -458,19 +458,21 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
 
     assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_baseline_route.hartree_backend == "jax"
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_baseline_route.cg_impl == "baseline"
     assert (
         H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_baseline_route.use_jax_hartree_cached_operator
-        is False
-    )
-    assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.use_jax_hartree_cached_operator
         is True
     )
     assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.average_hartree_cg_other_overhead_wall_time_seconds
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.use_jax_hartree_cached_operator
+        is True
+    )
+    assert H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.cg_impl == "jax_loop"
+    assert (
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.average_hartree_cg_other_overhead_wall_time_seconds
         is not None
     )
     assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_optimized_route.first_hartree_matvec_call_count
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.first_hartree_matvec_call_count
         == 401
     )

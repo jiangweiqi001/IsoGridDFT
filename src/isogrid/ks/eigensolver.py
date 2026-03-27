@@ -340,6 +340,7 @@ def _resolve_hartree_potential(
     *,
     hartree_backend: str = "python",
     use_jax_hartree_cached_operator: bool = False,
+    jax_hartree_cg_impl: str = "baseline",
 ) -> tuple[np.ndarray, OpenBoundaryPoissonResult | None]:
     if hartree_potential is None:
         poisson_result = solve_hartree_potential(
@@ -347,6 +348,7 @@ def _resolve_hartree_potential(
             rho=rho_total,
             backend=hartree_backend,
             use_jax_cached_operator=use_jax_hartree_cached_operator,
+            cg_impl=jax_hartree_cg_impl,
         )
         return poisson_result.potential, poisson_result
     if isinstance(hartree_potential, OpenBoundaryPoissonResult):
@@ -549,6 +551,7 @@ def prepare_fixed_potential_static_local_operator_profiled(
     base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
     hartree_backend: str = "python",
     use_jax_hartree_cached_operator: bool = False,
+    jax_hartree_cg_impl: str = "baseline",
 ) -> tuple[
     FixedPotentialStaticLocalOperatorContext,
     FixedPotentialStaticLocalPreparationProfile,
@@ -591,6 +594,7 @@ def prepare_fixed_potential_static_local_operator_profiled(
         hartree_potential=hartree_potential,
         hartree_backend=hartree_backend,
         use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
+        jax_hartree_cg_impl=jax_hartree_cg_impl,
     )
     hartree_elapsed = time.perf_counter() - hartree_start
     xc_start = time.perf_counter()
@@ -651,6 +655,7 @@ def prepare_fixed_potential_static_local_operator(
     base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
     hartree_backend: str = "python",
     use_jax_hartree_cached_operator: bool = False,
+    jax_hartree_cg_impl: str = "baseline",
 ) -> FixedPotentialStaticLocalOperatorContext:
     """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid."""
 
@@ -670,6 +675,7 @@ def prepare_fixed_potential_static_local_operator(
         base_local_ionic_evaluation=base_local_ionic_evaluation,
         hartree_backend=hartree_backend,
         use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
+        jax_hartree_cg_impl=jax_hartree_cg_impl,
     )
     return context
 
@@ -1152,6 +1158,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     base_local_ionic_evaluation: LocalIonicPotentialEvaluation | None = None,
     hartree_backend: str = "python",
     use_jax_hartree_cached_operator: bool = False,
+    jax_hartree_cg_impl: str = "baseline",
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -1180,6 +1187,7 @@ def solve_fixed_potential_static_local_eigenproblem(
                 base_local_ionic_evaluation=base_local_ionic_evaluation,
                 hartree_backend=hartree_backend,
                 use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
+                jax_hartree_cg_impl=jax_hartree_cg_impl,
             )
         )
     result = _solve_weighted_fixed_potential_problem(

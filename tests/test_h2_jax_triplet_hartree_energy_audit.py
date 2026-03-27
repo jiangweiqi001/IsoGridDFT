@@ -9,6 +9,9 @@ from isogrid.audit.h2_jax_triplet_hartree_energy_audit import (
     H2TripletHartreeEnergyRouteResult,
 )
 from isogrid.audit.h2_jax_triplet_hartree_energy_audit import (
+    H2TripletHartreeSingleSolveResult,
+)
+from isogrid.audit.h2_jax_triplet_hartree_energy_audit import (
     H2TripletHartreeEnergyTimingBreakdown,
 )
 from isogrid.scf import SinglePointEnergyComponents
@@ -23,13 +26,15 @@ def test_h2_jax_triplet_hartree_energy_module_imports() -> None:
 
 def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     route = H2TripletHartreeEnergyRouteResult(
-        path_label="jax-hartree-optimized",
+        path_label="jax-hartree-cgloop",
         spin_state_label="triplet",
         kinetic_version="trial_fix",
         hartree_backend="jax",
+        cg_impl="jax_loop",
         use_jax_hartree_cached_operator=True,
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
+        matvec_timing_is_estimated=True,
         converged=True,
         iteration_count=18,
         final_total_energy_ha=-1.22,
@@ -91,15 +96,35 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
             total=-1.22,
         ),
     )
+    single_solve = H2TripletHartreeSingleSolveResult(
+        path_label="single-solve-cgloop",
+        cg_impl="jax_loop",
+        converged=True,
+        residual_max=1.0e-8,
+        iteration_count=400,
+        total_solve_time_seconds=2.5,
+        cg_wall_time_seconds=2.0,
+        matvec_wall_time_seconds=1.2,
+        cg_other_overhead_wall_time_seconds=0.8,
+        matvec_call_count=401,
+        average_iteration_wall_time_seconds=0.005,
+        average_matvec_wall_time_seconds=0.003,
+        average_matvec_wall_time_per_call_seconds=0.003,
+        matvec_timing_is_estimated=True,
+    )
     audit_result = H2TripletHartreeEnergyAuditResult(
         jax_hartree_baseline_route=route,
-        jax_hartree_optimized_route=route,
+        jax_hartree_cgloop_route=route,
+        single_solve_baseline=single_solve,
+        single_solve_cgloop=single_solve,
         note="triplet profiling smoke",
     )
 
     assert route.hartree_backend == "jax"
+    assert route.cg_impl == "jax_loop"
     assert route.use_jax_hartree_cached_operator is True
     assert route.use_step_local_static_local_reuse is True
+    assert route.matvec_timing_is_estimated is True
     assert route.hartree_solve_call_count == 37
     assert route.first_hartree_solve_wall_time_seconds == 12.0
     assert route.average_hartree_matvec_call_count == 401.0
@@ -107,4 +132,6 @@ def test_construct_h2_jax_triplet_hartree_energy_result() -> None:
     assert route.first_hartree_matvec_call_count == 401
     assert route.repeated_hartree_matvec_wall_time_per_call_seconds == 0.0086
     assert route.timing_breakdown.hartree_solve_wall_time_seconds == 245.0
-    assert audit_result.jax_hartree_optimized_route.final_total_energy_ha == -1.22
+    assert single_solve.cg_impl == "jax_loop"
+    assert single_solve.average_matvec_wall_time_per_call_seconds == 0.003
+    assert audit_result.jax_hartree_cgloop_route.final_total_energy_ha == -1.22
