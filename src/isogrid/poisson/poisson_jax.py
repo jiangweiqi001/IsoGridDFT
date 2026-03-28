@@ -88,6 +88,7 @@ class MonitorPoissonJaxSeparablePreconditionerContext:
 class MonitorPoissonJaxLinePreconditionerContext:
     """Cached metric-aware line preconditioner for one monitor-grid geometry."""
 
+    implementation: str
     axis: int
     axis_label: str
     line_length: int
@@ -109,7 +110,7 @@ _MONITOR_POISSON_JAX_SEPARABLE_PRECONDITIONER_CACHE: dict[
     MonitorPoissonJaxSeparablePreconditionerContext,
 ] = {}
 _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE: dict[
-    tuple[int, tuple[int, int, int]],
+    tuple[int, tuple[int, int, int], str],
     MonitorPoissonJaxLinePreconditionerContext,
 ] = {}
 _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE: dict[
@@ -119,6 +120,7 @@ _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE: dict[
 _LAST_MONITOR_POISSON_JAX_DIAGNOSTICS: MonitorPoissonJaxSolveDiagnostics | None = None
 _VALID_MONITOR_POISSON_JAX_CG_IMPLS = {"baseline", "jax_loop"}
 _VALID_MONITOR_POISSON_JAX_CG_PRECONDITIONERS = {"none", "diag", "jacobi", "separable", "line"}
+_VALID_MONITOR_POISSON_JAX_LINE_PRECONDITIONER_IMPLS = {"baseline", "optimized"}
 
 
 def apply_monitor_open_boundary_poisson_operator_jax(
@@ -217,6 +219,18 @@ def _normalize_monitor_poisson_jax_cg_preconditioner(cg_preconditioner: str) -> 
         )
     if normalized == "jacobi":
         return "diag"
+    return normalized
+
+
+def _normalize_monitor_poisson_jax_line_preconditioner_impl(
+    line_preconditioner_impl: str,
+) -> str:
+    normalized = line_preconditioner_impl.strip().lower()
+    if normalized not in _VALID_MONITOR_POISSON_JAX_LINE_PRECONDITIONER_IMPLS:
+        raise ValueError(
+            "line_preconditioner_impl must be `baseline` or `optimized`; "
+            f"received `{line_preconditioner_impl}`."
+        )
     return normalized
 
 
@@ -396,6 +410,7 @@ def _get_monitor_open_boundary_separable_preconditioner_context_jax(
 def _build_monitor_open_boundary_line_preconditioner_context_jax(
     *,
     grid_geometry: MonitorGridGeometry,
+    line_preconditioner_impl: str,
 ) -> MonitorPoissonJaxLinePreconditionerContext:
     setup_start = perf_counter()
     jax = get_configured_jax()
@@ -469,33 +484,71 @@ def _build_monitor_open_boundary_line_preconditioner_context_jax(
         lower_diagonal[:, :, 1:] = -lower_coefficient[:, :, 1:]
         upper_diagonal[:, :, :-1] = -upper_coefficient[:, :, :-1]
 
+    interior_shape = tuple(int(length - 2) for length in grid_geometry.spec.shape)
     diagonal_lines = np.moveaxis(full_diagonal, axis, -1)
     lower_lines = np.moveaxis(lower_diagonal, axis, -1)
     upper_lines = np.moveaxis(upper_diagonal, axis, -1)
     line_length = diagonal_lines.shape[-1]
+    batched_line_count = int(np.prod(interior_shape) // line_length)
+    batched_line_shape = (batched_line_count, line_length)
+    diagonal_lines_flat = jnp.asarray(
+        diagonal_lines.reshape(batched_line_shape),
+        dtype=jnp.float64,
+    )
+    lower_lines_flat = jnp.asarray(
+        lower_lines.reshape(batched_line_shape),
+        dtype=jnp.float64,
+    )
+    upper_lines_flat = jnp.asarray(
+        upper_lines.reshape(batched_line_shape),
+        dtype=jnp.float64,
+    )
     diagonal_lines = jnp.asarray(diagonal_lines, dtype=jnp.float64)
     lower_lines = jnp.asarray(lower_lines, dtype=jnp.float64)
     upper_lines = jnp.asarray(upper_lines, dtype=jnp.float64)
-    interior_shape = tuple(int(length - 2) for length in grid_geometry.spec.shape)
 
-    @jax.jit
-    def _reorder_to_lines(interior_residual):
-        field = jnp.reshape(interior_residual, interior_shape)
-        return jnp.moveaxis(field, axis, -1)
+    if line_preconditioner_impl == "baseline":
 
-    @jax.jit
-    def _tridiagonal_only(rhs_lines):
-        return lax_linalg.tridiagonal_solve(
-            lower_lines,
-            diagonal_lines,
-            upper_lines,
-            rhs_lines[..., None],
-        )[..., 0]
+        @jax.jit
+        def _reorder_to_lines(interior_residual):
+            field = jnp.reshape(interior_residual, interior_shape)
+            return jnp.moveaxis(field, axis, -1)
 
-    @jax.jit
-    def _restore_from_lines(solved_lines):
-        restored = jnp.moveaxis(solved_lines, -1, axis)
-        return jnp.reshape(restored, (-1,))
+        @jax.jit
+        def _tridiagonal_only(rhs_lines):
+            return lax_linalg.tridiagonal_solve(
+                lower_lines,
+                diagonal_lines,
+                upper_lines,
+                rhs_lines[..., None],
+            )[..., 0]
+
+        @jax.jit
+        def _restore_from_lines(solved_lines):
+            restored = jnp.moveaxis(solved_lines, -1, axis)
+            return jnp.reshape(restored, (-1,))
+
+    else:
+
+        @jax.jit
+        def _reorder_to_lines(interior_residual):
+            field = jnp.reshape(interior_residual, interior_shape)
+            return jnp.moveaxis(field, axis, -1).reshape(batched_line_shape)
+
+        @jax.jit
+        def _tridiagonal_only(rhs_lines):
+            return lax_linalg.tridiagonal_solve(
+                lower_lines_flat,
+                diagonal_lines_flat,
+                upper_lines_flat,
+                rhs_lines[..., None],
+            )[..., 0]
+
+        @jax.jit
+        def _restore_from_lines(solved_lines):
+            restored = jnp.reshape(solved_lines, diagonal_lines.shape)
+            restored = jnp.moveaxis(restored, -1, axis)
+            return jnp.reshape(restored, (-1,))
 
     @jax.jit
     def _apply(interior_residual):
@@ -511,6 +564,7 @@ def _build_monitor_open_boundary_line_preconditioner_context_jax(
     setup_elapsed = perf_counter() - setup_start
 
     return MonitorPoissonJaxLinePreconditionerContext(
+        implementation=line_preconditioner_impl,
         axis=axis,
         axis_label=axis_label,
         line_length=int(line_length),
@@ -528,22 +582,29 @@ def _get_monitor_open_boundary_line_preconditioner_context_jax(
     *,
     grid_geometry: MonitorGridGeometry,
     use_cached_operator: bool,
+    line_preconditioner_impl: str,
 ) -> tuple[MonitorPoissonJaxLinePreconditionerContext, bool]:
     if not use_cached_operator:
         return (
             _build_monitor_open_boundary_line_preconditioner_context_jax(
                 grid_geometry=grid_geometry,
+                line_preconditioner_impl=line_preconditioner_impl,
             ),
             False,
         )
 
-    cache_key = _build_monitor_poisson_jax_cache_key(grid_geometry)
+    cache_key = (
+        _build_monitor_poisson_jax_cache_key(grid_geometry)[0],
+        _build_monitor_poisson_jax_cache_key(grid_geometry)[1],
+        line_preconditioner_impl,
+    )
     cached = _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE.get(cache_key)
     if cached is not None:
         return cached, False
 
     cached = _build_monitor_open_boundary_line_preconditioner_context_jax(
         grid_geometry=grid_geometry,
+        line_preconditioner_impl=line_preconditioner_impl,
     )
     _MONITOR_POISSON_JAX_LINE_PRECONDITIONER_CACHE[cache_key] = cached
     return cached, True
@@ -839,7 +900,8 @@ def _build_monitor_poisson_cg_loop_cache_key(
     tolerance: float,
     max_iterations: int,
     cg_preconditioner: str,
-) -> tuple[int, tuple[int, int, int], int, int, str]:
+    line_preconditioner_impl: str,
+) -> tuple[int, tuple[int, int, int], int, int, str, str]:
     tolerance_key = int(round(float(tolerance) * 1.0e16))
     return (
         id(grid_geometry),
@@ -847,6 +909,7 @@ def _build_monitor_poisson_cg_loop_cache_key(
         int(max_iterations),
         tolerance_key,
         cg_preconditioner,
+        line_preconditioner_impl,
     )
 
 
@@ -861,6 +924,7 @@ def _get_monitor_poisson_cg_loop_solver(
     max_iterations: int,
     use_cached_operator: bool,
     cg_preconditioner: str,
+    line_preconditioner_impl: str,
 ):
     if not use_cached_operator:
         return _build_jax_loop_cg_solver(
@@ -878,6 +942,7 @@ def _get_monitor_poisson_cg_loop_solver(
         tolerance=tolerance,
         max_iterations=max_iterations,
         cg_preconditioner=cg_preconditioner,
+        line_preconditioner_impl=line_preconditioner_impl,
     )
     cached_solver = _MONITOR_POISSON_JAX_CG_LOOP_SOLVER_CACHE.get(cache_key)
     if cached_solver is not None:
@@ -1001,6 +1066,7 @@ def _run_jax_cg_loop(
     max_iterations: int,
     use_cached_operator: bool,
     cg_preconditioner: str,
+    line_preconditioner_impl: str,
 ):
     solver = _get_monitor_poisson_cg_loop_solver(
         grid_geometry=grid_geometry,
@@ -1012,6 +1078,7 @@ def _run_jax_cg_loop(
         max_iterations=max_iterations,
         use_cached_operator=use_cached_operator,
         cg_preconditioner=cg_preconditioner,
+        line_preconditioner_impl=line_preconditioner_impl,
     )
     jax = get_configured_jax()
     jnp = jax.numpy
@@ -1085,6 +1152,7 @@ def solve_open_boundary_poisson_monitor_jax(
     use_cached_operator: bool = False,
     cg_impl: str = "baseline",
     cg_preconditioner: str = "none",
+    line_preconditioner_impl: str = "baseline",
 ) -> tuple[OpenBoundaryPoissonResult, MonitorPoissonJaxSolveDiagnostics]:
     """Solve the monitor-grid open-boundary Poisson problem with JAX CG."""
 
@@ -1095,6 +1163,9 @@ def solve_open_boundary_poisson_monitor_jax(
     normalized_cg_impl = _normalize_monitor_poisson_jax_cg_impl(cg_impl)
     normalized_cg_preconditioner = _normalize_monitor_poisson_jax_cg_preconditioner(
         cg_preconditioner
+    )
+    normalized_line_preconditioner_impl = _normalize_monitor_poisson_jax_line_preconditioner_impl(
+        line_preconditioner_impl
     )
     boundary_start = perf_counter()
     boundary_condition = _compute_multipole_boundary_condition(
@@ -1122,6 +1193,7 @@ def solve_open_boundary_poisson_monitor_jax(
         line_context, line_context_built_this_solve = _get_monitor_open_boundary_line_preconditioner_context_jax(
             grid_geometry=grid_geometry,
             use_cached_operator=use_cached_operator,
+            line_preconditioner_impl=normalized_line_preconditioner_impl,
         )
         line_preconditioner_apply = line_context.apply
     build_elapsed = perf_counter() - build_start
@@ -1160,6 +1232,7 @@ def solve_open_boundary_poisson_monitor_jax(
             max_iterations=max_iterations,
             use_cached_operator=use_cached_operator,
             cg_preconditioner=normalized_cg_preconditioner,
+            line_preconditioner_impl=normalized_line_preconditioner_impl,
         )
         cg_elapsed = diagnostics.cg_wall_time_seconds
     else:

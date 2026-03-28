@@ -169,6 +169,7 @@ class H2ScfDryRunParameterSummary:
     use_jax_hartree_cached_operator: bool
     jax_hartree_cg_impl: str
     jax_hartree_cg_preconditioner: str
+    jax_hartree_line_preconditioner_impl: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     includes_nonlocal: bool
@@ -216,6 +217,7 @@ class H2StaticLocalScfDryRunResult:
     use_jax_hartree_cached_operator: bool
     jax_hartree_cg_impl: str
     jax_hartree_cg_preconditioner: str
+    jax_hartree_line_preconditioner_impl: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
     cycle_breaker_enabled: bool
@@ -698,6 +700,7 @@ def _monitor_grid_scf_parameter_summary(
     use_jax_hartree_cached_operator: bool,
     jax_hartree_cg_impl: str,
     jax_hartree_cg_preconditioner: str,
+    jax_hartree_line_preconditioner_impl: str,
     use_jax_block_kernels: bool,
     use_step_local_static_local_reuse: bool,
     cycle_breaker_enabled: bool,
@@ -720,6 +723,7 @@ def _monitor_grid_scf_parameter_summary(
         use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
         jax_hartree_cg_impl=jax_hartree_cg_impl,
         jax_hartree_cg_preconditioner=jax_hartree_cg_preconditioner,
+        jax_hartree_line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         includes_nonlocal=False,
@@ -946,6 +950,7 @@ def evaluate_static_local_single_point_energy(
     use_jax_hartree_cached_operator: bool = False,
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
+    jax_hartree_line_preconditioner_impl: str = "baseline",
 ) -> SinglePointEnergyComponents:
     """Evaluate the local-only single-point energy on either supported grid.
 
@@ -1047,6 +1052,7 @@ def evaluate_static_local_single_point_energy(
         use_jax_cached_operator=use_jax_hartree_cached_operator,
         cg_impl=jax_hartree_cg_impl,
         cg_preconditioner=jax_hartree_cg_preconditioner,
+        line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
     )
     lsda_evaluation = evaluate_lsda_terms(
         rho_up=rho_up_field,
@@ -1440,6 +1446,7 @@ def run_h2_monitor_grid_scf_dry_run(
     use_jax_hartree_cached_operator: bool = False,
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
+    jax_hartree_line_preconditioner_impl: str = "baseline",
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -1497,6 +1504,14 @@ def run_h2_monitor_grid_scf_dry_run(
         )
     if normalized_jax_hartree_cg_preconditioner == "jacobi":
         normalized_jax_hartree_cg_preconditioner = "diag"
+    normalized_jax_hartree_line_preconditioner_impl = (
+        jax_hartree_line_preconditioner_impl.strip().lower()
+    )
+    if normalized_jax_hartree_line_preconditioner_impl not in {"baseline", "optimized"}:
+        raise ValueError(
+            "jax_hartree_line_preconditioner_impl must be `baseline` or `optimized`; "
+            f"received `{jax_hartree_line_preconditioner_impl}`."
+        )
     if (
         normalized_hartree_backend != "jax"
         and normalized_jax_hartree_cg_preconditioner != "none"
@@ -1588,6 +1603,7 @@ def run_h2_monitor_grid_scf_dry_run(
             use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
             jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+            jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
         )
         static_local_prepare_wall_time += initial_profile.total_wall_time_seconds
         hartree_solve_wall_time += initial_profile.hartree_resolve_wall_time_seconds
@@ -1695,6 +1711,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                         jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                         jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+                        jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
                     )
                 )
                 static_local_prepare_wall_time += up_preparation_profile.total_wall_time_seconds
@@ -1745,6 +1762,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+                jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -1769,6 +1787,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                         jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                         jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+                        jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
                     )
                 )
                 static_local_prepare_wall_time += down_preparation_profile.total_wall_time_seconds
@@ -1819,6 +1838,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+                jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
             )
             orbitals_down = solve_down.orbitals
         else:
@@ -1905,6 +1925,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
                     jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                     jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+                    jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
                 )
             )
             static_local_prepare_wall_time += energy_preparation_profile.total_wall_time_seconds
@@ -2246,6 +2267,7 @@ def run_h2_monitor_grid_scf_dry_run(
             use_jax_hartree_cached_operator=use_jax_hartree_cached_operator,
             jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
             jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+            jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
             use_jax_block_kernels=use_jax_block_kernels,
             use_step_local_static_local_reuse=use_step_local_static_local_reuse,
             cycle_breaker_enabled=enable_cycle_breaker,
@@ -2258,6 +2280,7 @@ def run_h2_monitor_grid_scf_dry_run(
         use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
         jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
         jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
+        jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
         use_jax_block_kernels=bool(use_jax_block_kernels),
         use_step_local_static_local_reuse=bool(use_step_local_static_local_reuse),
         cycle_breaker_enabled=bool(enable_cycle_breaker),

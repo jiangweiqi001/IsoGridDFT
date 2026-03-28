@@ -63,6 +63,8 @@ The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on tha
 
 That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run loop for a very rough end-to-end timing breakdown, while the SCF outer control flow, convergence logic, and nonlocal path still remain on their current Python/SciPy and non-monitor baselines. The current follow-up is a triplet-only profiling slice on Poisson/Hartree and single-point energy evaluation, including an opt-in JAX Hartree backend plus repeated-solve compiled-kernel reuse check, a narrower JAX-native CG inner-loop prototype audit, and now a stronger-but-still-small PCG feasibility check to see whether the remaining `~400` Hartree iterations can be reduced without changing the Poisson physics.
 
+The current triplet-only JAX Hartree follow-up is now even narrower: the stronger line preconditioner already shows that reducing Hartree iteration count is possible, so the present focus is on the engineering cost of `line` preconditioner apply itself, especially tridiagonal solves and axis-reordering overhead, before any broader solver redesign is considered.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton

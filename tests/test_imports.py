@@ -467,18 +467,22 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
         is True
     )
     assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_pcg_stronger_route.use_jax_hartree_cached_operator
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_line_route.use_jax_hartree_cached_operator
         is True
     )
     assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_pcg_stronger_route.cg_preconditioner
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_line_route.cg_preconditioner
         == "line"
+    )
+    assert (
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_line_optimized_route.line_preconditioner_impl
+        == "optimized"
     )
     assert (
         H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.average_hartree_cg_other_overhead_wall_time_seconds
         is not None
     )
     assert (
-        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_pcg_stronger_route.average_hartree_cg_iterations
+        H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_line_route.average_hartree_cg_iterations
         < H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.average_hartree_cg_iterations
     )
