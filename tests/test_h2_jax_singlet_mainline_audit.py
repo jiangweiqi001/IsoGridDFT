@@ -20,6 +20,9 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
         mixing=0.10,
         mixer=mixer,
         solver_variant=solver_variant,
+        anderson_history_length=None if mixer != "anderson" else 4,
+        anderson_regularization=None if mixer != "anderson" else 1.0e-8,
+        anderson_damping=None if mixer != "anderson" else 0.5,
         converged=False,
         iteration_count=20,
         final_total_energy_ha=-0.1653 if mixer == "linear" else -0.1645,
@@ -61,7 +64,7 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             anderson_warmup_iterations=3,
             anderson_history_length=4,
             anderson_regularization=1.0e-8,
-            anderson_damping=0.75,
+            anderson_damping=0.5,
             anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         ),
         timing_breakdown=H2JaxSingletMainlineTimingBreakdown(
@@ -113,14 +116,19 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         path_type="monitor_a_grid_plus_patch",
         baseline_linear_route=_build_route("linear", "linear-0p10"),
         diis_route=_build_route("diis", "diis-prototype"),
-        anderson_route=_build_route("anderson", "anderson-prototype"),
+        anderson_baseline_route=_build_route("anderson", "anderson-prototype"),
+        anderson_variant_routes=(
+            _build_route("anderson", "anderson-h6-reg1e-8-d0p50"),
+        ),
         diagnosis="singlet fixed-point smoke",
         note="formal mixer smoke",
     )
 
     assert result.baseline_linear_route.mixer == "linear"
     assert result.diis_route.mixer == "diis"
-    assert result.anderson_route.mixer == "anderson"
-    assert result.anderson_route.parameter_summary.anderson_enabled is True
-    assert result.anderson_route.final_density_residual == 0.3172
-    assert result.anderson_route.behavior.verdict == "stable_not_converged"
+    assert result.anderson_baseline_route.mixer == "anderson"
+    assert result.anderson_baseline_route.parameter_summary.anderson_enabled is True
+    assert result.anderson_baseline_route.anderson_history_length == 4
+    assert result.anderson_variant_routes[0].anderson_history_length == 4
+    assert result.anderson_baseline_route.final_density_residual == 0.3172
+    assert result.anderson_baseline_route.behavior.verdict == "stable_not_converged"
