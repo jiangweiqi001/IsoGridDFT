@@ -1,4 +1,4 @@
-"""Formal H2 singlet formal-mixer audit on the frozen JAX A-grid mainline."""
+"""Formal H2 singlet mixer audit on the frozen JAX A-grid mainline."""
 
 from __future__ import annotations
 
@@ -23,6 +23,10 @@ _SINGLET_MAINLINE_EIGENSOLVER_TOLERANCE = 1.0e-3
 _SINGLET_MAINLINE_EIGENSOLVER_NCV = 20
 _SINGLET_MAINLINE_DIIS_WARMUP = 3
 _SINGLET_MAINLINE_DIIS_HISTORY = 4
+_SINGLET_MAINLINE_ANDERSON_WARMUP = 3
+_SINGLET_MAINLINE_ANDERSON_HISTORY = 4
+_SINGLET_MAINLINE_ANDERSON_REGULARIZATION = 1.0e-8
+_SINGLET_MAINLINE_ANDERSON_DAMPING = 0.5
 _TAIL_SUMMARY_LENGTH = 5
 
 
@@ -84,6 +88,12 @@ class H2JaxSingletMainlineParameterSummary:
     diis_warmup_iterations: int
     diis_history_length: int
     diis_residual_definition: str
+    anderson_enabled: bool
+    anderson_warmup_iterations: int
+    anderson_history_length: int
+    anderson_regularization: float
+    anderson_damping: float
+    anderson_residual_definition: str
 
 
 @dataclass(frozen=True)
@@ -111,6 +121,8 @@ class H2JaxSingletMainlineRouteResult:
     behavior: H2JaxSingletMainlineBehavior
     diis_used_iterations: tuple[int, ...]
     diis_fallback_iterations: tuple[int, ...]
+    anderson_used_iterations: tuple[int, ...]
+    anderson_fallback_iterations: tuple[int, ...]
     final_energy_components: SinglePointEnergyComponents
     note: str
 
@@ -123,7 +135,8 @@ class H2JaxSingletMainlineAuditResult:
     spin_state_label: str
     path_type: str
     baseline_linear_route: H2JaxSingletMainlineRouteResult
-    formal_mixer_route: H2JaxSingletMainlineRouteResult
+    diis_route: H2JaxSingletMainlineRouteResult
+    anderson_route: H2JaxSingletMainlineRouteResult
     diagnosis: str
     note: str
 
@@ -270,6 +283,12 @@ def _build_parameter_summary(
         diis_warmup_iterations=parameters.diis_warmup_iterations,
         diis_history_length=parameters.diis_history_length,
         diis_residual_definition=parameters.diis_residual_definition,
+        anderson_enabled=parameters.anderson_enabled,
+        anderson_warmup_iterations=parameters.anderson_warmup_iterations,
+        anderson_history_length=parameters.anderson_history_length,
+        anderson_regularization=parameters.anderson_regularization,
+        anderson_damping=parameters.anderson_damping,
+        anderson_residual_definition=parameters.anderson_residual_definition,
     )
 
 
@@ -320,6 +339,10 @@ def _build_route_result(
         behavior=_build_behavior(result, converged=bool(result.converged)),
         diis_used_iterations=tuple(int(value) for value in result.diis_used_iterations),
         diis_fallback_iterations=tuple(int(value) for value in result.diis_fallback_iterations),
+        anderson_used_iterations=tuple(int(value) for value in result.anderson_used_iterations),
+        anderson_fallback_iterations=tuple(
+            int(value) for value in result.anderson_fallback_iterations
+        ),
         final_energy_components=result.energy,
         note=(
             "Frozen A-grid local-only mainline: use_jax_block_kernels=True, "
@@ -339,6 +362,11 @@ def _run_route(
     enable_diis: bool,
     diis_warmup_iterations: int,
     diis_history_length: int,
+    enable_anderson: bool,
+    anderson_warmup_iterations: int,
+    anderson_history_length: int,
+    anderson_regularization: float,
+    anderson_damping: float,
 ) -> H2JaxSingletMainlineRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
         "singlet",
@@ -360,6 +388,11 @@ def _run_route(
         enable_diis=enable_diis,
         diis_warmup_iterations=diis_warmup_iterations,
         diis_history_length=diis_history_length,
+        enable_anderson=enable_anderson,
+        anderson_warmup_iterations=anderson_warmup_iterations,
+        anderson_history_length=anderson_history_length,
+        anderson_regularization=anderson_regularization,
+        anderson_damping=anderson_damping,
     )
     return _build_route_result(
         result,
@@ -382,8 +415,13 @@ def run_h2_jax_singlet_mainline_audit(
         enable_diis=False,
         diis_warmup_iterations=_SINGLET_MAINLINE_DIIS_WARMUP,
         diis_history_length=_SINGLET_MAINLINE_DIIS_HISTORY,
+        enable_anderson=False,
+        anderson_warmup_iterations=_SINGLET_MAINLINE_ANDERSON_WARMUP,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_DAMPING,
     )
-    formal_mixer_route = _run_route(
+    diis_route = _run_route(
         case=case,
         mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
         mixer="diis",
@@ -391,25 +429,46 @@ def run_h2_jax_singlet_mainline_audit(
         enable_diis=True,
         diis_warmup_iterations=_SINGLET_MAINLINE_DIIS_WARMUP,
         diis_history_length=_SINGLET_MAINLINE_DIIS_HISTORY,
+        enable_anderson=False,
+        anderson_warmup_iterations=_SINGLET_MAINLINE_ANDERSON_WARMUP,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_DAMPING,
+    )
+    anderson_route = _run_route(
+        case=case,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-prototype",
+        enable_diis=False,
+        diis_warmup_iterations=_SINGLET_MAINLINE_DIIS_WARMUP,
+        diis_history_length=_SINGLET_MAINLINE_DIIS_HISTORY,
+        enable_anderson=True,
+        anderson_warmup_iterations=_SINGLET_MAINLINE_ANDERSON_WARMUP,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_DAMPING,
     )
     return H2JaxSingletMainlineAuditResult(
         path_label="jax-singlet-mainline",
         spin_state_label="singlet",
         path_type=baseline_linear_route.path_type,
         baseline_linear_route=baseline_linear_route,
-        formal_mixer_route=formal_mixer_route,
+        diis_route=diis_route,
+        anderson_route=anderson_route,
         diagnosis=(
             "This audit isolates the singlet fixed-point question on the frozen JAX A-grid local-only "
-            "mainline by holding the full physical chain fixed and comparing only a conservative "
-            "linear baseline against a minimal but formal DIIS mixer. The DIIS residual is the "
-            "current density fixed-point residual rho_out-rho_in; the mixed object is the density "
-            "itself; the history length is 4 with a 3-step linear warmup. If DIIS still fails here, "
-            "the remaining singlet obstacle is not merely the absence of a standard mixer hook."
+            "mainline by holding the full physical chain fixed and comparing a conservative linear "
+            "baseline, the current minimal Pulay/DIIS route, and a very small Anderson mixer prototype. "
+            "Both formal mixers use the density fixed-point residual rho_out-rho_in with 3-step linear "
+            "warmup and bounded history. If Anderson still fails here, the remaining singlet obstacle is "
+            "not just the absence of a standard mixer hook, but the difficulty of the fixed-point map itself."
         ),
         note=(
             "Formal mixer audit only. The frozen A-grid local-only mainline configuration is held "
-            "fixed; only the singlet mixer behavior changes between linear mixing=0.10 and a minimal "
-            "DIIS/Pulay-style density mixer with warmup and built-in fallback."
+            "fixed; only the singlet mixer behavior changes between linear mixing=0.10, a minimal "
+            "DIIS/Pulay-style density mixer, and a minimal Anderson-style density mixer with warmup "
+            "and built-in fallback."
         ),
     )
 
@@ -445,6 +504,9 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
     if route.mixer == "diis":
         print(f"  diis used iterations: {route.diis_used_iterations}")
         print(f"  diis fallback iterations: {route.diis_fallback_iterations}")
+    if route.mixer == "anderson":
+        print(f"  anderson used iterations: {route.anderson_used_iterations}")
+        print(f"  anderson fallback iterations: {route.anderson_fallback_iterations}")
     print(f"  tail energies [Ha]: {route.behavior.tail_energy_history_ha}")
     print(f"  tail residuals: {route.behavior.tail_density_residual_history}")
     print(f"  tail dE [Ha]: {route.behavior.tail_energy_change_history_ha}")
@@ -467,7 +529,8 @@ def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResul
     )
     print(f"diagnosis: {result.diagnosis}")
     _print_route(result.baseline_linear_route)
-    _print_route(result.formal_mixer_route)
+    _print_route(result.diis_route)
+    _print_route(result.anderson_route)
 
 
 def main() -> int:

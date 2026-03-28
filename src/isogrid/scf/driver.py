@@ -179,11 +179,27 @@ class H2ScfDryRunParameterSummary:
     diis_warmup_iterations: int
     diis_history_length: int
     diis_residual_definition: str
+    anderson_enabled: bool
+    anderson_warmup_iterations: int
+    anderson_history_length: int
+    anderson_regularization: float
+    anderson_damping: float
+    anderson_residual_definition: str
 
 
 @dataclass(frozen=True)
 class MonitorGridDiisHistoryEntry:
     """Small DIIS history item for the monitor-grid singlet dry-run."""
+
+    mixed_rho_up: np.ndarray
+    mixed_rho_down: np.ndarray
+    residual_up: np.ndarray
+    residual_down: np.ndarray
+
+
+@dataclass(frozen=True)
+class MonitorGridAndersonHistoryEntry:
+    """Small Anderson history item for the monitor-grid singlet dry-run."""
 
     mixed_rho_up: np.ndarray
     mixed_rho_down: np.ndarray
@@ -230,6 +246,15 @@ class H2StaticLocalScfDryRunResult:
     diis_used_iterations: tuple[int, ...]
     diis_history_sizes: tuple[int, ...]
     diis_fallback_iterations: tuple[int, ...]
+    anderson_enabled: bool
+    anderson_warmup_iterations: int
+    anderson_history_length: int
+    anderson_regularization: float
+    anderson_damping: float
+    anderson_residual_definition: str
+    anderson_used_iterations: tuple[int, ...]
+    anderson_history_sizes: tuple[int, ...]
+    anderson_fallback_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     history: tuple[ScfIterationRecord, ...]
@@ -708,6 +733,11 @@ def _monitor_grid_scf_parameter_summary(
     diis_enabled: bool,
     diis_warmup_iterations: int,
     diis_history_length: int,
+    anderson_enabled: bool,
+    anderson_warmup_iterations: int,
+    anderson_history_length: int,
+    anderson_regularization: float,
+    anderson_damping: float,
 ) -> H2ScfDryRunParameterSummary:
     return H2ScfDryRunParameterSummary(
         grid_shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
@@ -733,6 +763,12 @@ def _monitor_grid_scf_parameter_summary(
         diis_warmup_iterations=int(diis_warmup_iterations),
         diis_history_length=int(diis_history_length),
         diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        anderson_enabled=bool(anderson_enabled),
+        anderson_warmup_iterations=int(anderson_warmup_iterations),
+        anderson_history_length=int(anderson_history_length),
+        anderson_regularization=float(anderson_regularization),
+        anderson_damping=float(anderson_damping),
+        anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
     )
 
 
@@ -917,6 +953,107 @@ def _apply_monitor_grid_density_diis(
     return (
         _renormalize_density(rho_up_diis, n_alpha, grid_geometry=grid_geometry),
         _renormalize_density(rho_down_diis, n_beta, grid_geometry=grid_geometry),
+    )
+
+
+def _apply_monitor_grid_density_anderson(
+    history: tuple[MonitorGridAndersonHistoryEntry, ...],
+    *,
+    grid_geometry: MonitorGridGeometry,
+    n_alpha: int,
+    n_beta: int,
+    regularization: float,
+    damping: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    history_length = len(history)
+    if history_length < 2:
+        return None
+    if not (0.0 < damping <= 1.0):
+        return None
+
+    current = history[-1]
+    difference_count = history_length - 1
+    gram = np.empty((difference_count, difference_count), dtype=np.float64)
+    rhs = np.empty(difference_count, dtype=np.float64)
+
+    for row_index in range(difference_count):
+        row_previous = history[row_index]
+        row_next = history[row_index + 1]
+        delta_row_up = row_next.residual_up - row_previous.residual_up
+        delta_row_down = row_next.residual_down - row_previous.residual_down
+        rhs[row_index] = _weighted_spin_density_dot(
+            delta_row_up,
+            delta_row_down,
+            current.residual_up,
+            current.residual_down,
+            grid_geometry=grid_geometry,
+        )
+        for column_index in range(difference_count):
+            column_previous = history[column_index]
+            column_next = history[column_index + 1]
+            gram[row_index, column_index] = _weighted_spin_density_dot(
+                delta_row_up,
+                delta_row_down,
+                column_next.residual_up - column_previous.residual_up,
+                column_next.residual_down - column_previous.residual_down,
+                grid_geometry=grid_geometry,
+            )
+
+    regularization_scale = max(float(np.max(np.abs(gram))), 1.0)
+    gram += max(float(regularization), 0.0) * regularization_scale * np.eye(
+        difference_count,
+        dtype=np.float64,
+    )
+    try:
+        coefficients = np.linalg.solve(gram, rhs)
+    except np.linalg.LinAlgError:
+        return None
+    if not np.all(np.isfinite(coefficients)):
+        return None
+    if float(np.max(np.abs(coefficients))) > 50.0:
+        return None
+
+    rho_up_candidate = np.asarray(current.mixed_rho_up, dtype=np.float64).copy()
+    rho_down_candidate = np.asarray(current.mixed_rho_down, dtype=np.float64).copy()
+    for coefficient, previous, nxt in zip(
+        coefficients,
+        history[:-1],
+        history[1:],
+        strict=True,
+    ):
+        rho_up_candidate -= float(coefficient) * (
+            np.asarray(nxt.mixed_rho_up, dtype=np.float64)
+            - np.asarray(previous.mixed_rho_up, dtype=np.float64)
+        )
+        rho_down_candidate -= float(coefficient) * (
+            np.asarray(nxt.mixed_rho_down, dtype=np.float64)
+            - np.asarray(previous.mixed_rho_down, dtype=np.float64)
+        )
+
+    rho_up_candidate = (
+        (1.0 - damping) * current.mixed_rho_up + damping * rho_up_candidate
+    )
+    rho_down_candidate = (
+        (1.0 - damping) * current.mixed_rho_down + damping * rho_down_candidate
+    )
+
+    if n_alpha > 0:
+        rho_up_candidate = np.maximum(rho_up_candidate, 0.0)
+        if float(integrate_field(rho_up_candidate, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_up_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+
+    if n_beta > 0:
+        rho_down_candidate = np.maximum(rho_down_candidate, 0.0)
+        if float(integrate_field(rho_down_candidate, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_down_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+
+    return (
+        _renormalize_density(rho_up_candidate, n_alpha, grid_geometry=grid_geometry),
+        _renormalize_density(rho_down_candidate, n_beta, grid_geometry=grid_geometry),
     )
 
 
@@ -1454,6 +1591,11 @@ def run_h2_monitor_grid_scf_dry_run(
     enable_diis: bool = False,
     diis_warmup_iterations: int = 3,
     diis_history_length: int = 4,
+    enable_anderson: bool = False,
+    anderson_warmup_iterations: int = 3,
+    anderson_history_length: int = 4,
+    anderson_regularization: float = 1.0e-8,
+    anderson_damping: float = 0.5,
 ) -> H2StaticLocalScfDryRunResult:
     """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
 
@@ -1468,12 +1610,25 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("mixing must satisfy 0 < mixing <= 1.")
     if not (0.0 <= cycle_breaker_weight <= 1.0):
         raise ValueError("cycle_breaker_weight must satisfy 0 <= cycle_breaker_weight <= 1.")
-    if enable_cycle_breaker and enable_diis:
-        raise ValueError("The minimal monitor-grid dry-run supports cycle-breaker or DIIS, not both.")
+    enabled_special_mixers = int(bool(enable_cycle_breaker)) + int(bool(enable_diis)) + int(
+        bool(enable_anderson)
+    )
+    if enabled_special_mixers > 1:
+        raise ValueError(
+            "The minimal monitor-grid dry-run supports at most one of cycle-breaker, DIIS, or Anderson."
+        )
     if diis_warmup_iterations < 0:
         raise ValueError("diis_warmup_iterations must be non-negative.")
     if diis_history_length < 2:
         raise ValueError("diis_history_length must be at least 2.")
+    if anderson_warmup_iterations < 0:
+        raise ValueError("anderson_warmup_iterations must be non-negative.")
+    if anderson_history_length < 2:
+        raise ValueError("anderson_history_length must be at least 2.")
+    if anderson_regularization < 0.0:
+        raise ValueError("anderson_regularization must be non-negative.")
+    if not (0.0 < anderson_damping <= 1.0):
+        raise ValueError("anderson_damping must satisfy 0 < anderson_damping <= 1.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
     normalized_hartree_backend = hartree_backend.strip().lower()
@@ -1547,6 +1702,10 @@ def run_h2_monitor_grid_scf_dry_run(
     diis_used_iterations: list[int] = []
     diis_history_sizes: list[int] = []
     diis_fallback_iterations: list[int] = []
+    anderson_history: list[MonitorGridAndersonHistoryEntry] = []
+    anderson_used_iterations: list[int] = []
+    anderson_history_sizes: list[int] = []
+    anderson_fallback_iterations: list[int] = []
     iteration_eigensolver_times: list[float] = []
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
@@ -2072,8 +2231,37 @@ def run_h2_monitor_grid_scf_dry_run(
                 else:
                     diis_fallback_iterations.append(iteration)
             diis_history_sizes.append(len(diis_history))
+            anderson_history_sizes.append(0)
+        elif enable_anderson:
+            anderson_history.append(
+                MonitorGridAndersonHistoryEntry(
+                    mixed_rho_up=np.asarray(rho_up_mixed, dtype=np.float64),
+                    mixed_rho_down=np.asarray(rho_down_mixed, dtype=np.float64),
+                    residual_up=residual_up,
+                    residual_down=residual_down,
+                )
+            )
+            if len(anderson_history) > anderson_history_length:
+                anderson_history = anderson_history[-anderson_history_length:]
+            if iteration >= anderson_warmup_iterations and len(anderson_history) >= 2:
+                anderson_candidate = _apply_monitor_grid_density_anderson(
+                    tuple(anderson_history),
+                    grid_geometry=grid_geometry,
+                    n_alpha=occupations.n_alpha,
+                    n_beta=occupations.n_beta,
+                    regularization=anderson_regularization,
+                    damping=anderson_damping,
+                )
+                if anderson_candidate is not None:
+                    rho_up_mixed, rho_down_mixed = anderson_candidate
+                    anderson_used_iterations.append(iteration)
+                else:
+                    anderson_fallback_iterations.append(iteration)
+            anderson_history_sizes.append(len(anderson_history))
+            diis_history_sizes.append(0)
         else:
             diis_history_sizes.append(0)
+            anderson_history_sizes.append(0)
 
         history.append(
             ScfIterationRecord(
@@ -2275,6 +2463,11 @@ def run_h2_monitor_grid_scf_dry_run(
             diis_enabled=enable_diis,
             diis_warmup_iterations=diis_warmup_iterations,
             diis_history_length=diis_history_length,
+            anderson_enabled=enable_anderson,
+            anderson_warmup_iterations=anderson_warmup_iterations,
+            anderson_history_length=anderson_history_length,
+            anderson_regularization=anderson_regularization,
+            anderson_damping=anderson_damping,
         ),
         hartree_backend=normalized_hartree_backend,
         use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
@@ -2293,6 +2486,15 @@ def run_h2_monitor_grid_scf_dry_run(
         diis_used_iterations=tuple(diis_used_iterations),
         diis_history_sizes=tuple(diis_history_sizes),
         diis_fallback_iterations=tuple(diis_fallback_iterations),
+        anderson_enabled=bool(enable_anderson),
+        anderson_warmup_iterations=int(anderson_warmup_iterations),
+        anderson_history_length=int(anderson_history_length),
+        anderson_regularization=float(anderson_regularization),
+        anderson_damping=float(anderson_damping),
+        anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        anderson_used_iterations=tuple(anderson_used_iterations),
+        anderson_history_sizes=tuple(anderson_history_sizes),
+        anderson_fallback_iterations=tuple(anderson_fallback_iterations),
         converged=converged,
         iteration_count=len(history),
         history=tuple(history),

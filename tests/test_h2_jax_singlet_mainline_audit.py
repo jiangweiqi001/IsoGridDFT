@@ -1,4 +1,4 @@
-"""Minimal smoke tests for the H2 singlet JAX formal-mixer audit."""
+"""Minimal smoke tests for the H2 singlet Anderson audit."""
 
 from importlib import import_module
 
@@ -22,12 +22,12 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
         solver_variant=solver_variant,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.1649 if mixer == "linear" else -0.1738,
-        final_lowest_eigenvalue_ha=-0.3937 if mixer == "linear" else -0.3763,
-        final_density_residual=0.3109 if mixer == "linear" else 0.2930,
-        final_energy_change_ha=0.0120 if mixer == "linear" else 0.0082,
-        total_wall_time_seconds=92.7 if mixer == "linear" else 91.8,
-        average_iteration_wall_time_seconds=4.63 if mixer == "linear" else 4.59,
+        final_total_energy_ha=-0.1653 if mixer == "linear" else -0.1645,
+        final_lowest_eigenvalue_ha=-0.3908 if mixer == "linear" else -0.4118,
+        final_density_residual=0.3047 if mixer == "linear" else 0.3172,
+        final_energy_change_ha=-0.0080 if mixer == "linear" else -0.00014,
+        total_wall_time_seconds=86.9 if mixer == "linear" else 88.0,
+        average_iteration_wall_time_seconds=4.35 if mixer == "linear" else 4.40,
         parameter_summary=H2JaxSingletMainlineParameterSummary(
             grid_shape=(67, 67, 81),
             box_half_extents_bohr=(8.0, 8.0, 10.0),
@@ -57,6 +57,12 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             diis_warmup_iterations=3,
             diis_history_length=4,
             diis_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            anderson_enabled=(mixer == "anderson"),
+            anderson_warmup_iterations=3,
+            anderson_history_length=4,
+            anderson_regularization=1.0e-8,
+            anderson_damping=0.75,
+            anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         ),
         timing_breakdown=H2JaxSingletMainlineTimingBreakdown(
             eigensolver_wall_time_seconds=64.0,
@@ -76,8 +82,10 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             tail_density_residual_history=(0.31, 0.31, 0.30, 0.30, 0.29),
             tail_energy_change_history_ha=(0.01, -0.01, 0.01, -0.01, 0.01),
         ),
-        diis_used_iterations=() if mixer == "linear" else (3, 4, 5),
-        diis_fallback_iterations=() if mixer == "linear" else (6,),
+        diis_used_iterations=() if mixer != "diis" else (3, 4, 5),
+        diis_fallback_iterations=() if mixer != "diis" else (6,),
+        anderson_used_iterations=() if mixer != "anderson" else (3, 4, 5),
+        anderson_fallback_iterations=() if mixer != "anderson" else (6,),
         final_energy_components=SinglePointEnergyComponents(
             kinetic=0.44,
             local_ionic=-1.64,
@@ -85,7 +93,7 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             hartree=1.40,
             xc=-0.39,
             ion_ion_repulsion=0.714285714286,
-            total=-0.1649 if mixer == "linear" else -0.1738,
+            total=-0.1653 if mixer == "linear" else -0.1645,
         ),
         note="singlet mainline smoke",
     )
@@ -104,13 +112,15 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         spin_state_label="singlet",
         path_type="monitor_a_grid_plus_patch",
         baseline_linear_route=_build_route("linear", "linear-0p10"),
-        formal_mixer_route=_build_route("diis", "diis-prototype"),
+        diis_route=_build_route("diis", "diis-prototype"),
+        anderson_route=_build_route("anderson", "anderson-prototype"),
         diagnosis="singlet fixed-point smoke",
         note="formal mixer smoke",
     )
 
     assert result.baseline_linear_route.mixer == "linear"
-    assert result.formal_mixer_route.mixer == "diis"
-    assert result.formal_mixer_route.parameter_summary.diis_enabled is True
-    assert result.formal_mixer_route.final_density_residual == 0.2930
-    assert result.formal_mixer_route.behavior.verdict == "stable_not_converged"
+    assert result.diis_route.mixer == "diis"
+    assert result.anderson_route.mixer == "anderson"
+    assert result.anderson_route.parameter_summary.anderson_enabled is True
+    assert result.anderson_route.final_density_residual == 0.3172
+    assert result.anderson_route.behavior.verdict == "stable_not_converged"

@@ -502,4 +502,5 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.cg_impl == "jax_loop"
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.cg_preconditioner == "none"
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.mixer == "linear"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.formal_mixer_route.mixer == "diis"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.diis_route.mixer == "diis"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_route.mixer == "anderson"
