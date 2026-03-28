@@ -2335,6 +2335,58 @@ class H2JaxScfHotpathRegressionBaseline:
 
 
 @dataclass(frozen=True)
+class H2JaxSingletMainlineRouteBaseline:
+    """Recorded H2 singlet result on the frozen JAX A-grid local-only mainline."""
+
+    path_label: str
+    spin_state_label: str
+    path_type: str
+    kinetic_version: str
+    hartree_backend: str
+    cg_impl: str
+    cg_preconditioner: str
+    line_preconditioner_impl: str
+    use_jax_hartree_cached_operator: bool
+    use_jax_block_kernels: bool
+    use_step_local_static_local_reuse: bool
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    final_energy_change_ha: float | None
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    behavior_verdict: str
+    detected_two_cycle: bool
+    even_odd_energy_gap_ha: float | None
+    even_odd_residual_gap: float | None
+    eigensolver_wall_time_seconds: float
+    static_local_prepare_wall_time_seconds: float
+    hartree_solve_wall_time_seconds: float
+    energy_evaluation_wall_time_seconds: float
+    density_update_wall_time_seconds: float
+    bookkeeping_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
+class H2JaxSingletMainlineRegressionBaseline:
+    """Recorded H2 singlet acceptance audit on the frozen JAX A-grid mainline."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    route: H2JaxSingletMainlineRouteBaseline
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
 class H2JaxTripletHartreeEnergyRouteBaseline:
     """Recorded triplet-only SCF profiling route for Hartree/energy optimization."""
 
@@ -2681,6 +2733,64 @@ H2_JAX_SCF_HOTPATH_BASELINE = H2JaxScfHotpathRegressionBaseline(
 )
 
 
+H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    route=H2JaxSingletMainlineRouteBaseline(
+        path_label="jax-singlet-mainline",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        hartree_backend="jax",
+        cg_impl="jax_loop",
+        cg_preconditioner="none",
+        line_preconditioner_impl="baseline",
+        use_jax_hartree_cached_operator=True,
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
+        converged=False,
+        iteration_count=20,
+        final_total_energy_ha=-0.13033991396168487,
+        final_lowest_eigenvalue_ha=-0.4530719058585211,
+        final_density_residual=0.33710540394095856,
+        final_energy_change_ha=0.010843373930768285,
+        total_wall_time_seconds=80.53344036899944,
+        average_iteration_wall_time_seconds=4.026672018449972,
+        behavior_verdict="stable_not_converged",
+        detected_two_cycle=False,
+        even_odd_energy_gap_ha=0.009242688674612032,
+        even_odd_residual_gap=0.00022773449852220295,
+        eigensolver_wall_time_seconds=54.66909459100134,
+        static_local_prepare_wall_time_seconds=24.534376684991003,
+        hartree_solve_wall_time_seconds=14.069814796988794,
+        energy_evaluation_wall_time_seconds=13.023767445978592,
+        density_update_wall_time_seconds=0.18140073899849085,
+        bookkeeping_wall_time_seconds=12.659177593021013,
+    ),
+    diagnosis=(
+        "On the current frozen A-grid local-only mainline, the H2 singlet still does not converge. "
+        "Its final energy, residual, and last-step energy jump remain essentially in the same regime "
+        "as the earlier 20-step dry-run baseline, so the route has not crossed into mainline-ready "
+        "behavior. The present classifier no longer calls it a formal weak two-cycle, but the tail "
+        "still shows small alternating energy/residual structure and stays well above the acceptance "
+        "thresholds. That means the dominant remaining obstacle is no longer the JAX Hartree backend "
+        "itself; it is the singlet SCF fixed-point behavior on the local-only map."
+    ),
+    note=(
+        "Formal H2 singlet acceptance baseline on the current frozen A-grid local-only mainline: "
+        "use_jax_block_kernels=True, use_step_local_static_local_reuse=True, "
+        "hartree_backend='jax', use_jax_hartree_cached_operator=True, "
+        "cg_impl='jax_loop', cg_preconditioner='none'. Nonlocal remains absent."
+    ),
+)
+
+
 H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     monitor_shape=(67, 67, 81),
@@ -2909,6 +3019,8 @@ H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBase
 __all__ = [
     "H2JaxEigensolverHotpathReuseRegressionBaseline",
     "H2JaxEigensolverHotpathRegressionBaseline",
+    "H2JaxSingletMainlineRegressionBaseline",
+    "H2JaxSingletMainlineRouteBaseline",
     "H2JaxScfHotpathRegressionBaseline",
     "H2JaxScfHotpathRouteBaseline",
     "H2JaxTripletHartreeEnergyRegressionBaseline",
@@ -2965,6 +3077,7 @@ __all__ = [
     "H2_JAX_EIGENSOLVER_HOTPATH_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_JAX_SCF_HOTPATH_BASELINE",
+    "H2_JAX_SINGLET_MAINLINE_BASELINE",
     "H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",

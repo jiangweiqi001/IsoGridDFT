@@ -453,6 +453,12 @@ def test_import_h2_jax_triplet_hartree_energy_audit_entrypoint() -> None:
     assert callable(run_h2_jax_triplet_hartree_energy_audit)
 
 
+def test_import_h2_jax_singlet_mainline_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_mainline_audit
+
+    assert callable(run_h2_jax_singlet_mainline_audit)
+
+
 def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE
 
@@ -486,3 +492,13 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
         H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_line_route.average_hartree_cg_iterations
         < H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE.jax_hartree_cgloop_route.average_hartree_cg_iterations
     )
+
+
+def test_import_h2_jax_singlet_mainline_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
+
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.hartree_backend == "jax"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.cg_impl == "jax_loop"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.cg_preconditioner == "none"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.converged is False
