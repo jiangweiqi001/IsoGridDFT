@@ -1,4 +1,4 @@
-"""Minimal smoke tests for the H2 singlet Anderson adequacy audit."""
+"""Minimal smoke tests for the H2 singlet productionish-Anderson audit."""
 
 from importlib import import_module
 
@@ -21,6 +21,11 @@ def _build_route(
     formal_mixer_step_clip_factor: float | None = None,
     formal_mixer_reset_on_growth: bool = False,
     formal_mixer_reset_growth_factor: float | None = None,
+    formal_mixer_adaptive_damping_enabled: bool = False,
+    formal_mixer_min_damping: float | None = None,
+    formal_mixer_max_damping: float | None = None,
+    formal_mixer_acceptance_residual_ratio_threshold: float | None = None,
+    formal_mixer_collinearity_cosine_threshold: float | None = None,
 ) -> H2JaxSingletMainlineRouteResult:
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
@@ -38,6 +43,11 @@ def _build_route(
         formal_mixer_step_clip_factor=formal_mixer_step_clip_factor,
         formal_mixer_reset_on_growth=formal_mixer_reset_on_growth,
         formal_mixer_reset_growth_factor=formal_mixer_reset_growth_factor,
+        formal_mixer_adaptive_damping_enabled=formal_mixer_adaptive_damping_enabled,
+        formal_mixer_min_damping=formal_mixer_min_damping,
+        formal_mixer_max_damping=formal_mixer_max_damping,
+        formal_mixer_acceptance_residual_ratio_threshold=formal_mixer_acceptance_residual_ratio_threshold,
+        formal_mixer_collinearity_cosine_threshold=formal_mixer_collinearity_cosine_threshold,
         converged=False,
         iteration_count=max_iterations,
         final_total_energy_ha=-0.17,
@@ -83,6 +93,13 @@ def _build_route(
             anderson_step_clip_factor=formal_mixer_step_clip_factor,
             anderson_reset_on_growth=formal_mixer_reset_on_growth,
             anderson_reset_growth_factor=1.05,
+            anderson_adaptive_damping_enabled=formal_mixer_adaptive_damping_enabled,
+            anderson_min_damping=0.35 if mixer == "anderson" else 0.0,
+            anderson_max_damping=0.75 if mixer == "anderson" else 0.0,
+            anderson_acceptance_residual_ratio_threshold=(
+                1.02 if mixer == "anderson" else 0.0
+            ),
+            anderson_collinearity_cosine_threshold=0.995 if mixer == "anderson" else 0.0,
             anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         ),
         timing_breakdown=H2JaxSingletMainlineTimingBreakdown(
@@ -111,7 +128,13 @@ def _build_route(
         diis_fallback_iterations=(6,) if mixer == "diis" else (),
         anderson_used_iterations=(4, 5, 7) if mixer == "anderson" else (),
         anderson_fallback_iterations=(),
+        anderson_rejected_iterations=(8,) if mixer == "anderson" else (),
         anderson_reset_iterations=(2, 3) if mixer == "anderson" else (),
+        anderson_filtered_history_sizes=(1, 2, 2) if mixer == "anderson" else (),
+        anderson_effective_damping_history=(0.55, 0.45, 0.45) if mixer == "anderson" else (),
+        anderson_projected_residual_ratio_history=(
+            (0.58, 0.55, 0.54) if mixer == "anderson" else ()
+        ),
         final_energy_components=SinglePointEnergyComponents(
             kinetic=0.45,
             local_ionic=-1.65,
@@ -146,36 +169,48 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
             formal_mixer_regularization=1.0e-8,
             formal_mixer_damping=0.5,
         ),
-        anderson_extended_route=_build_route(
+        anderson_productionish_route=_build_route(
             mixer="anderson",
-            solver_variant="anderson-extended",
-            formal_mixer_history_length=4,
+            solver_variant="anderson-productionish",
+            formal_mixer_history_length=6,
             formal_mixer_regularization=1.0e-8,
-            formal_mixer_damping=0.5,
+            formal_mixer_damping=0.55,
             formal_mixer_step_clip_factor=1.0,
             formal_mixer_reset_on_growth=True,
             formal_mixer_reset_growth_factor=1.05,
+            formal_mixer_adaptive_damping_enabled=True,
+            formal_mixer_min_damping=0.35,
+            formal_mixer_max_damping=0.75,
+            formal_mixer_acceptance_residual_ratio_threshold=1.02,
+            formal_mixer_collinearity_cosine_threshold=0.995,
         ),
         supplemental_anderson_route=_build_route(
             mixer="anderson",
-            solver_variant="anderson-extended-long40",
+            solver_variant="anderson-productionish-long40",
             max_iterations=40,
-            formal_mixer_history_length=4,
+            formal_mixer_history_length=6,
             formal_mixer_regularization=1.0e-8,
-            formal_mixer_damping=0.5,
+            formal_mixer_damping=0.55,
             formal_mixer_step_clip_factor=1.0,
             formal_mixer_reset_on_growth=True,
             formal_mixer_reset_growth_factor=1.05,
+            formal_mixer_adaptive_damping_enabled=True,
+            formal_mixer_min_damping=0.35,
+            formal_mixer_max_damping=0.75,
+            formal_mixer_acceptance_residual_ratio_threshold=1.02,
+            formal_mixer_collinearity_cosine_threshold=0.995,
         ),
-        diagnosis="singlet adequacy smoke",
-        note="formal Anderson adequacy smoke",
+        diagnosis="singlet productionish Anderson smoke",
+        note="formal productionish Anderson smoke",
     )
 
     assert result.baseline_linear_route.mixer == "linear"
     assert result.diis_route.mixer == "diis"
     assert result.anderson_baseline_route.mixer == "anderson"
-    assert result.anderson_extended_route.formal_mixer_step_clip_factor == 1.0
-    assert result.anderson_extended_route.formal_mixer_reset_on_growth is True
+    assert result.anderson_productionish_route.formal_mixer_step_clip_factor == 1.0
+    assert result.anderson_productionish_route.formal_mixer_reset_on_growth is True
+    assert result.anderson_productionish_route.formal_mixer_adaptive_damping_enabled is True
     assert result.supplemental_anderson_route.max_iterations == 40
-    assert result.anderson_extended_route.final_density_residual == 0.30
-    assert result.anderson_extended_route.behavior.verdict == "plateau_or_stall"
+    assert result.anderson_productionish_route.final_density_residual == 0.30
+    assert result.anderson_productionish_route.anderson_rejected_iterations == (8,)
+    assert result.anderson_productionish_route.behavior.verdict == "plateau_or_stall"

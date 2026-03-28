@@ -187,6 +187,11 @@ class H2ScfDryRunParameterSummary:
     anderson_step_clip_factor: float | None
     anderson_reset_on_growth: bool
     anderson_reset_growth_factor: float
+    anderson_adaptive_damping_enabled: bool
+    anderson_min_damping: float
+    anderson_max_damping: float
+    anderson_acceptance_residual_ratio_threshold: float
+    anderson_collinearity_cosine_threshold: float
     anderson_residual_definition: str
     broyden_enabled: bool
     broyden_warmup_iterations: int
@@ -214,6 +219,18 @@ class MonitorGridAndersonHistoryEntry:
     mixed_rho_down: np.ndarray
     residual_up: np.ndarray
     residual_down: np.ndarray
+
+
+@dataclass(frozen=True)
+class MonitorGridAndersonApplyResult:
+    """Small result bundle for one Anderson proposal attempt."""
+
+    mixed_rho_up: np.ndarray | None
+    mixed_rho_down: np.ndarray | None
+    accepted: bool
+    effective_damping: float
+    filtered_history_length: int
+    projected_residual_ratio: float | None
 
 
 @dataclass(frozen=True)
@@ -273,11 +290,20 @@ class H2StaticLocalScfDryRunResult:
     anderson_step_clip_factor: float | None
     anderson_reset_on_growth: bool
     anderson_reset_growth_factor: float
+    anderson_adaptive_damping_enabled: bool
+    anderson_min_damping: float
+    anderson_max_damping: float
+    anderson_acceptance_residual_ratio_threshold: float
+    anderson_collinearity_cosine_threshold: float
     anderson_residual_definition: str
     anderson_used_iterations: tuple[int, ...]
     anderson_history_sizes: tuple[int, ...]
+    anderson_filtered_history_sizes: tuple[int, ...]
     anderson_fallback_iterations: tuple[int, ...]
+    anderson_rejected_iterations: tuple[int, ...]
     anderson_reset_iterations: tuple[int, ...]
+    anderson_effective_damping_history: tuple[float, ...]
+    anderson_projected_residual_ratio_history: tuple[float | None, ...]
     broyden_enabled: bool
     broyden_warmup_iterations: int
     broyden_history_length: int
@@ -773,6 +799,11 @@ def _monitor_grid_scf_parameter_summary(
     anderson_step_clip_factor: float | None,
     anderson_reset_on_growth: bool,
     anderson_reset_growth_factor: float,
+    anderson_adaptive_damping_enabled: bool,
+    anderson_min_damping: float,
+    anderson_max_damping: float,
+    anderson_acceptance_residual_ratio_threshold: float,
+    anderson_collinearity_cosine_threshold: float,
     broyden_enabled: bool,
     broyden_warmup_iterations: int,
     broyden_history_length: int,
@@ -815,6 +846,15 @@ def _monitor_grid_scf_parameter_summary(
         ),
         anderson_reset_on_growth=bool(anderson_reset_on_growth),
         anderson_reset_growth_factor=float(anderson_reset_growth_factor),
+        anderson_adaptive_damping_enabled=bool(anderson_adaptive_damping_enabled),
+        anderson_min_damping=float(anderson_min_damping),
+        anderson_max_damping=float(anderson_max_damping),
+        anderson_acceptance_residual_ratio_threshold=float(
+            anderson_acceptance_residual_ratio_threshold
+        ),
+        anderson_collinearity_cosine_threshold=float(
+            anderson_collinearity_cosine_threshold
+        ),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         broyden_enabled=bool(broyden_enabled),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
@@ -946,6 +986,131 @@ def _weighted_spin_density_dot(
     )
 
 
+def _weighted_spin_density_norm(
+    field_up: np.ndarray,
+    field_down: np.ndarray,
+    *,
+    grid_geometry: GridGeometryLike,
+) -> float:
+    value = _weighted_spin_density_dot(
+        field_up,
+        field_down,
+        field_up,
+        field_down,
+        grid_geometry=grid_geometry,
+    )
+    return float(np.sqrt(max(value, 0.0)))
+
+
+def _filter_monitor_grid_anderson_secants(
+    history: tuple[MonitorGridAndersonHistoryEntry, ...],
+    *,
+    grid_geometry: MonitorGridGeometry,
+    collinearity_cosine_threshold: float,
+) -> tuple[
+    tuple[
+        tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray],
+        ...,
+    ],
+    int,
+]:
+    if len(history) < 2:
+        return (), len(history)
+
+    kept: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    kept_residual_differences: list[tuple[np.ndarray, np.ndarray]] = []
+    tiny_norm = 1.0e-14
+
+    for previous, nxt in zip(history[:-1], history[1:], strict=True):
+        delta_residual_up = np.asarray(
+            nxt.residual_up - previous.residual_up,
+            dtype=np.float64,
+        )
+        delta_residual_down = np.asarray(
+            nxt.residual_down - previous.residual_down,
+            dtype=np.float64,
+        )
+        delta_residual_norm = _weighted_spin_density_norm(
+            delta_residual_up,
+            delta_residual_down,
+            grid_geometry=grid_geometry,
+        )
+        if not np.isfinite(delta_residual_norm) or delta_residual_norm <= tiny_norm:
+            continue
+
+        is_collinear = False
+        for kept_up, kept_down in kept_residual_differences:
+            kept_norm = _weighted_spin_density_norm(
+                kept_up,
+                kept_down,
+                grid_geometry=grid_geometry,
+            )
+            if not np.isfinite(kept_norm) or kept_norm <= tiny_norm:
+                continue
+            cosine = _weighted_spin_density_dot(
+                delta_residual_up,
+                delta_residual_down,
+                kept_up,
+                kept_down,
+                grid_geometry=grid_geometry,
+            ) / (delta_residual_norm * kept_norm)
+            if abs(float(cosine)) >= collinearity_cosine_threshold:
+                is_collinear = True
+                break
+        if is_collinear:
+            continue
+
+        kept.append(
+            (
+                np.asarray(nxt.mixed_rho_up - previous.mixed_rho_up, dtype=np.float64),
+                np.asarray(nxt.mixed_rho_down - previous.mixed_rho_down, dtype=np.float64),
+                delta_residual_up,
+                delta_residual_down,
+            )
+        )
+        kept_residual_differences.append((delta_residual_up, delta_residual_down))
+
+    return tuple(kept), len(kept) + 1
+
+
+def _select_monitor_grid_anderson_damping(
+    history: tuple[MonitorGridAndersonHistoryEntry, ...],
+    *,
+    grid_geometry: MonitorGridGeometry,
+    base_damping: float,
+    adaptive_damping_enabled: bool,
+    min_damping: float,
+    max_damping: float,
+) -> float:
+    clipped_base = float(np.clip(base_damping, min_damping, max_damping))
+    if not adaptive_damping_enabled or len(history) < 2:
+        return clipped_base
+
+    current = history[-1]
+    previous = history[-2]
+    current_norm = _weighted_spin_density_norm(
+        current.residual_up,
+        current.residual_down,
+        grid_geometry=grid_geometry,
+    )
+    previous_norm = _weighted_spin_density_norm(
+        previous.residual_up,
+        previous.residual_down,
+        grid_geometry=grid_geometry,
+    )
+    if not np.isfinite(current_norm) or not np.isfinite(previous_norm) or previous_norm <= 1.0e-16:
+        return clipped_base
+
+    residual_ratio = current_norm / previous_norm
+    if residual_ratio > 1.05:
+        return float(min_damping)
+    if residual_ratio > 0.99:
+        return float(np.clip(0.5 * (clipped_base + min_damping), min_damping, max_damping))
+    if residual_ratio < 0.90:
+        return float(max_damping)
+    return clipped_base
+
+
 def _apply_monitor_grid_density_diis(
     history: tuple[MonitorGridDiisHistoryEntry, ...],
     *,
@@ -1018,23 +1183,61 @@ def _apply_monitor_grid_density_anderson(
     regularization: float,
     damping: float,
     step_clip_factor: float | None,
-) -> tuple[np.ndarray, np.ndarray] | None:
+    adaptive_damping_enabled: bool,
+    min_damping: float,
+    max_damping: float,
+    acceptance_residual_ratio_threshold: float,
+    collinearity_cosine_threshold: float,
+) -> MonitorGridAndersonApplyResult:
     history_length = len(history)
     if history_length < 2:
-        return None
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=float(damping),
+            filtered_history_length=history_length,
+            projected_residual_ratio=None,
+        )
     if not (0.0 < damping <= 1.0):
-        return None
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=float(damping),
+            filtered_history_length=history_length,
+            projected_residual_ratio=None,
+        )
 
     current = history[-1]
-    difference_count = history_length - 1
+    filtered_secants, filtered_history_length = _filter_monitor_grid_anderson_secants(
+        history,
+        grid_geometry=grid_geometry,
+        collinearity_cosine_threshold=collinearity_cosine_threshold,
+    )
+    difference_count = len(filtered_secants)
+    effective_damping = _select_monitor_grid_anderson_damping(
+        history,
+        grid_geometry=grid_geometry,
+        base_damping=damping,
+        adaptive_damping_enabled=adaptive_damping_enabled,
+        min_damping=min_damping,
+        max_damping=max_damping,
+    )
+    if difference_count < 1:
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=effective_damping,
+            filtered_history_length=filtered_history_length,
+            projected_residual_ratio=None,
+        )
     gram = np.empty((difference_count, difference_count), dtype=np.float64)
     rhs = np.empty(difference_count, dtype=np.float64)
 
     for row_index in range(difference_count):
-        row_previous = history[row_index]
-        row_next = history[row_index + 1]
-        delta_row_up = row_next.residual_up - row_previous.residual_up
-        delta_row_down = row_next.residual_down - row_previous.residual_down
+        _, _, delta_row_up, delta_row_down = filtered_secants[row_index]
         rhs[row_index] = _weighted_spin_density_dot(
             delta_row_up,
             delta_row_down,
@@ -1043,13 +1246,12 @@ def _apply_monitor_grid_density_anderson(
             grid_geometry=grid_geometry,
         )
         for column_index in range(difference_count):
-            column_previous = history[column_index]
-            column_next = history[column_index + 1]
+            _, _, delta_column_up, delta_column_down = filtered_secants[column_index]
             gram[row_index, column_index] = _weighted_spin_density_dot(
                 delta_row_up,
                 delta_row_down,
-                column_next.residual_up - column_previous.residual_up,
-                column_next.residual_down - column_previous.residual_down,
+                delta_column_up,
+                delta_column_down,
                 grid_geometry=grid_geometry,
             )
 
@@ -1061,59 +1263,115 @@ def _apply_monitor_grid_density_anderson(
     try:
         coefficients = np.linalg.solve(gram, rhs)
     except np.linalg.LinAlgError:
-        return None
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=effective_damping,
+            filtered_history_length=filtered_history_length,
+            projected_residual_ratio=None,
+        )
     if not np.all(np.isfinite(coefficients)):
-        return None
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=effective_damping,
+            filtered_history_length=filtered_history_length,
+            projected_residual_ratio=None,
+        )
     if float(np.max(np.abs(coefficients))) > 50.0:
-        return None
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=effective_damping,
+            filtered_history_length=filtered_history_length,
+            projected_residual_ratio=None,
+        )
 
     rho_up_candidate = np.asarray(current.mixed_rho_up, dtype=np.float64).copy()
     rho_down_candidate = np.asarray(current.mixed_rho_down, dtype=np.float64).copy()
-    for coefficient, previous, nxt in zip(
-        coefficients,
-        history[:-1],
-        history[1:],
-        strict=True,
-    ):
-        rho_up_candidate -= float(coefficient) * (
-            np.asarray(nxt.mixed_rho_up, dtype=np.float64)
-            - np.asarray(previous.mixed_rho_up, dtype=np.float64)
-        )
-        rho_down_candidate -= float(coefficient) * (
-            np.asarray(nxt.mixed_rho_down, dtype=np.float64)
-            - np.asarray(previous.mixed_rho_down, dtype=np.float64)
-        )
+    projected_residual_up = np.asarray(current.residual_up, dtype=np.float64).copy()
+    projected_residual_down = np.asarray(current.residual_down, dtype=np.float64).copy()
+    for coefficient, (
+        delta_mixed_up,
+        delta_mixed_down,
+        delta_residual_up,
+        delta_residual_down,
+    ) in zip(coefficients, filtered_secants, strict=True):
+        rho_up_candidate -= float(coefficient) * delta_mixed_up
+        rho_down_candidate -= float(coefficient) * delta_mixed_down
+        projected_residual_up -= float(coefficient) * delta_residual_up
+        projected_residual_down -= float(coefficient) * delta_residual_down
 
     rho_up_candidate = (
-        (1.0 - damping) * current.mixed_rho_up + damping * rho_up_candidate
+        (1.0 - effective_damping) * current.mixed_rho_up
+        + effective_damping * rho_up_candidate
     )
     rho_down_candidate = (
-        (1.0 - damping) * current.mixed_rho_down + damping * rho_down_candidate
+        (1.0 - effective_damping) * current.mixed_rho_down
+        + effective_damping * rho_down_candidate
     )
+    projected_residual_up = (
+        (1.0 - effective_damping) * current.residual_up
+        + effective_damping * projected_residual_up
+    )
+    projected_residual_down = (
+        (1.0 - effective_damping) * current.residual_down
+        + effective_damping * projected_residual_down
+    )
+
+    current_residual_norm = _weighted_spin_density_norm(
+        current.residual_up,
+        current.residual_down,
+        grid_geometry=grid_geometry,
+    )
+    projected_residual_norm = _weighted_spin_density_norm(
+        projected_residual_up,
+        projected_residual_down,
+        grid_geometry=grid_geometry,
+    )
+    projected_residual_ratio = (
+        0.0
+        if current_residual_norm <= 1.0e-16
+        else float(projected_residual_norm / current_residual_norm)
+    )
+    if (
+        not np.isfinite(projected_residual_ratio)
+        or projected_residual_ratio > acceptance_residual_ratio_threshold
+    ):
+        return MonitorGridAndersonApplyResult(
+            mixed_rho_up=None,
+            mixed_rho_down=None,
+            accepted=False,
+            effective_damping=effective_damping,
+            filtered_history_length=filtered_history_length,
+            projected_residual_ratio=projected_residual_ratio,
+        )
 
     if step_clip_factor is not None:
         clip_factor = float(step_clip_factor)
         if not np.isfinite(clip_factor) or clip_factor <= 0.0:
-            return None
+            return MonitorGridAndersonApplyResult(
+                mixed_rho_up=None,
+                mixed_rho_down=None,
+                accepted=False,
+                effective_damping=effective_damping,
+                filtered_history_length=filtered_history_length,
+                projected_residual_ratio=projected_residual_ratio,
+            )
         step_up = np.asarray(rho_up_candidate - current.mixed_rho_up, dtype=np.float64)
         step_down = np.asarray(rho_down_candidate - current.mixed_rho_down, dtype=np.float64)
-        step_norm = np.sqrt(
-            _weighted_spin_density_dot(
-                step_up,
-                step_down,
-                step_up,
-                step_down,
-                grid_geometry=grid_geometry,
-            )
+        step_norm = _weighted_spin_density_norm(
+            step_up,
+            step_down,
+            grid_geometry=grid_geometry,
         )
-        residual_norm = np.sqrt(
-            _weighted_spin_density_dot(
-                current.residual_up,
-                current.residual_down,
-                current.residual_up,
-                current.residual_down,
-                grid_geometry=grid_geometry,
-            )
+        residual_norm = _weighted_spin_density_norm(
+            current.residual_up,
+            current.residual_down,
+            grid_geometry=grid_geometry,
         )
         max_step_norm = clip_factor * max(float(residual_norm), 1.0e-16)
         if step_norm > max_step_norm:
@@ -1124,20 +1382,46 @@ def _apply_monitor_grid_density_anderson(
     if n_alpha > 0:
         rho_up_candidate = np.maximum(rho_up_candidate, 0.0)
         if float(integrate_field(rho_up_candidate, grid_geometry=grid_geometry)) <= 0.0:
-            return None
+            return MonitorGridAndersonApplyResult(
+                mixed_rho_up=None,
+                mixed_rho_down=None,
+                accepted=False,
+                effective_damping=effective_damping,
+                filtered_history_length=filtered_history_length,
+                projected_residual_ratio=projected_residual_ratio,
+            )
     else:
         rho_up_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
 
     if n_beta > 0:
         rho_down_candidate = np.maximum(rho_down_candidate, 0.0)
         if float(integrate_field(rho_down_candidate, grid_geometry=grid_geometry)) <= 0.0:
-            return None
+            return MonitorGridAndersonApplyResult(
+                mixed_rho_up=None,
+                mixed_rho_down=None,
+                accepted=False,
+                effective_damping=effective_damping,
+                filtered_history_length=filtered_history_length,
+                projected_residual_ratio=projected_residual_ratio,
+            )
     else:
         rho_down_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
 
-    return (
-        _renormalize_density(rho_up_candidate, n_alpha, grid_geometry=grid_geometry),
-        _renormalize_density(rho_down_candidate, n_beta, grid_geometry=grid_geometry),
+    return MonitorGridAndersonApplyResult(
+        mixed_rho_up=_renormalize_density(
+            rho_up_candidate,
+            n_alpha,
+            grid_geometry=grid_geometry,
+        ),
+        mixed_rho_down=_renormalize_density(
+            rho_down_candidate,
+            n_beta,
+            grid_geometry=grid_geometry,
+        ),
+        accepted=True,
+        effective_damping=effective_damping,
+        filtered_history_length=filtered_history_length,
+        projected_residual_ratio=projected_residual_ratio,
     )
 
 
@@ -1789,6 +2073,11 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_step_clip_factor: float | None = None,
     anderson_reset_on_growth: bool = False,
     anderson_reset_growth_factor: float = 1.10,
+    anderson_adaptive_damping_enabled: bool = False,
+    anderson_min_damping: float = 0.35,
+    anderson_max_damping: float = 0.75,
+    anderson_acceptance_residual_ratio_threshold: float = 1.02,
+    anderson_collinearity_cosine_threshold: float = 0.995,
     enable_broyden: bool = False,
     broyden_warmup_iterations: int = 3,
     broyden_history_length: int = 4,
@@ -1842,6 +2131,18 @@ def run_h2_monitor_grid_scf_dry_run(
         )
     if anderson_reset_growth_factor < 1.0:
         raise ValueError("anderson_reset_growth_factor must be >= 1.")
+    if not (0.0 < anderson_min_damping <= anderson_max_damping <= 1.0):
+        raise ValueError(
+            "Anderson damping bounds must satisfy 0 < min <= max <= 1."
+        )
+    if anderson_acceptance_residual_ratio_threshold < 0.0:
+        raise ValueError(
+            "anderson_acceptance_residual_ratio_threshold must be non-negative."
+        )
+    if not (0.0 <= anderson_collinearity_cosine_threshold < 1.0):
+        raise ValueError(
+            "anderson_collinearity_cosine_threshold must satisfy 0 <= value < 1."
+        )
     if broyden_warmup_iterations < 0:
         raise ValueError("broyden_warmup_iterations must be non-negative.")
     if broyden_history_length < 2:
@@ -1926,8 +2227,12 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_history: list[MonitorGridAndersonHistoryEntry] = []
     anderson_used_iterations: list[int] = []
     anderson_history_sizes: list[int] = []
+    anderson_filtered_history_sizes: list[int] = []
     anderson_fallback_iterations: list[int] = []
+    anderson_rejected_iterations: list[int] = []
     anderson_reset_iterations: list[int] = []
+    anderson_effective_damping_history: list[float] = []
+    anderson_projected_residual_ratio_history: list[float | None] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -2458,6 +2763,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     diis_fallback_iterations.append(iteration)
             diis_history_sizes.append(len(diis_history))
             anderson_history_sizes.append(0)
+            anderson_filtered_history_sizes.append(0)
             broyden_history_sizes.append(0)
         elif enable_anderson:
             anderson_history.append(
@@ -2509,12 +2815,32 @@ def run_h2_monitor_grid_scf_dry_run(
                     regularization=anderson_regularization,
                     damping=anderson_damping,
                     step_clip_factor=anderson_step_clip_factor,
+                    adaptive_damping_enabled=anderson_adaptive_damping_enabled,
+                    min_damping=anderson_min_damping,
+                    max_damping=anderson_max_damping,
+                    acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
+                    collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
                 )
-                if anderson_candidate is not None:
-                    rho_up_mixed, rho_down_mixed = anderson_candidate
+                anderson_filtered_history_sizes.append(anderson_candidate.filtered_history_length)
+                anderson_effective_damping_history.append(anderson_candidate.effective_damping)
+                anderson_projected_residual_ratio_history.append(
+                    anderson_candidate.projected_residual_ratio
+                )
+                if (
+                    anderson_candidate.accepted
+                    and anderson_candidate.mixed_rho_up is not None
+                    and anderson_candidate.mixed_rho_down is not None
+                ):
+                    rho_up_mixed = anderson_candidate.mixed_rho_up
+                    rho_down_mixed = anderson_candidate.mixed_rho_down
                     anderson_used_iterations.append(iteration)
                 else:
-                    anderson_fallback_iterations.append(iteration)
+                    if anderson_candidate.projected_residual_ratio is None:
+                        anderson_fallback_iterations.append(iteration)
+                    else:
+                        anderson_rejected_iterations.append(iteration)
+            else:
+                anderson_filtered_history_sizes.append(len(anderson_history))
             anderson_history_sizes.append(len(anderson_history))
             diis_history_sizes.append(0)
             broyden_history_sizes.append(0)
@@ -2547,9 +2873,11 @@ def run_h2_monitor_grid_scf_dry_run(
             broyden_history_sizes.append(len(broyden_history))
             diis_history_sizes.append(0)
             anderson_history_sizes.append(0)
+            anderson_filtered_history_sizes.append(0)
         else:
             diis_history_sizes.append(0)
             anderson_history_sizes.append(0)
+            anderson_filtered_history_sizes.append(0)
             broyden_history_sizes.append(0)
 
         history.append(
@@ -2760,6 +3088,11 @@ def run_h2_monitor_grid_scf_dry_run(
             anderson_step_clip_factor=anderson_step_clip_factor,
             anderson_reset_on_growth=anderson_reset_on_growth,
             anderson_reset_growth_factor=anderson_reset_growth_factor,
+            anderson_adaptive_damping_enabled=anderson_adaptive_damping_enabled,
+            anderson_min_damping=anderson_min_damping,
+            anderson_max_damping=anderson_max_damping,
+            anderson_acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
+            anderson_collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
             broyden_enabled=enable_broyden,
             broyden_warmup_iterations=broyden_warmup_iterations,
             broyden_history_length=broyden_history_length,
@@ -2795,11 +3128,25 @@ def run_h2_monitor_grid_scf_dry_run(
         ),
         anderson_reset_on_growth=bool(anderson_reset_on_growth),
         anderson_reset_growth_factor=float(anderson_reset_growth_factor),
+        anderson_adaptive_damping_enabled=bool(anderson_adaptive_damping_enabled),
+        anderson_min_damping=float(anderson_min_damping),
+        anderson_max_damping=float(anderson_max_damping),
+        anderson_acceptance_residual_ratio_threshold=float(anderson_acceptance_residual_ratio_threshold),
+        anderson_collinearity_cosine_threshold=float(anderson_collinearity_cosine_threshold),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         anderson_used_iterations=tuple(anderson_used_iterations),
         anderson_history_sizes=tuple(anderson_history_sizes),
+        anderson_filtered_history_sizes=tuple(anderson_filtered_history_sizes),
         anderson_fallback_iterations=tuple(anderson_fallback_iterations),
+        anderson_rejected_iterations=tuple(anderson_rejected_iterations),
         anderson_reset_iterations=tuple(anderson_reset_iterations),
+        anderson_effective_damping_history=tuple(
+            float(value) for value in anderson_effective_damping_history
+        ),
+        anderson_projected_residual_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in anderson_projected_residual_ratio_history
+        ),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),

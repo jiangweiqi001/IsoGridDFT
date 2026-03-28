@@ -1,4 +1,4 @@
-"""Formal singlet-only Anderson adequacy audit on the frozen JAX A-grid mainline."""
+"""Productionish singlet-only Anderson audit on the frozen JAX A-grid mainline."""
 
 from __future__ import annotations
 
@@ -26,9 +26,17 @@ _SINGLET_MAINLINE_ANDERSON_WARMUP = 3
 _SINGLET_MAINLINE_ANDERSON_HISTORY = 4
 _SINGLET_MAINLINE_ANDERSON_REGULARIZATION = 1.0e-8
 _SINGLET_MAINLINE_ANDERSON_DAMPING = 0.5
-_SINGLET_MAINLINE_ANDERSON_EXTENDED_STEP_CLIP = 1.0
-_SINGLET_MAINLINE_ANDERSON_EXTENDED_RESET_ON_GROWTH = True
-_SINGLET_MAINLINE_ANDERSON_EXTENDED_RESET_GROWTH_FACTOR = 1.05
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY = 6
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION = 1.0e-8
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING = 0.55
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP = 1.0
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH = True
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR = 1.05
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING = True
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING = 0.35
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING = 0.75
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO = 1.02
+_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY = 0.995
 _TAIL_SUMMARY_LENGTH = 5
 
 
@@ -102,6 +110,11 @@ class H2JaxSingletMainlineParameterSummary:
     anderson_step_clip_factor: float | None
     anderson_reset_on_growth: bool
     anderson_reset_growth_factor: float
+    anderson_adaptive_damping_enabled: bool
+    anderson_min_damping: float
+    anderson_max_damping: float
+    anderson_acceptance_residual_ratio_threshold: float
+    anderson_collinearity_cosine_threshold: float
     anderson_residual_definition: str
 
 
@@ -124,6 +137,11 @@ class H2JaxSingletMainlineRouteResult:
     formal_mixer_step_clip_factor: float | None
     formal_mixer_reset_on_growth: bool
     formal_mixer_reset_growth_factor: float | None
+    formal_mixer_adaptive_damping_enabled: bool
+    formal_mixer_min_damping: float | None
+    formal_mixer_max_damping: float | None
+    formal_mixer_acceptance_residual_ratio_threshold: float | None
+    formal_mixer_collinearity_cosine_threshold: float | None
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -139,14 +157,18 @@ class H2JaxSingletMainlineRouteResult:
     diis_fallback_iterations: tuple[int, ...]
     anderson_used_iterations: tuple[int, ...]
     anderson_fallback_iterations: tuple[int, ...]
+    anderson_rejected_iterations: tuple[int, ...]
     anderson_reset_iterations: tuple[int, ...]
+    anderson_filtered_history_sizes: tuple[int, ...]
+    anderson_effective_damping_history: tuple[float, ...]
+    anderson_projected_residual_ratio_history: tuple[float | None, ...]
     final_energy_components: SinglePointEnergyComponents
     note: str
 
 
 @dataclass(frozen=True)
 class H2JaxSingletMainlineAuditResult:
-    """Formal singlet Anderson adequacy audit for the frozen JAX A-grid mainline."""
+    """Productionish singlet Anderson audit for the frozen JAX A-grid mainline."""
 
     path_label: str
     spin_state_label: str
@@ -154,7 +176,7 @@ class H2JaxSingletMainlineAuditResult:
     baseline_linear_route: H2JaxSingletMainlineRouteResult
     diis_route: H2JaxSingletMainlineRouteResult
     anderson_baseline_route: H2JaxSingletMainlineRouteResult
-    anderson_extended_route: H2JaxSingletMainlineRouteResult
+    anderson_productionish_route: H2JaxSingletMainlineRouteResult
     supplemental_anderson_route: H2JaxSingletMainlineRouteResult
     diagnosis: str
     note: str
@@ -346,6 +368,13 @@ def _build_parameter_summary(
         anderson_step_clip_factor=parameters.anderson_step_clip_factor,
         anderson_reset_on_growth=parameters.anderson_reset_on_growth,
         anderson_reset_growth_factor=parameters.anderson_reset_growth_factor,
+        anderson_adaptive_damping_enabled=parameters.anderson_adaptive_damping_enabled,
+        anderson_min_damping=parameters.anderson_min_damping,
+        anderson_max_damping=parameters.anderson_max_damping,
+        anderson_acceptance_residual_ratio_threshold=(
+            parameters.anderson_acceptance_residual_ratio_threshold
+        ),
+        anderson_collinearity_cosine_threshold=parameters.anderson_collinearity_cosine_threshold,
         anderson_residual_definition=parameters.anderson_residual_definition,
     )
 
@@ -363,6 +392,11 @@ def _build_route_result(
     formal_mixer_step_clip_factor: float | None,
     formal_mixer_reset_on_growth: bool,
     formal_mixer_reset_growth_factor: float | None,
+    formal_mixer_adaptive_damping_enabled: bool,
+    formal_mixer_min_damping: float | None,
+    formal_mixer_max_damping: float | None,
+    formal_mixer_acceptance_residual_ratio_threshold: float | None,
+    formal_mixer_collinearity_cosine_threshold: float | None,
 ) -> H2JaxSingletMainlineRouteResult:
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
@@ -380,6 +414,11 @@ def _build_route_result(
         formal_mixer_step_clip_factor=formal_mixer_step_clip_factor,
         formal_mixer_reset_on_growth=formal_mixer_reset_on_growth,
         formal_mixer_reset_growth_factor=formal_mixer_reset_growth_factor,
+        formal_mixer_adaptive_damping_enabled=formal_mixer_adaptive_damping_enabled,
+        formal_mixer_min_damping=formal_mixer_min_damping,
+        formal_mixer_max_damping=formal_mixer_max_damping,
+        formal_mixer_acceptance_residual_ratio_threshold=formal_mixer_acceptance_residual_ratio_threshold,
+        formal_mixer_collinearity_cosine_threshold=formal_mixer_collinearity_cosine_threshold,
         converged=result.converged,
         iteration_count=result.iteration_count,
         final_total_energy_ha=float(result.energy.total),
@@ -414,7 +453,18 @@ def _build_route_result(
         diis_fallback_iterations=tuple(int(value) for value in result.diis_fallback_iterations),
         anderson_used_iterations=tuple(int(value) for value in result.anderson_used_iterations),
         anderson_fallback_iterations=tuple(int(value) for value in result.anderson_fallback_iterations),
+        anderson_rejected_iterations=tuple(int(value) for value in result.anderson_rejected_iterations),
         anderson_reset_iterations=tuple(int(value) for value in result.anderson_reset_iterations),
+        anderson_filtered_history_sizes=tuple(
+            int(value) for value in result.anderson_filtered_history_sizes
+        ),
+        anderson_effective_damping_history=tuple(
+            float(value) for value in result.anderson_effective_damping_history
+        ),
+        anderson_projected_residual_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in result.anderson_projected_residual_ratio_history
+        ),
         final_energy_components=result.energy,
         note=(
             "Frozen A-grid local-only mainline: use_jax_block_kernels=True, "
@@ -443,6 +493,11 @@ def _run_route(
     anderson_step_clip_factor: float | None = None,
     anderson_reset_on_growth: bool = False,
     anderson_reset_growth_factor: float = 1.10,
+    anderson_adaptive_damping_enabled: bool = False,
+    anderson_min_damping: float = 0.35,
+    anderson_max_damping: float = 0.75,
+    anderson_acceptance_residual_ratio_threshold: float = 1.02,
+    anderson_collinearity_cosine_threshold: float = 0.995,
 ) -> H2JaxSingletMainlineRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
         "singlet",
@@ -472,6 +527,11 @@ def _run_route(
         anderson_step_clip_factor=anderson_step_clip_factor,
         anderson_reset_on_growth=anderson_reset_on_growth,
         anderson_reset_growth_factor=anderson_reset_growth_factor,
+        anderson_adaptive_damping_enabled=anderson_adaptive_damping_enabled,
+        anderson_min_damping=anderson_min_damping,
+        anderson_max_damping=anderson_max_damping,
+        anderson_acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
+        anderson_collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
     )
     formal_mixer_history_length = None
     formal_mixer_regularization = None
@@ -479,6 +539,11 @@ def _run_route(
     formal_mixer_step_clip_factor = None
     formal_mixer_reset_on_growth = False
     formal_mixer_reset_growth_factor = None
+    formal_mixer_adaptive_damping_enabled = False
+    formal_mixer_min_damping = None
+    formal_mixer_max_damping = None
+    formal_mixer_acceptance_residual_ratio_threshold = None
+    formal_mixer_collinearity_cosine_threshold = None
     if mixer == "anderson":
         formal_mixer_history_length = int(anderson_history_length)
         formal_mixer_regularization = float(anderson_regularization)
@@ -488,6 +553,15 @@ def _run_route(
         )
         formal_mixer_reset_on_growth = bool(anderson_reset_on_growth)
         formal_mixer_reset_growth_factor = float(anderson_reset_growth_factor)
+        formal_mixer_adaptive_damping_enabled = bool(anderson_adaptive_damping_enabled)
+        formal_mixer_min_damping = float(anderson_min_damping)
+        formal_mixer_max_damping = float(anderson_max_damping)
+        formal_mixer_acceptance_residual_ratio_threshold = float(
+            anderson_acceptance_residual_ratio_threshold
+        )
+        formal_mixer_collinearity_cosine_threshold = float(
+            anderson_collinearity_cosine_threshold
+        )
     return _build_route_result(
         result,
         mixing=mixing,
@@ -500,6 +574,11 @@ def _run_route(
         formal_mixer_step_clip_factor=formal_mixer_step_clip_factor,
         formal_mixer_reset_on_growth=formal_mixer_reset_on_growth,
         formal_mixer_reset_growth_factor=formal_mixer_reset_growth_factor,
+        formal_mixer_adaptive_damping_enabled=formal_mixer_adaptive_damping_enabled,
+        formal_mixer_min_damping=formal_mixer_min_damping,
+        formal_mixer_max_damping=formal_mixer_max_damping,
+        formal_mixer_acceptance_residual_ratio_threshold=formal_mixer_acceptance_residual_ratio_threshold,
+        formal_mixer_collinearity_cosine_threshold=formal_mixer_collinearity_cosine_threshold,
     )
 
 
@@ -522,19 +601,19 @@ def _build_diagnosis(
     linear: H2JaxSingletMainlineRouteResult,
     diis: H2JaxSingletMainlineRouteResult,
     anderson_baseline: H2JaxSingletMainlineRouteResult,
-    anderson_extended: H2JaxSingletMainlineRouteResult,
+    anderson_productionish: H2JaxSingletMainlineRouteResult,
     supplemental_anderson: H2JaxSingletMainlineRouteResult,
 ) -> str:
-    if anderson_extended.converged:
+    if anderson_productionish.converged:
         return (
-            "The extended Anderson route converges within the 20-step main acceptance window. "
+            "The productionish Anderson route converges within the 20-step main acceptance window. "
             "That means the previous Anderson failure was not primarily a statement that the singlet "
             "fixed-point map is hopeless; the smaller baseline implementation simply was not mature enough."
         )
-    extended_beats_baseline = (
-        anderson_extended.final_density_residual is not None
+    productionish_beats_baseline = (
+        anderson_productionish.final_density_residual is not None
         and anderson_baseline.final_density_residual is not None
-        and anderson_extended.final_density_residual
+        and anderson_productionish.final_density_residual
         < anderson_baseline.final_density_residual - 1.0e-2
     )
     simple_residuals = tuple(
@@ -543,10 +622,10 @@ def _build_diagnosis(
         if value is not None
     )
     best_simple_residual = min(simple_residuals) if simple_residuals else None
-    extended_beats_simple_baselines = (
+    productionish_beats_simple_baselines = (
         best_simple_residual is not None
-        and anderson_extended.final_density_residual is not None
-        and anderson_extended.final_density_residual < best_simple_residual - 1.0e-2
+        and anderson_productionish.final_density_residual is not None
+        and anderson_productionish.final_density_residual < best_simple_residual - 1.0e-2
     )
     steady_supplement = (
         supplemental_anderson.behavior.average_tail_residual_ratio is not None
@@ -562,9 +641,9 @@ def _build_diagnosis(
             and supplemental_anderson.behavior.average_tail_residual_ratio >= 0.99
         )
     )
-    if extended_beats_baseline and extended_beats_simple_baselines and steady_supplement:
+    if productionish_beats_baseline and productionish_beats_simple_baselines and steady_supplement:
         return (
-            "The extended Anderson route does not quite converge in 20 steps, but it is materially better than the "
+            "The productionish Anderson route does not quite converge in 20 steps, but it is materially better than the "
             "current Anderson baseline and the simpler linear/DIIS references, while the longer 40-step supplement "
             "still shows genuine residual contraction. That supports the interpretation that the earlier Anderson "
             "prototype was still too immature, rather than proving the singlet map itself is fundamentally unsalvageable."
@@ -576,7 +655,7 @@ def _build_diagnosis(
             "more toward a hard singlet fixed-point map than toward a small remaining Anderson implementation gap."
         )
     return (
-        "The extended Anderson route changes the tail behavior only modestly and does not clearly beat the current "
+        "The productionish Anderson route changes the tail behavior only modestly and does not clearly beat the current "
         "Anderson baseline by enough to change the pass/fail conclusion. The longer supplement also does not deliver "
         "clean, decisive contraction to the acceptance threshold. That suggests the remaining obstacle is already at "
         "least partly the singlet fixed-point map itself, even if a fuller Anderson implementation could still help at the margins."
@@ -586,7 +665,7 @@ def _build_diagnosis(
 def run_h2_jax_singlet_mainline_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletMainlineAuditResult:
-    """Run the frozen H2 singlet Anderson adequacy audit."""
+    """Run the frozen H2 singlet productionish Anderson audit."""
 
     baseline_linear_route = _run_route(
         case=case,
@@ -611,20 +690,28 @@ def run_h2_jax_singlet_mainline_audit(
         solver_variant="anderson-baseline",
         enable_anderson=True,
     )
-    anderson_extended_route = _run_route(
+    anderson_productionish_route = _run_route(
         case=case,
         max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
         mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
         mixer="anderson",
-        solver_variant="anderson-extended",
+        solver_variant="anderson-productionish",
         enable_anderson=True,
-        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_EXTENDED_STEP_CLIP,
-        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_EXTENDED_RESET_ON_GROWTH,
-        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_EXTENDED_RESET_GROWTH_FACTOR,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
     )
     best_anderson_20 = _select_best_anderson_route(
         anderson_baseline_route,
-        anderson_extended_route,
+        anderson_productionish_route,
     )
     supplemental_anderson_route = _run_route(
         case=case,
@@ -663,22 +750,23 @@ def run_h2_jax_singlet_mainline_audit(
         baseline_linear_route=baseline_linear_route,
         diis_route=diis_route,
         anderson_baseline_route=anderson_baseline_route,
-        anderson_extended_route=anderson_extended_route,
+        anderson_productionish_route=anderson_productionish_route,
         supplemental_anderson_route=supplemental_anderson_route,
         diagnosis=_build_diagnosis(
             linear=baseline_linear_route,
             diis=diis_route,
             anderson_baseline=anderson_baseline_route,
-            anderson_extended=anderson_extended_route,
+            anderson_productionish=anderson_productionish_route,
             supplemental_anderson=supplemental_anderson_route,
         ),
         note=(
-            "Formal singlet-only Anderson adequacy audit on the frozen A-grid local-only mainline. The physical chain "
-            "is held fixed and only the singlet mixer behavior changes between linear-0p10, a minimal DIIS/Pulay-style "
-            "density mixer, the frozen Anderson baseline, and a slightly more mature Anderson route. The extended "
-            "Anderson keeps the same residual definition rho_out-rho_in and the same density-mixing target, but adds "
-            "very small engineering safeguards: step clipping, residual-growth-triggered restart, and a 40-step "
-            "supplemental view to distinguish implementation adequacy from a genuinely hard fixed-point map."
+            "Formal singlet-only productionish Anderson audit on the frozen A-grid local-only mainline. The physical "
+            "chain is held fixed and only the singlet mixer behavior changes between linear-0p10, a minimal "
+            "DIIS/Pulay-style density mixer, the frozen Anderson baseline, and a more productionish Anderson route. "
+            "The productionish Anderson keeps the same residual definition rho_out-rho_in and the same density-mixing "
+            "target, but adds same-family engineering safeguards: stronger history management, adaptive damping, "
+            "residual-based accept/reject, and residual-growth-triggered restart. A separate 40-step supplemental "
+            "view is recorded only to distinguish implementation adequacy from a genuinely hard fixed-point map."
         ),
     )
 
@@ -727,11 +815,26 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
             f"damping={route.formal_mixer_damping}, "
             f"step_clip={route.formal_mixer_step_clip_factor}, "
             f"reset_on_growth={route.formal_mixer_reset_on_growth}, "
-            f"reset_growth_factor={route.formal_mixer_reset_growth_factor}"
+            f"reset_growth_factor={route.formal_mixer_reset_growth_factor}, "
+            f"adaptive_damping={route.formal_mixer_adaptive_damping_enabled}, "
+            f"min_damping={route.formal_mixer_min_damping}, "
+            f"max_damping={route.formal_mixer_max_damping}, "
+            f"accept_ratio={route.formal_mixer_acceptance_residual_ratio_threshold}, "
+            f"collinearity={route.formal_mixer_collinearity_cosine_threshold}"
         )
         print(f"  anderson used iterations: {route.anderson_used_iterations}")
         print(f"  anderson fallback iterations: {route.anderson_fallback_iterations}")
+        print(f"  anderson rejected iterations: {route.anderson_rejected_iterations}")
         print(f"  anderson reset iterations: {route.anderson_reset_iterations}")
+        print(f"  anderson filtered history sizes: {route.anderson_filtered_history_sizes}")
+        print(
+            "  anderson effective damping history: "
+            f"{route.anderson_effective_damping_history}"
+        )
+        print(
+            "  anderson projected residual ratios: "
+            f"{route.anderson_projected_residual_ratio_history}"
+        )
     print(f"  tail energies [Ha]: {route.behavior.tail_energy_history_ha}")
     print(f"  tail residuals: {route.behavior.tail_density_residual_history}")
     print(f"  tail residual ratios: {route.behavior.tail_residual_ratios}")
@@ -741,7 +844,7 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
 def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResult) -> None:
     """Print the compact H2 singlet Anderson adequacy audit summary."""
 
-    print("IsoGridDFT H2 singlet Anderson adequacy audit")
+    print("IsoGridDFT H2 singlet productionish Anderson audit")
     print(f"note: {result.note}")
     print(
         "previous frozen-mainline baseline: "
@@ -752,7 +855,7 @@ def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResul
     _print_route(result.baseline_linear_route)
     _print_route(result.diis_route)
     _print_route(result.anderson_baseline_route)
-    _print_route(result.anderson_extended_route)
+    _print_route(result.anderson_productionish_route)
     _print_route(result.supplemental_anderson_route)
 
 
