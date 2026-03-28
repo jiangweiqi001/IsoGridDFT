@@ -184,6 +184,9 @@ class H2ScfDryRunParameterSummary:
     anderson_history_length: int
     anderson_regularization: float
     anderson_damping: float
+    anderson_step_clip_factor: float | None
+    anderson_reset_on_growth: bool
+    anderson_reset_growth_factor: float
     anderson_residual_definition: str
     broyden_enabled: bool
     broyden_warmup_iterations: int
@@ -267,10 +270,14 @@ class H2StaticLocalScfDryRunResult:
     anderson_history_length: int
     anderson_regularization: float
     anderson_damping: float
+    anderson_step_clip_factor: float | None
+    anderson_reset_on_growth: bool
+    anderson_reset_growth_factor: float
     anderson_residual_definition: str
     anderson_used_iterations: tuple[int, ...]
     anderson_history_sizes: tuple[int, ...]
     anderson_fallback_iterations: tuple[int, ...]
+    anderson_reset_iterations: tuple[int, ...]
     broyden_enabled: bool
     broyden_warmup_iterations: int
     broyden_history_length: int
@@ -763,6 +770,9 @@ def _monitor_grid_scf_parameter_summary(
     anderson_history_length: int,
     anderson_regularization: float,
     anderson_damping: float,
+    anderson_step_clip_factor: float | None,
+    anderson_reset_on_growth: bool,
+    anderson_reset_growth_factor: float,
     broyden_enabled: bool,
     broyden_warmup_iterations: int,
     broyden_history_length: int,
@@ -798,6 +808,13 @@ def _monitor_grid_scf_parameter_summary(
         anderson_history_length=int(anderson_history_length),
         anderson_regularization=float(anderson_regularization),
         anderson_damping=float(anderson_damping),
+        anderson_step_clip_factor=(
+            None
+            if anderson_step_clip_factor is None
+            else float(anderson_step_clip_factor)
+        ),
+        anderson_reset_on_growth=bool(anderson_reset_on_growth),
+        anderson_reset_growth_factor=float(anderson_reset_growth_factor),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         broyden_enabled=bool(broyden_enabled),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
@@ -1000,6 +1017,7 @@ def _apply_monitor_grid_density_anderson(
     n_beta: int,
     regularization: float,
     damping: float,
+    step_clip_factor: float | None,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     history_length = len(history)
     if history_length < 2:
@@ -1072,6 +1090,36 @@ def _apply_monitor_grid_density_anderson(
     rho_down_candidate = (
         (1.0 - damping) * current.mixed_rho_down + damping * rho_down_candidate
     )
+
+    if step_clip_factor is not None:
+        clip_factor = float(step_clip_factor)
+        if not np.isfinite(clip_factor) or clip_factor <= 0.0:
+            return None
+        step_up = np.asarray(rho_up_candidate - current.mixed_rho_up, dtype=np.float64)
+        step_down = np.asarray(rho_down_candidate - current.mixed_rho_down, dtype=np.float64)
+        step_norm = np.sqrt(
+            _weighted_spin_density_dot(
+                step_up,
+                step_down,
+                step_up,
+                step_down,
+                grid_geometry=grid_geometry,
+            )
+        )
+        residual_norm = np.sqrt(
+            _weighted_spin_density_dot(
+                current.residual_up,
+                current.residual_down,
+                current.residual_up,
+                current.residual_down,
+                grid_geometry=grid_geometry,
+            )
+        )
+        max_step_norm = clip_factor * max(float(residual_norm), 1.0e-16)
+        if step_norm > max_step_norm:
+            scale = max_step_norm / max(float(step_norm), 1.0e-16)
+            rho_up_candidate = current.mixed_rho_up + scale * step_up
+            rho_down_candidate = current.mixed_rho_down + scale * step_down
 
     if n_alpha > 0:
         rho_up_candidate = np.maximum(rho_up_candidate, 0.0)
@@ -1738,6 +1786,9 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_history_length: int = 4,
     anderson_regularization: float = 1.0e-8,
     anderson_damping: float = 0.5,
+    anderson_step_clip_factor: float | None = None,
+    anderson_reset_on_growth: bool = False,
+    anderson_reset_growth_factor: float = 1.10,
     enable_broyden: bool = False,
     broyden_warmup_iterations: int = 3,
     broyden_history_length: int = 4,
@@ -1779,6 +1830,18 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("anderson_regularization must be non-negative.")
     if not (0.0 < anderson_damping <= 1.0):
         raise ValueError("anderson_damping must satisfy 0 < anderson_damping <= 1.")
+    if (
+        anderson_step_clip_factor is not None
+        and (
+            not np.isfinite(anderson_step_clip_factor)
+            or anderson_step_clip_factor <= 0.0
+        )
+    ):
+        raise ValueError(
+            "anderson_step_clip_factor must be positive when provided."
+        )
+    if anderson_reset_growth_factor < 1.0:
+        raise ValueError("anderson_reset_growth_factor must be >= 1.")
     if broyden_warmup_iterations < 0:
         raise ValueError("broyden_warmup_iterations must be non-negative.")
     if broyden_history_length < 2:
@@ -1864,6 +1927,7 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_used_iterations: list[int] = []
     anderson_history_sizes: list[int] = []
     anderson_fallback_iterations: list[int] = []
+    anderson_reset_iterations: list[int] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -2406,6 +2470,36 @@ def run_h2_monitor_grid_scf_dry_run(
             )
             if len(anderson_history) > anderson_history_length:
                 anderson_history = anderson_history[-anderson_history_length:]
+            if anderson_reset_on_growth and len(anderson_history) >= 2:
+                previous_entry = anderson_history[-2]
+                previous_residual_norm = np.sqrt(
+                    _weighted_spin_density_dot(
+                        previous_entry.residual_up,
+                        previous_entry.residual_down,
+                        previous_entry.residual_up,
+                        previous_entry.residual_down,
+                        grid_geometry=grid_geometry,
+                    )
+                )
+                current_residual_norm = np.sqrt(
+                    _weighted_spin_density_dot(
+                        residual_up,
+                        residual_down,
+                        residual_up,
+                        residual_down,
+                        grid_geometry=grid_geometry,
+                    )
+                )
+                if (
+                    not np.isfinite(current_residual_norm)
+                    or (
+                        previous_residual_norm > 0.0
+                        and current_residual_norm
+                        > float(anderson_reset_growth_factor) * previous_residual_norm
+                    )
+                ):
+                    anderson_history = anderson_history[-1:]
+                    anderson_reset_iterations.append(iteration)
             if iteration >= anderson_warmup_iterations and len(anderson_history) >= 2:
                 anderson_candidate = _apply_monitor_grid_density_anderson(
                     tuple(anderson_history),
@@ -2414,6 +2508,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     n_beta=occupations.n_beta,
                     regularization=anderson_regularization,
                     damping=anderson_damping,
+                    step_clip_factor=anderson_step_clip_factor,
                 )
                 if anderson_candidate is not None:
                     rho_up_mixed, rho_down_mixed = anderson_candidate
@@ -2662,6 +2757,9 @@ def run_h2_monitor_grid_scf_dry_run(
             anderson_history_length=anderson_history_length,
             anderson_regularization=anderson_regularization,
             anderson_damping=anderson_damping,
+            anderson_step_clip_factor=anderson_step_clip_factor,
+            anderson_reset_on_growth=anderson_reset_on_growth,
+            anderson_reset_growth_factor=anderson_reset_growth_factor,
             broyden_enabled=enable_broyden,
             broyden_warmup_iterations=broyden_warmup_iterations,
             broyden_history_length=broyden_history_length,
@@ -2690,10 +2788,18 @@ def run_h2_monitor_grid_scf_dry_run(
         anderson_history_length=int(anderson_history_length),
         anderson_regularization=float(anderson_regularization),
         anderson_damping=float(anderson_damping),
+        anderson_step_clip_factor=(
+            None
+            if anderson_step_clip_factor is None
+            else float(anderson_step_clip_factor)
+        ),
+        anderson_reset_on_growth=bool(anderson_reset_on_growth),
+        anderson_reset_growth_factor=float(anderson_reset_growth_factor),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         anderson_used_iterations=tuple(anderson_used_iterations),
         anderson_history_sizes=tuple(anderson_history_sizes),
         anderson_fallback_iterations=tuple(anderson_fallback_iterations),
+        anderson_reset_iterations=tuple(anderson_reset_iterations),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),

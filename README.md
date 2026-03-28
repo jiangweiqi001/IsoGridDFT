@@ -65,7 +65,7 @@ That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run 
 
 The current triplet-only JAX Hartree follow-up is now even narrower: the stronger line preconditioner already shows that reducing Hartree iteration count is possible, so the present focus is on the engineering cost of `line` preconditioner apply itself, especially tridiagonal solves and axis-reordering overhead, before any broader solver redesign is considered.
 
-In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically, with the immediate question narrowed to whether a formal singlet-only different-mixer prototype, including Anderson and a small Broyden-like route, can stabilize the fixed-point map under the frozen JAX Hartree mainline. Nonlocal still remains absent from that path.
+In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically, with the immediate question now narrowed to whether a slightly more mature Anderson path can stabilize the fixed-point map under the frozen JAX Hartree mainline, or whether that singlet map is still intrinsically too hard for these small formal mixers. Nonlocal still remains absent from that path.
 
 What is present today:
 
