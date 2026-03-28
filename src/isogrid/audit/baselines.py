@@ -2343,6 +2343,8 @@ class H2JaxSingletMainlineRouteBaseline:
     path_type: str
     kinetic_version: str
     mixing: float
+    mixer: str
+    solver_variant: str
     hartree_backend: str
     cg_impl: str
     cg_preconditioner: str
@@ -2365,6 +2367,8 @@ class H2JaxSingletMainlineRouteBaseline:
     tail_energy_history_ha: tuple[float, ...]
     tail_density_residual_history: tuple[float, ...]
     tail_energy_change_history_ha: tuple[float | None, ...]
+    diis_used_iterations: tuple[int, ...]
+    diis_fallback_iterations: tuple[int, ...]
     eigensolver_wall_time_seconds: float
     static_local_prepare_wall_time_seconds: float
     hartree_solve_wall_time_seconds: float
@@ -2375,7 +2379,7 @@ class H2JaxSingletMainlineRouteBaseline:
 
 @dataclass(frozen=True)
 class H2JaxSingletMainlineRegressionBaseline:
-    """Recorded H2 singlet mixing/fixed-point audit on the frozen JAX A-grid mainline."""
+    """Recorded H2 singlet formal-mixer audit on the frozen JAX A-grid mainline."""
 
     benchmark_name: str
     monitor_shape: tuple[int, int, int]
@@ -2385,8 +2389,8 @@ class H2JaxSingletMainlineRegressionBaseline:
     correction_strength: float
     interpolation_neighbors: int
     kinetic_version: str
-    mixing_0p20_route: H2JaxSingletMainlineRouteBaseline
-    mixing_0p10_route: H2JaxSingletMainlineRouteBaseline
+    baseline_linear_route: H2JaxSingletMainlineRouteBaseline
+    formal_mixer_route: H2JaxSingletMainlineRouteBaseline
     diagnosis: str
     note: str
 
@@ -2747,65 +2751,14 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
     correction_strength=1.30,
     interpolation_neighbors=8,
     kinetic_version="trial_fix",
-    mixing_0p20_route=H2JaxSingletMainlineRouteBaseline(
-        path_label="jax-singlet-mainline-mixing-0.20",
-        spin_state_label="singlet",
-        path_type="monitor_a_grid_plus_patch",
-        kinetic_version="trial_fix",
-        mixing=0.20,
-        hartree_backend="jax",
-        cg_impl="jax_loop",
-        cg_preconditioner="none",
-        line_preconditioner_impl="baseline",
-        use_jax_hartree_cached_operator=True,
-        use_jax_block_kernels=True,
-        use_step_local_static_local_reuse=True,
-        converged=False,
-        iteration_count=20,
-        final_total_energy_ha=-0.14071406839634493,
-        final_lowest_eigenvalue_ha=-0.4532886496946675,
-        final_density_residual=0.33699926132940194,
-        final_energy_change_ha=-0.010979984820802313,
-        total_wall_time_seconds=79.5749484409971,
-        average_iteration_wall_time_seconds=3.9787474220498553,
-        behavior_verdict="stable_not_converged",
-        detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.011657616248928637,
-        even_odd_residual_gap=0.0004857960105189574,
-        tail_energy_history_ha=(
-            -0.14186024682261134,
-            -0.1297582393476998,
-            -0.1416788019166968,
-            -0.1297340835755426,
-            -0.14071406839634493,
-        ),
-        tail_density_residual_history=(
-            0.3365335907333175,
-            0.33708427743865543,
-            0.3368439907926002,
-            0.33703131393904123,
-            0.33699926132940194,
-        ),
-        tail_energy_change_history_ha=(
-            -0.0122502137631616,
-            0.012102007474911525,
-            -0.011920562568996984,
-            0.011944718341154181,
-            -0.010979984820802313,
-        ),
-        eigensolver_wall_time_seconds=55.467895533016185,
-        static_local_prepare_wall_time_seconds=22.47578996300511,
-        hartree_solve_wall_time_seconds=12.304338665009942,
-        energy_evaluation_wall_time_seconds=12.145086676988751,
-        density_update_wall_time_seconds=0.14997887497884221,
-        bookkeeping_wall_time_seconds=12.085595481010387,
-    ),
-    mixing_0p10_route=H2JaxSingletMainlineRouteBaseline(
-        path_label="jax-singlet-mainline-mixing-0.10",
+    baseline_linear_route=H2JaxSingletMainlineRouteBaseline(
+        path_label="jax-singlet-mainline-linear-0p10",
         spin_state_label="singlet",
         path_type="monitor_a_grid_plus_patch",
         kinetic_version="trial_fix",
         mixing=0.10,
+        mixer="linear",
+        solver_variant="linear-0p10",
         hartree_backend="jax",
         cg_impl="jax_loop",
         cg_preconditioner="none",
@@ -2815,58 +2768,118 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.16145339669730918,
-        final_lowest_eigenvalue_ha=-0.39870225362475364,
-        final_density_residual=0.31087849887660385,
-        final_energy_change_ha=0.011961069163556326,
-        total_wall_time_seconds=92.68037707299663,
-        average_iteration_wall_time_seconds=4.634018853649832,
+        final_total_energy_ha=-0.16528953892368647,
+        final_lowest_eigenvalue_ha=-0.390792155623,
+        final_density_residual=0.30474358550842634,
+        final_energy_change_ha=-0.007992457048693558,
+        total_wall_time_seconds=86.907644,
+        average_iteration_wall_time_seconds=4.345382,
         behavior_verdict="stable_not_converged",
         detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.008514152631937666,
-        even_odd_residual_gap=0.0025214902880258405,
+        even_odd_energy_gap_ha=0.28920217080708527,
+        even_odd_residual_gap=0.05033162753032533,
         tail_energy_history_ha=(
-            -0.16607526801763728,
-            -0.17568121307734996,
-            -0.16343070805176485,
-            -0.1734144658608655,
-            -0.16145339669730918,
+            -0.19182331541227515,
+            -0.9505112085145168,
+            -0.16857932964598954,
+            -0.15729708187499292,
+            -0.16528953892368647,
         ),
         tail_density_residual_history=(
-            0.3105097630144345,
-            0.3061506239216604,
-            0.31071843049639614,
-            0.3072071611661085,
-            0.31087849887660385,
+            0.29443674898015154,
+            0.13970293907189052,
+            0.3021360818916043,
+            0.3182775772884656,
+            0.30474358550842634,
         ),
         tail_energy_change_history_ha=(
-            0.012610060529575806,
-            -0.009605945059712684,
-            0.012250505025585112,
-            -0.009983757809100657,
-            0.011961069163556326,
+            -0.045718969911361595,
+            -0.7586878931022416,
+            0.7819318788685272,
+            0.011282247770996623,
+            -0.007992457048693558,
         ),
-        eigensolver_wall_time_seconds=64.78543970402051,
-        static_local_prepare_wall_time_seconds=23.37576494499738,
-        hartree_solve_wall_time_seconds=12.668639904993586,
-        energy_evaluation_wall_time_seconds=12.730759537982522,
-        density_update_wall_time_seconds=0.16619059097138233,
-        bookkeeping_wall_time_seconds=14.352276549994247,
+        diis_used_iterations=(),
+        diis_fallback_iterations=(),
+        eigensolver_wall_time_seconds=60.277828,
+        static_local_prepare_wall_time_seconds=25.267727,
+        hartree_solve_wall_time_seconds=14.644196,
+        energy_evaluation_wall_time_seconds=13.593448,
+        density_update_wall_time_seconds=0.18325290601933375,
+        bookkeeping_wall_time_seconds=12.981001045031007,
+    ),
+    formal_mixer_route=H2JaxSingletMainlineRouteBaseline(
+        path_label="jax-singlet-mainline-diis-prototype",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        mixing=0.10,
+        mixer="diis",
+        solver_variant="diis-prototype",
+        hartree_backend="jax",
+        cg_impl="jax_loop",
+        cg_preconditioner="none",
+        line_preconditioner_impl="baseline",
+        use_jax_hartree_cached_operator=True,
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
+        converged=False,
+        iteration_count=20,
+        final_total_energy_ha=-0.16454618407695298,
+        final_lowest_eigenvalue_ha=-0.411809974792,
+        final_density_residual=0.3172317101240033,
+        final_energy_change_ha=-0.000139980113839977,
+        total_wall_time_seconds=87.952902,
+        average_iteration_wall_time_seconds=4.397645,
+        behavior_verdict="slow_monotone_or_damped",
+        detected_two_cycle=False,
+        even_odd_energy_gap_ha=0.0012925717226009992,
+        even_odd_residual_gap=0.004227291351055595,
+        tail_energy_history_ha=(
+            -0.1364668607830315,
+            -0.13856556969030287,
+            -0.17862917053867144,
+            -0.164406203963113,
+            -0.16454618407695298,
+        ),
+        tail_density_residual_history=(
+            0.32037213889168065,
+            0.31922467582388103,
+            0.2909293361386834,
+            0.30388129828435584,
+            0.3172317101240033,
+        ),
+        tail_energy_change_history_ha=(
+            0.06046993107857179,
+            -0.002098708907271374,
+            -0.040063600848368575,
+            0.014222966575558438,
+            -0.000139980113839977,
+        ),
+        diis_used_iterations=(3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 20),
+        diis_fallback_iterations=(6, 13, 19),
+        eigensolver_wall_time_seconds=63.484179,
+        static_local_prepare_wall_time_seconds=22.553148,
+        hartree_solve_wall_time_seconds=12.26046,
+        energy_evaluation_wall_time_seconds=12.452459,
+        density_update_wall_time_seconds=0.1624886129720835,
+        bookkeeping_wall_time_seconds=11.635451964000822,
     ),
     diagnosis=(
         "On the current frozen A-grid local-only mainline, the H2 singlet still does not converge "
-        "at either mixing=0.20 or mixing=0.10. The smaller mixing remains the more stable choice in "
-        "the specific fixed-point sense that it lowers the final residual from about 0.3370 to about "
-        "0.3109 and reduces the even/odd energy-gap diagnostic from about 1.17e-02 Ha to about "
-        "8.51e-03 Ha, but it still stalls far above the acceptance tolerances and still ends in a "
-        "stable-not-converged regime. The frozen mainline evidence therefore still supports the older "
-        "singlet stability diagnosis: the dominant remaining obstacle is singlet fixed-point "
-        "stability, not a missing Hartree/JAX backend link."
+        "under either the conservative linear baseline or the formal DIIS prototype. In this direct "
+        "formal-mixer comparison, DIIS does not clearly dominate linear mixing=0.10: it reaches a "
+        "more damped-looking tail and a smaller final energy jump, but the final density residual is "
+        "still worse, about 0.3172 versus 0.3047, and neither route reaches the SCF acceptance "
+        "tolerances in 20 steps. The singlet route also remains sensitive in its unconverged tail "
+        "behavior, which reinforces that the remaining obstacle is singlet fixed-point stability "
+        "itself, not a missing Hartree/JAX backend link."
     ),
     note=(
-        "Formal H2 singlet mixing/fixed-point baseline on the current frozen A-grid local-only "
-        "mainline. The Hartree/JAX mainline configuration is held fixed and only linear density "
-        "mixing is changed between 0.20 and 0.10. Nonlocal remains absent."
+        "Formal H2 singlet formal-mixer baseline on the current frozen A-grid local-only mainline. "
+        "The Hartree/JAX mainline configuration is held fixed and only the singlet mixer behavior is "
+        "changed between linear mixing=0.10 and a minimal DIIS/Pulay-style density mixer. Nonlocal "
+        "remains absent."
     ),
 )
 

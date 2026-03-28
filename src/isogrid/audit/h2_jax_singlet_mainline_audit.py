@@ -1,4 +1,4 @@
-"""Formal H2 singlet mixing/fixed-point audit on the frozen JAX A-grid mainline."""
+"""Formal H2 singlet formal-mixer audit on the frozen JAX A-grid mainline."""
 
 from __future__ import annotations
 
@@ -6,7 +6,8 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from isogrid.audit.baselines import H2_SCF_DRY_RUN_BASELINE
+from isogrid.audit.baselines import H2_DIIS_SCF_BASELINE
+from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 from isogrid.audit.baselines import H2_SINGLET_STABILITY_BASELINE
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
@@ -15,11 +16,13 @@ from isogrid.scf import SinglePointEnergyComponents
 from isogrid.scf import run_h2_monitor_grid_scf_dry_run
 
 _SINGLET_MAINLINE_MAX_ITERATIONS = 20
-_SINGLET_MAINLINE_MIXINGS = (0.20, 0.10)
+_SINGLET_MAINLINE_BASELINE_MIXING = 0.10
 _SINGLET_MAINLINE_DENSITY_TOLERANCE = 5.0e-3
 _SINGLET_MAINLINE_ENERGY_TOLERANCE = 5.0e-5
 _SINGLET_MAINLINE_EIGENSOLVER_TOLERANCE = 1.0e-3
 _SINGLET_MAINLINE_EIGENSOLVER_NCV = 20
+_SINGLET_MAINLINE_DIIS_WARMUP = 3
+_SINGLET_MAINLINE_DIIS_HISTORY = 4
 _TAIL_SUMMARY_LENGTH = 5
 
 
@@ -63,6 +66,8 @@ class H2JaxSingletMainlineParameterSummary:
     interpolation_neighbors: int
     kinetic_version: str
     mixing: float
+    mixer: str
+    solver_variant: str
     max_iterations: int
     density_tolerance: float
     energy_tolerance: float
@@ -75,6 +80,10 @@ class H2JaxSingletMainlineParameterSummary:
     jax_hartree_line_preconditioner_impl: str
     use_jax_block_kernels: bool
     use_step_local_static_local_reuse: bool
+    diis_enabled: bool
+    diis_warmup_iterations: int
+    diis_history_length: int
+    diis_residual_definition: str
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,8 @@ class H2JaxSingletMainlineRouteResult:
     kinetic_version: str
     includes_nonlocal: bool
     mixing: float
+    mixer: str
+    solver_variant: str
     converged: bool
     iteration_count: int
     final_total_energy_ha: float
@@ -98,19 +109,21 @@ class H2JaxSingletMainlineRouteResult:
     parameter_summary: H2JaxSingletMainlineParameterSummary
     timing_breakdown: H2JaxSingletMainlineTimingBreakdown
     behavior: H2JaxSingletMainlineBehavior
+    diis_used_iterations: tuple[int, ...]
+    diis_fallback_iterations: tuple[int, ...]
     final_energy_components: SinglePointEnergyComponents
     note: str
 
 
 @dataclass(frozen=True)
 class H2JaxSingletMainlineAuditResult:
-    """Mixing comparison audit for the frozen H2 singlet mainline."""
+    """Formal mixer comparison audit for the frozen H2 singlet mainline."""
 
     path_label: str
     spin_state_label: str
     path_type: str
-    mixing_0p20_route: H2JaxSingletMainlineRouteResult
-    mixing_0p10_route: H2JaxSingletMainlineRouteResult
+    baseline_linear_route: H2JaxSingletMainlineRouteResult
+    formal_mixer_route: H2JaxSingletMainlineRouteResult
     diagnosis: str
     note: str
 
@@ -224,6 +237,8 @@ def _build_parameter_summary(
     result: H2StaticLocalScfDryRunResult,
     *,
     mixing: float,
+    mixer: str,
+    solver_variant: str,
 ) -> H2JaxSingletMainlineParameterSummary:
     parameters = result.parameter_summary
     return H2JaxSingletMainlineParameterSummary(
@@ -237,6 +252,8 @@ def _build_parameter_summary(
         interpolation_neighbors=parameters.interpolation_neighbors,
         kinetic_version=parameters.kinetic_version,
         mixing=mixing,
+        mixer=mixer,
+        solver_variant=solver_variant,
         max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
         density_tolerance=_SINGLET_MAINLINE_DENSITY_TOLERANCE,
         energy_tolerance=_SINGLET_MAINLINE_ENERGY_TOLERANCE,
@@ -249,6 +266,10 @@ def _build_parameter_summary(
         jax_hartree_line_preconditioner_impl=parameters.jax_hartree_line_preconditioner_impl,
         use_jax_block_kernels=parameters.use_jax_block_kernels,
         use_step_local_static_local_reuse=parameters.use_step_local_static_local_reuse,
+        diis_enabled=parameters.diis_enabled,
+        diis_warmup_iterations=parameters.diis_warmup_iterations,
+        diis_history_length=parameters.diis_history_length,
+        diis_residual_definition=parameters.diis_residual_definition,
     )
 
 
@@ -256,14 +277,18 @@ def _build_route_result(
     result: H2StaticLocalScfDryRunResult,
     *,
     mixing: float,
+    mixer: str,
+    solver_variant: str,
 ) -> H2JaxSingletMainlineRouteResult:
     return H2JaxSingletMainlineRouteResult(
-        path_label=f"jax-singlet-mainline-mixing-{mixing:.2f}",
+        path_label=f"jax-singlet-mainline-{solver_variant}",
         spin_state_label=result.spin_state_label,
         path_type=result.path_type,
         kinetic_version=result.kinetic_version,
         includes_nonlocal=result.includes_nonlocal,
         mixing=mixing,
+        mixer=mixer,
+        solver_variant=solver_variant,
         converged=result.converged,
         iteration_count=result.iteration_count,
         final_total_energy_ha=float(result.energy.total),
@@ -278,7 +303,12 @@ def _build_route_result(
         ),
         total_wall_time_seconds=float(result.total_wall_time_seconds),
         average_iteration_wall_time_seconds=result.average_iteration_wall_time_seconds,
-        parameter_summary=_build_parameter_summary(result, mixing=mixing),
+        parameter_summary=_build_parameter_summary(
+            result,
+            mixing=mixing,
+            mixer=mixer,
+            solver_variant=solver_variant,
+        ),
         timing_breakdown=H2JaxSingletMainlineTimingBreakdown(
             eigensolver_wall_time_seconds=float(result.eigensolver_wall_time_seconds),
             static_local_prepare_wall_time_seconds=float(result.static_local_prepare_wall_time_seconds),
@@ -288,6 +318,8 @@ def _build_route_result(
             bookkeeping_wall_time_seconds=float(result.bookkeeping_wall_time_seconds),
         ),
         behavior=_build_behavior(result, converged=bool(result.converged)),
+        diis_used_iterations=tuple(int(value) for value in result.diis_used_iterations),
+        diis_fallback_iterations=tuple(int(value) for value in result.diis_fallback_iterations),
         final_energy_components=result.energy,
         note=(
             "Frozen A-grid local-only mainline: use_jax_block_kernels=True, "
@@ -299,9 +331,14 @@ def _build_route_result(
 
 
 def _run_route(
-    mixing: float,
     *,
     case: BenchmarkCase,
+    mixing: float,
+    mixer: str,
+    solver_variant: str,
+    enable_diis: bool,
+    diis_warmup_iterations: int,
+    diis_history_length: int,
 ) -> H2JaxSingletMainlineRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
         "singlet",
@@ -320,40 +357,66 @@ def _run_route(
         jax_hartree_line_preconditioner_impl="baseline",
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
+        enable_diis=enable_diis,
+        diis_warmup_iterations=diis_warmup_iterations,
+        diis_history_length=diis_history_length,
     )
-    return _build_route_result(result, mixing=mixing)
+    return _build_route_result(
+        result,
+        mixing=mixing,
+        mixer=mixer,
+        solver_variant=solver_variant,
+    )
 
 
 def run_h2_jax_singlet_mainline_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletMainlineAuditResult:
-    """Run the frozen H2 singlet mixing/fixed-point audit on the current A-grid mainline."""
+    """Run the frozen H2 singlet formal-mixer audit on the current A-grid mainline."""
 
-    route_0p20 = _run_route(0.20, case=case)
-    route_0p10 = _run_route(0.10, case=case)
+    baseline_linear_route = _run_route(
+        case=case,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="linear",
+        solver_variant="linear-0p10",
+        enable_diis=False,
+        diis_warmup_iterations=_SINGLET_MAINLINE_DIIS_WARMUP,
+        diis_history_length=_SINGLET_MAINLINE_DIIS_HISTORY,
+    )
+    formal_mixer_route = _run_route(
+        case=case,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="diis",
+        solver_variant="diis-prototype",
+        enable_diis=True,
+        diis_warmup_iterations=_SINGLET_MAINLINE_DIIS_WARMUP,
+        diis_history_length=_SINGLET_MAINLINE_DIIS_HISTORY,
+    )
     return H2JaxSingletMainlineAuditResult(
         path_label="jax-singlet-mainline",
         spin_state_label="singlet",
-        path_type=route_0p20.path_type,
-        mixing_0p20_route=route_0p20,
-        mixing_0p10_route=route_0p10,
+        path_type=baseline_linear_route.path_type,
+        baseline_linear_route=baseline_linear_route,
+        formal_mixer_route=formal_mixer_route,
         diagnosis=(
             "This audit isolates the singlet fixed-point question on the frozen JAX A-grid local-only "
-            "mainline by changing only linear density mixing. If mixing=0.10 still improves residual "
-            "and tail behavior relative to mixing=0.20 under the same Hartree/JAX mainline, then the "
-            "remaining obstacle is best read as singlet SCF stability rather than a backend defect in "
-            "the repaired triplet-proven local-only path."
+            "mainline by holding the full physical chain fixed and comparing only a conservative "
+            "linear baseline against a minimal but formal DIIS mixer. The DIIS residual is the "
+            "current density fixed-point residual rho_out-rho_in; the mixed object is the density "
+            "itself; the history length is 4 with a 3-step linear warmup. If DIIS still fails here, "
+            "the remaining singlet obstacle is not merely the absence of a standard mixer hook."
         ),
         note=(
-            "Mixing/fixed-point audit only. The frozen A-grid local-only mainline configuration is "
-            "held fixed except for mixing. Previous references remain the earlier 20-step dry-run "
-            "baseline and the smaller-mixing singlet stability baseline."
+            "Formal mixer audit only. The frozen A-grid local-only mainline configuration is held "
+            "fixed; only the singlet mixer behavior changes between linear mixing=0.10 and a minimal "
+            "DIIS/Pulay-style density mixer with warmup and built-in fallback."
         ),
     )
 
 
 def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
-    print(f"route mixing={route.mixing:.2f}")
+    print(f"route: {route.solver_variant}")
+    print(f"  mixer={route.mixer}, mixing={route.mixing:.2f}")
     print(f"  converged: {route.converged}")
     print(f"  iterations: {route.iteration_count}")
     print(f"  final total energy [Ha]: {route.final_total_energy_ha:.12f}")
@@ -379,26 +442,32 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
         f"energy_gap={route.behavior.even_odd_energy_gap_ha}, "
         f"residual_gap={route.behavior.even_odd_residual_gap}"
     )
+    if route.mixer == "diis":
+        print(f"  diis used iterations: {route.diis_used_iterations}")
+        print(f"  diis fallback iterations: {route.diis_fallback_iterations}")
     print(f"  tail energies [Ha]: {route.behavior.tail_energy_history_ha}")
     print(f"  tail residuals: {route.behavior.tail_density_residual_history}")
     print(f"  tail dE [Ha]: {route.behavior.tail_energy_change_history_ha}")
 
 
 def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResult) -> None:
-    """Print the compact H2 singlet mainline mixing audit summary."""
+    """Print the compact H2 singlet formal-mixer audit summary."""
 
-    print("IsoGridDFT H2 singlet mainline mixing audit")
+    print("IsoGridDFT H2 singlet formal-mixer audit")
     print(f"note: {result.note}")
     print(
         "previous references: "
-        f"dry-run baseline converged={H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.converged}, "
-        f"iters={H2_SCF_DRY_RUN_BASELINE.monitor_singlet_route.iteration_count}; "
-        f"old smaller-mixing verdict={H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.two_cycle_verdict}, "
-        f"residual={H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.final_density_residual}"
+        f"old smaller-mixing residual={H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.final_density_residual}, "
+        f"old smaller-mixing verdict={H2_SINGLET_STABILITY_BASELINE.smaller_mixing_route.two_cycle_verdict}; "
+        f"old DIIS residual={H2_DIIS_SCF_BASELINE.singlet.diis_prototype_route.final_density_residual}"
+    )
+    print(
+        "frozen-mainline previous baseline: "
+        f"mixing=0.10 residual={H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.final_density_residual}"
     )
     print(f"diagnosis: {result.diagnosis}")
-    _print_route(result.mixing_0p20_route)
-    _print_route(result.mixing_0p10_route)
+    _print_route(result.baseline_linear_route)
+    _print_route(result.formal_mixer_route)
 
 
 def main() -> int:
