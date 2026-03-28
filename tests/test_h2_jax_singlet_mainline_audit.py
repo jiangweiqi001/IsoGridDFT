@@ -1,36 +1,31 @@
-"""Minimal smoke tests for the H2 singlet JAX mainline audit."""
+"""Minimal smoke tests for the H2 singlet JAX mainline mixing audit."""
 
 from importlib import import_module
 
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBehavior
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineParameterSummary
+from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineRouteResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineTimingBreakdown
 from isogrid.scf import SinglePointEnergyComponents
 
 
-def test_h2_jax_singlet_mainline_audit_module_imports() -> None:
-    module = import_module("isogrid.audit.h2_jax_singlet_mainline_audit")
-
-    assert hasattr(module, "run_h2_jax_singlet_mainline_audit")
-    assert hasattr(module, "print_h2_jax_singlet_mainline_summary")
-
-
-def test_construct_h2_jax_singlet_mainline_result() -> None:
-    result = H2JaxSingletMainlineAuditResult(
-        path_label="jax-singlet-mainline",
+def _build_route(mixing: float) -> H2JaxSingletMainlineRouteResult:
+    return H2JaxSingletMainlineRouteResult(
+        path_label=f"jax-singlet-mainline-mixing-{mixing:.2f}",
         spin_state_label="singlet",
         path_type="monitor_a_grid_plus_patch",
         kinetic_version="trial_fix",
         includes_nonlocal=False,
+        mixing=mixing,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.1303,
-        final_lowest_eigenvalue_ha=-0.4530,
-        final_density_residual=0.3371,
-        final_energy_change_ha=0.0108,
-        total_wall_time_seconds=80.0,
-        average_iteration_wall_time_seconds=4.0,
+        final_total_energy_ha=-0.1303 if mixing == 0.20 else -0.1649,
+        final_lowest_eigenvalue_ha=-0.4530 if mixing == 0.20 else -0.3937,
+        final_density_residual=0.3371 if mixing == 0.20 else 0.3083,
+        final_energy_change_ha=0.0108 if mixing == 0.20 else 0.0084,
+        total_wall_time_seconds=80.0 if mixing == 0.20 else 87.0,
+        average_iteration_wall_time_seconds=4.0 if mixing == 0.20 else 4.35,
         parameter_summary=H2JaxSingletMainlineParameterSummary(
             grid_shape=(67, 67, 81),
             box_half_extents_bohr=(8.0, 8.0, 10.0),
@@ -41,7 +36,7 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
             correction_strength=1.30,
             interpolation_neighbors=8,
             kinetic_version="trial_fix",
-            mixing=0.20,
+            mixing=mixing,
             max_iterations=20,
             density_tolerance=5.0e-3,
             energy_tolerance=5.0e-5,
@@ -66,9 +61,12 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         behavior=H2JaxSingletMainlineBehavior(
             detected_two_cycle=False,
             tail_length=10,
-            even_odd_energy_gap_ha=9.0e-3,
-            even_odd_residual_gap=2.0e-4,
+            even_odd_energy_gap_ha=9.0e-3 if mixing == 0.20 else 5.7e-3,
+            even_odd_residual_gap=2.0e-4 if mixing == 0.20 else 2.8e-3,
             verdict="stable_not_converged",
+            tail_energy_history_ha=(-0.1, -0.2, -0.1, -0.2, -0.1),
+            tail_density_residual_history=(0.33, 0.33, 0.34, 0.34, 0.34),
+            tail_energy_change_history_ha=(0.01, -0.01, 0.01, -0.01, 0.01),
         ),
         final_energy_components=SinglePointEnergyComponents(
             kinetic=0.44,
@@ -77,14 +75,32 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
             hartree=1.40,
             xc=-0.39,
             ion_ion_repulsion=0.714285714286,
-            total=-0.1303,
+            total=-0.1303 if mixing == 0.20 else -0.1649,
         ),
         note="singlet mainline smoke",
     )
 
-    assert result.converged is False
-    assert result.iteration_count == 20
-    assert result.final_density_residual == 0.3371
-    assert result.final_energy_change_ha == 0.0108
-    assert result.parameter_summary.jax_hartree_cg_preconditioner == "none"
-    assert result.behavior.verdict == "stable_not_converged"
+
+def test_h2_jax_singlet_mainline_audit_module_imports() -> None:
+    module = import_module("isogrid.audit.h2_jax_singlet_mainline_audit")
+
+    assert hasattr(module, "run_h2_jax_singlet_mainline_audit")
+    assert hasattr(module, "print_h2_jax_singlet_mainline_summary")
+
+
+def test_construct_h2_jax_singlet_mainline_result() -> None:
+    result = H2JaxSingletMainlineAuditResult(
+        path_label="jax-singlet-mainline",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        mixing_0p20_route=_build_route(0.20),
+        mixing_0p10_route=_build_route(0.10),
+        diagnosis="singlet fixed-point smoke",
+        note="mixing audit smoke",
+    )
+
+    assert result.mixing_0p20_route.mixing == 0.20
+    assert result.mixing_0p10_route.mixing == 0.10
+    assert result.mixing_0p20_route.converged is False
+    assert result.mixing_0p10_route.final_density_residual == 0.3083
+    assert result.mixing_0p10_route.behavior.verdict == "stable_not_converged"

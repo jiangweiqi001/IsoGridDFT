@@ -498,7 +498,8 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.monitor_shape == (67, 67, 81)
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.hartree_backend == "jax"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.cg_impl == "jax_loop"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.cg_preconditioner == "none"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.route.converged is False
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.mixing_0p20_route.hartree_backend == "jax"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.mixing_0p20_route.cg_impl == "jax_loop"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.mixing_0p20_route.cg_preconditioner == "none"
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.mixing_0p20_route.converged is False
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.mixing_0p10_route.mixing == 0.10
