@@ -1,4 +1,4 @@
-"""Minimal smoke tests for the H2 singlet Anderson audit."""
+"""Minimal smoke tests for the H2 singlet different-formal-mixer audit."""
 
 from importlib import import_module
 
@@ -20,17 +20,17 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
         mixing=0.10,
         mixer=mixer,
         solver_variant=solver_variant,
-        anderson_history_length=None if mixer != "anderson" else 4,
-        anderson_regularization=None if mixer != "anderson" else 1.0e-8,
-        anderson_damping=None if mixer != "anderson" else 0.5,
+        formal_mixer_history_length=None if mixer not in {"anderson", "broyden_like"} else 4,
+        formal_mixer_regularization=None if mixer not in {"anderson", "broyden_like"} else 1.0e-8,
+        formal_mixer_damping=None if mixer not in {"anderson", "broyden_like"} else 0.5,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.1653 if mixer == "linear" else -0.1645,
-        final_lowest_eigenvalue_ha=-0.3908 if mixer == "linear" else -0.4118,
-        final_density_residual=0.3047 if mixer == "linear" else 0.3172,
-        final_energy_change_ha=-0.0080 if mixer == "linear" else -0.00014,
-        total_wall_time_seconds=86.9 if mixer == "linear" else 88.0,
-        average_iteration_wall_time_seconds=4.35 if mixer == "linear" else 4.40,
+        final_total_energy_ha=-0.17 if mixer == "linear" else -0.16,
+        final_lowest_eigenvalue_ha=-0.39 if mixer == "linear" else -0.41,
+        final_density_residual=0.31 if mixer == "linear" else 0.30,
+        final_energy_change_ha=-0.008 if mixer == "linear" else 0.005,
+        total_wall_time_seconds=86.0 if mixer == "linear" else 98.0,
+        average_iteration_wall_time_seconds=4.3 if mixer == "linear" else 4.9,
         parameter_summary=H2JaxSingletMainlineParameterSummary(
             grid_shape=(67, 67, 81),
             box_half_extents_bohr=(8.0, 8.0, 10.0),
@@ -66,6 +66,12 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             anderson_regularization=1.0e-8,
             anderson_damping=0.5,
             anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+            broyden_enabled=(mixer == "broyden_like"),
+            broyden_warmup_iterations=3,
+            broyden_history_length=4,
+            broyden_regularization=1.0e-8,
+            broyden_damping=0.5,
+            broyden_residual_definition="density_fixed_point_residual=rho_out-rho_in",
         ),
         timing_breakdown=H2JaxSingletMainlineTimingBreakdown(
             eigensolver_wall_time_seconds=64.0,
@@ -89,6 +95,8 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
         diis_fallback_iterations=() if mixer != "diis" else (6,),
         anderson_used_iterations=() if mixer != "anderson" else (3, 4, 5),
         anderson_fallback_iterations=() if mixer != "anderson" else (6,),
+        broyden_used_iterations=() if mixer != "broyden_like" else (3, 4, 5),
+        broyden_fallback_iterations=() if mixer != "broyden_like" else (6,),
         final_energy_components=SinglePointEnergyComponents(
             kinetic=0.44,
             local_ionic=-1.64,
@@ -96,7 +104,7 @@ def _build_route(mixer: str, solver_variant: str) -> H2JaxSingletMainlineRouteRe
             hartree=1.40,
             xc=-0.39,
             ion_ion_repulsion=0.714285714286,
-            total=-0.1653 if mixer == "linear" else -0.1645,
+            total=-0.17 if mixer == "linear" else -0.16,
         ),
         note="singlet mainline smoke",
     )
@@ -116,10 +124,8 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         path_type="monitor_a_grid_plus_patch",
         baseline_linear_route=_build_route("linear", "linear-0p10"),
         diis_route=_build_route("diis", "diis-prototype"),
-        anderson_baseline_route=_build_route("anderson", "anderson-prototype"),
-        anderson_variant_routes=(
-            _build_route("anderson", "anderson-h6-reg1e-8-d0p50"),
-        ),
+        anderson_baseline_route=_build_route("anderson", "anderson-baseline"),
+        different_formal_mixer_route=_build_route("broyden_like", "broyden-like-prototype"),
         diagnosis="singlet fixed-point smoke",
         note="formal mixer smoke",
     )
@@ -127,8 +133,9 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
     assert result.baseline_linear_route.mixer == "linear"
     assert result.diis_route.mixer == "diis"
     assert result.anderson_baseline_route.mixer == "anderson"
-    assert result.anderson_baseline_route.parameter_summary.anderson_enabled is True
-    assert result.anderson_baseline_route.anderson_history_length == 4
-    assert result.anderson_variant_routes[0].anderson_history_length == 4
-    assert result.anderson_baseline_route.final_density_residual == 0.3172
-    assert result.anderson_baseline_route.behavior.verdict == "stable_not_converged"
+    assert result.different_formal_mixer_route.mixer == "broyden_like"
+    assert result.anderson_baseline_route.formal_mixer_history_length == 4
+    assert result.different_formal_mixer_route.formal_mixer_history_length == 4
+    assert result.different_formal_mixer_route.parameter_summary.broyden_enabled is True
+    assert result.different_formal_mixer_route.final_density_residual == 0.30
+    assert result.different_formal_mixer_route.behavior.verdict == "stable_not_converged"

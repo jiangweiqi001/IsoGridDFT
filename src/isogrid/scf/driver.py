@@ -185,6 +185,12 @@ class H2ScfDryRunParameterSummary:
     anderson_regularization: float
     anderson_damping: float
     anderson_residual_definition: str
+    broyden_enabled: bool
+    broyden_warmup_iterations: int
+    broyden_history_length: int
+    broyden_regularization: float
+    broyden_damping: float
+    broyden_residual_definition: str
 
 
 @dataclass(frozen=True)
@@ -203,6 +209,16 @@ class MonitorGridAndersonHistoryEntry:
 
     mixed_rho_up: np.ndarray
     mixed_rho_down: np.ndarray
+    residual_up: np.ndarray
+    residual_down: np.ndarray
+
+
+@dataclass(frozen=True)
+class MonitorGridBroydenHistoryEntry:
+    """Small Broyden-like history item for the monitor-grid singlet dry-run."""
+
+    rho_up: np.ndarray
+    rho_down: np.ndarray
     residual_up: np.ndarray
     residual_down: np.ndarray
 
@@ -255,6 +271,15 @@ class H2StaticLocalScfDryRunResult:
     anderson_used_iterations: tuple[int, ...]
     anderson_history_sizes: tuple[int, ...]
     anderson_fallback_iterations: tuple[int, ...]
+    broyden_enabled: bool
+    broyden_warmup_iterations: int
+    broyden_history_length: int
+    broyden_regularization: float
+    broyden_damping: float
+    broyden_residual_definition: str
+    broyden_used_iterations: tuple[int, ...]
+    broyden_history_sizes: tuple[int, ...]
+    broyden_fallback_iterations: tuple[int, ...]
     converged: bool
     iteration_count: int
     history: tuple[ScfIterationRecord, ...]
@@ -738,6 +763,11 @@ def _monitor_grid_scf_parameter_summary(
     anderson_history_length: int,
     anderson_regularization: float,
     anderson_damping: float,
+    broyden_enabled: bool,
+    broyden_warmup_iterations: int,
+    broyden_history_length: int,
+    broyden_regularization: float,
+    broyden_damping: float,
 ) -> H2ScfDryRunParameterSummary:
     return H2ScfDryRunParameterSummary(
         grid_shape=H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
@@ -769,6 +799,12 @@ def _monitor_grid_scf_parameter_summary(
         anderson_regularization=float(anderson_regularization),
         anderson_damping=float(anderson_damping),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        broyden_enabled=bool(broyden_enabled),
+        broyden_warmup_iterations=int(broyden_warmup_iterations),
+        broyden_history_length=int(broyden_history_length),
+        broyden_regularization=float(broyden_regularization),
+        broyden_damping=float(broyden_damping),
+        broyden_residual_definition="density_fixed_point_residual=rho_out-rho_in",
     )
 
 
@@ -1036,6 +1072,112 @@ def _apply_monitor_grid_density_anderson(
     rho_down_candidate = (
         (1.0 - damping) * current.mixed_rho_down + damping * rho_down_candidate
     )
+
+    if n_alpha > 0:
+        rho_up_candidate = np.maximum(rho_up_candidate, 0.0)
+        if float(integrate_field(rho_up_candidate, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_up_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+
+    if n_beta > 0:
+        rho_down_candidate = np.maximum(rho_down_candidate, 0.0)
+        if float(integrate_field(rho_down_candidate, grid_geometry=grid_geometry)) <= 0.0:
+            return None
+    else:
+        rho_down_candidate = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
+
+    return (
+        _renormalize_density(rho_up_candidate, n_alpha, grid_geometry=grid_geometry),
+        _renormalize_density(rho_down_candidate, n_beta, grid_geometry=grid_geometry),
+    )
+
+
+def _apply_monitor_grid_density_broyden_like(
+    history: tuple[MonitorGridBroydenHistoryEntry, ...],
+    *,
+    grid_geometry: MonitorGridGeometry,
+    n_alpha: int,
+    n_beta: int,
+    mixing: float,
+    regularization: float,
+    damping: float,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    if len(history) < 2:
+        return None
+    if not (0.0 < mixing <= 1.0) or not (0.0 < damping <= 1.0):
+        return None
+
+    current = history[-1]
+    update_vectors: list[tuple[np.ndarray, np.ndarray]] = []
+    secant_residuals: list[tuple[np.ndarray, np.ndarray]] = []
+    denominators: list[float] = []
+
+    def _apply_inverse_map(
+        vector_up: np.ndarray,
+        vector_down: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        mapped_up = mixing * np.asarray(vector_up, dtype=np.float64)
+        mapped_down = mixing * np.asarray(vector_down, dtype=np.float64)
+        for (update_up, update_down), (residual_up, residual_down), denominator in zip(
+            update_vectors,
+            secant_residuals,
+            denominators,
+            strict=True,
+        ):
+            coefficient = _weighted_spin_density_dot(
+                residual_up,
+                residual_down,
+                vector_up,
+                vector_down,
+                grid_geometry=grid_geometry,
+            ) / denominator
+            mapped_up += float(coefficient) * update_up
+            mapped_down += float(coefficient) * update_down
+        return mapped_up, mapped_down
+
+    for previous, nxt in zip(history[:-1], history[1:], strict=True):
+        secant_density_up = np.asarray(nxt.rho_up - previous.rho_up, dtype=np.float64)
+        secant_density_down = np.asarray(nxt.rho_down - previous.rho_down, dtype=np.float64)
+        secant_residual_up = np.asarray(
+            nxt.residual_up - previous.residual_up,
+            dtype=np.float64,
+        )
+        secant_residual_down = np.asarray(
+            nxt.residual_down - previous.residual_down,
+            dtype=np.float64,
+        )
+        denominator = _weighted_spin_density_dot(
+            secant_residual_up,
+            secant_residual_down,
+            secant_residual_up,
+            secant_residual_down,
+            grid_geometry=grid_geometry,
+        )
+        if denominator <= max(float(regularization), 1.0e-16):
+            continue
+        mapped_residual_up, mapped_residual_down = _apply_inverse_map(
+            secant_residual_up,
+            secant_residual_down,
+        )
+        update_vectors.append(
+            (
+                secant_density_up - mapped_residual_up,
+                secant_density_down - mapped_residual_down,
+            )
+        )
+        secant_residuals.append((secant_residual_up, secant_residual_down))
+        denominators.append(float(denominator))
+
+    if not denominators:
+        return None
+
+    correction_up, correction_down = _apply_inverse_map(
+        current.residual_up,
+        current.residual_down,
+    )
+    rho_up_candidate = np.asarray(current.rho_up, dtype=np.float64) + damping * correction_up
+    rho_down_candidate = np.asarray(current.rho_down, dtype=np.float64) + damping * correction_down
 
     if n_alpha > 0:
         rho_up_candidate = np.maximum(rho_up_candidate, 0.0)
@@ -1596,6 +1738,11 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_history_length: int = 4,
     anderson_regularization: float = 1.0e-8,
     anderson_damping: float = 0.5,
+    enable_broyden: bool = False,
+    broyden_warmup_iterations: int = 3,
+    broyden_history_length: int = 4,
+    broyden_regularization: float = 1.0e-8,
+    broyden_damping: float = 0.5,
 ) -> H2StaticLocalScfDryRunResult:
     """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
 
@@ -1610,12 +1757,15 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("mixing must satisfy 0 < mixing <= 1.")
     if not (0.0 <= cycle_breaker_weight <= 1.0):
         raise ValueError("cycle_breaker_weight must satisfy 0 <= cycle_breaker_weight <= 1.")
-    enabled_special_mixers = int(bool(enable_cycle_breaker)) + int(bool(enable_diis)) + int(
-        bool(enable_anderson)
+    enabled_special_mixers = (
+        int(bool(enable_cycle_breaker))
+        + int(bool(enable_diis))
+        + int(bool(enable_anderson))
+        + int(bool(enable_broyden))
     )
     if enabled_special_mixers > 1:
         raise ValueError(
-            "The minimal monitor-grid dry-run supports at most one of cycle-breaker, DIIS, or Anderson."
+            "The minimal monitor-grid dry-run supports at most one of cycle-breaker, DIIS, Anderson, or Broyden-like mixing."
         )
     if diis_warmup_iterations < 0:
         raise ValueError("diis_warmup_iterations must be non-negative.")
@@ -1629,6 +1779,14 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("anderson_regularization must be non-negative.")
     if not (0.0 < anderson_damping <= 1.0):
         raise ValueError("anderson_damping must satisfy 0 < anderson_damping <= 1.")
+    if broyden_warmup_iterations < 0:
+        raise ValueError("broyden_warmup_iterations must be non-negative.")
+    if broyden_history_length < 2:
+        raise ValueError("broyden_history_length must be at least 2.")
+    if broyden_regularization < 0.0:
+        raise ValueError("broyden_regularization must be non-negative.")
+    if not (0.0 < broyden_damping <= 1.0):
+        raise ValueError("broyden_damping must satisfy 0 < broyden_damping <= 1.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
     normalized_hartree_backend = hartree_backend.strip().lower()
@@ -1706,6 +1864,10 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_used_iterations: list[int] = []
     anderson_history_sizes: list[int] = []
     anderson_fallback_iterations: list[int] = []
+    broyden_history: list[MonitorGridBroydenHistoryEntry] = []
+    broyden_used_iterations: list[int] = []
+    broyden_history_sizes: list[int] = []
+    broyden_fallback_iterations: list[int] = []
     iteration_eigensolver_times: list[float] = []
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
@@ -2232,6 +2394,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     diis_fallback_iterations.append(iteration)
             diis_history_sizes.append(len(diis_history))
             anderson_history_sizes.append(0)
+            broyden_history_sizes.append(0)
         elif enable_anderson:
             anderson_history.append(
                 MonitorGridAndersonHistoryEntry(
@@ -2259,9 +2422,40 @@ def run_h2_monitor_grid_scf_dry_run(
                     anderson_fallback_iterations.append(iteration)
             anderson_history_sizes.append(len(anderson_history))
             diis_history_sizes.append(0)
+            broyden_history_sizes.append(0)
+        elif enable_broyden:
+            broyden_history.append(
+                MonitorGridBroydenHistoryEntry(
+                    rho_up=np.asarray(rho_up_mixed, dtype=np.float64),
+                    rho_down=np.asarray(rho_down_mixed, dtype=np.float64),
+                    residual_up=residual_up,
+                    residual_down=residual_down,
+                )
+            )
+            if len(broyden_history) > broyden_history_length:
+                broyden_history = broyden_history[-broyden_history_length:]
+            if iteration >= broyden_warmup_iterations and len(broyden_history) >= 2:
+                broyden_candidate = _apply_monitor_grid_density_broyden_like(
+                    tuple(broyden_history),
+                    grid_geometry=grid_geometry,
+                    n_alpha=occupations.n_alpha,
+                    n_beta=occupations.n_beta,
+                    mixing=mixing,
+                    regularization=broyden_regularization,
+                    damping=broyden_damping,
+                )
+                if broyden_candidate is not None:
+                    rho_up_mixed, rho_down_mixed = broyden_candidate
+                    broyden_used_iterations.append(iteration)
+                else:
+                    broyden_fallback_iterations.append(iteration)
+            broyden_history_sizes.append(len(broyden_history))
+            diis_history_sizes.append(0)
+            anderson_history_sizes.append(0)
         else:
             diis_history_sizes.append(0)
             anderson_history_sizes.append(0)
+            broyden_history_sizes.append(0)
 
         history.append(
             ScfIterationRecord(
@@ -2468,6 +2662,11 @@ def run_h2_monitor_grid_scf_dry_run(
             anderson_history_length=anderson_history_length,
             anderson_regularization=anderson_regularization,
             anderson_damping=anderson_damping,
+            broyden_enabled=enable_broyden,
+            broyden_warmup_iterations=broyden_warmup_iterations,
+            broyden_history_length=broyden_history_length,
+            broyden_regularization=broyden_regularization,
+            broyden_damping=broyden_damping,
         ),
         hartree_backend=normalized_hartree_backend,
         use_jax_hartree_cached_operator=bool(use_jax_hartree_cached_operator),
@@ -2495,6 +2694,15 @@ def run_h2_monitor_grid_scf_dry_run(
         anderson_used_iterations=tuple(anderson_used_iterations),
         anderson_history_sizes=tuple(anderson_history_sizes),
         anderson_fallback_iterations=tuple(anderson_fallback_iterations),
+        broyden_enabled=bool(enable_broyden),
+        broyden_warmup_iterations=int(broyden_warmup_iterations),
+        broyden_history_length=int(broyden_history_length),
+        broyden_regularization=float(broyden_regularization),
+        broyden_damping=float(broyden_damping),
+        broyden_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        broyden_used_iterations=tuple(broyden_used_iterations),
+        broyden_history_sizes=tuple(broyden_history_sizes),
+        broyden_fallback_iterations=tuple(broyden_fallback_iterations),
         converged=converged,
         iteration_count=len(history),
         history=tuple(history),

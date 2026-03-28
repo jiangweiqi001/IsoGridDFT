@@ -504,4 +504,7 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.mixer == "linear"
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.diis_route.mixer == "diis"
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_baseline_route.mixer == "anderson"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_variant_routes[0].mixer == "anderson"
+    assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.different_formal_mixer_route.mixer
+        == "broyden_like"
+    )
