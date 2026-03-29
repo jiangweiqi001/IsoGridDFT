@@ -1,8 +1,9 @@
-"""Productionish singlet-only Anderson audit on the frozen JAX A-grid mainline."""
+"""Singlet fixed-point local-difficulty audit on the frozen JAX A-grid mainline."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 import numpy as np
 
@@ -38,6 +39,14 @@ _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING = 0.75
 _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO = 1.02
 _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY = 0.995
 _TAIL_SUMMARY_LENGTH = 5
+_LOCAL_DIFFICULTY_PLATEAU_RATIO_LOWER = 0.985
+_LOCAL_DIFFICULTY_PLATEAU_RATIO_UPPER = 1.015
+_LOCAL_DIFFICULTY_PLATEAU_RATIO_STD_THRESHOLD = 0.02
+_LOCAL_DIFFICULTY_PLATEAU_AMPLITUDE_THRESHOLD = 1.0e-2
+_LOCAL_DIFFICULTY_NONCONTRACTIVE_RATIO_THRESHOLD = 1.002
+_LOCAL_DIFFICULTY_POORLY_CONTRACTIVE_RATIO_THRESHOLD = 0.995
+_LOCAL_DIFFICULTY_SECANT_COLLINEARITY_THRESHOLD = 0.995
+_LOCAL_DIFFICULTY_SECANT_MIN_NORM = 1.0e-14
 
 
 @dataclass(frozen=True)
@@ -68,6 +77,24 @@ class H2JaxSingletMainlineBehavior:
     average_tail_residual_ratio: float | None
     tail_residual_ratio_std: float | None
     entered_plateau: bool
+
+
+@dataclass(frozen=True)
+class H2JaxSingletFixedPointLocalDifficulty:
+    """Very small local fixed-point difficulty summary near the singlet tail."""
+
+    tail_window_length: int
+    average_tail_residual_ratio: float | None
+    tail_residual_ratio_std: float | None
+    maximum_tail_residual_ratio: float | None
+    entered_plateau: bool
+    plateau_window_length: int
+    tail_residual_amplitude: float | None
+    weak_cycle_indicator: bool
+    local_contraction_verdict: str
+    secant_subspace_condition_proxy: float | None
+    secant_collinearity_max_abs_cosine: float | None
+    diagnosis: str
 
 
 @dataclass(frozen=True)
@@ -153,6 +180,7 @@ class H2JaxSingletMainlineRouteResult:
     parameter_summary: H2JaxSingletMainlineParameterSummary
     timing_breakdown: H2JaxSingletMainlineTimingBreakdown
     behavior: H2JaxSingletMainlineBehavior
+    fixed_point_local_difficulty: H2JaxSingletFixedPointLocalDifficulty
     diis_used_iterations: tuple[int, ...]
     diis_fallback_iterations: tuple[int, ...]
     anderson_used_iterations: tuple[int, ...]
@@ -168,7 +196,7 @@ class H2JaxSingletMainlineRouteResult:
 
 @dataclass(frozen=True)
 class H2JaxSingletMainlineAuditResult:
-    """Productionish singlet Anderson audit for the frozen JAX A-grid mainline."""
+    """Singlet fixed-point local-difficulty audit on the frozen JAX A-grid mainline."""
 
     path_label: str
     spin_state_label: str
@@ -219,6 +247,176 @@ def _tail_residual_ratios(
             continue
         ratios.append(float(current / previous))
     return tuple(ratios)
+
+
+def _spin_density_residual_vector(record: Any) -> np.ndarray:
+    residual_up = np.asarray(record.output_rho_up - record.input_rho_up, dtype=np.float64)
+    residual_down = np.asarray(record.output_rho_down - record.input_rho_down, dtype=np.float64)
+    return np.concatenate((residual_up.ravel(), residual_down.ravel()))
+
+
+def _tail_plateau_window_length(ratios: tuple[float, ...]) -> int:
+    if not ratios:
+        return 0
+    window = 0
+    for ratio in reversed(ratios):
+        if _LOCAL_DIFFICULTY_PLATEAU_RATIO_LOWER <= ratio <= _LOCAL_DIFFICULTY_PLATEAU_RATIO_UPPER:
+            window += 1
+        else:
+            break
+    return window
+
+
+def _estimate_secant_subspace_condition(
+    residual_vectors: tuple[np.ndarray, ...],
+) -> float | None:
+    if len(residual_vectors) < 3:
+        return None
+    secants = []
+    for previous, current in zip(residual_vectors[:-1], residual_vectors[1:], strict=True):
+        delta = np.asarray(current - previous, dtype=np.float64)
+        if float(np.linalg.norm(delta)) > _LOCAL_DIFFICULTY_SECANT_MIN_NORM:
+            secants.append(delta)
+    if len(secants) < 2:
+        return None
+    secant_matrix = np.stack(secants, axis=1)
+    gram = np.asarray(secant_matrix.T @ secant_matrix, dtype=np.float64)
+    try:
+        return float(np.linalg.cond(gram))
+    except np.linalg.LinAlgError:
+        return None
+
+
+def _estimate_secant_collinearity(
+    residual_vectors: tuple[np.ndarray, ...],
+) -> float | None:
+    if len(residual_vectors) < 3:
+        return None
+    secants = []
+    for previous, current in zip(residual_vectors[:-1], residual_vectors[1:], strict=True):
+        delta = np.asarray(current - previous, dtype=np.float64)
+        norm = float(np.linalg.norm(delta))
+        if norm > _LOCAL_DIFFICULTY_SECANT_MIN_NORM:
+            secants.append(delta / norm)
+    if len(secants) < 2:
+        return None
+    max_abs_cosine = 0.0
+    for idx, left in enumerate(secants[:-1]):
+        for right in secants[idx + 1 :]:
+            max_abs_cosine = max(max_abs_cosine, float(abs(np.dot(left, right))))
+    return max_abs_cosine
+
+
+def _build_fixed_point_local_difficulty(
+    result: H2StaticLocalScfDryRunResult,
+    *,
+    behavior: H2JaxSingletMainlineBehavior,
+) -> H2JaxSingletFixedPointLocalDifficulty:
+    tail_residuals = np.asarray(behavior.tail_density_residual_history, dtype=np.float64)
+    tail_ratios = np.asarray(behavior.tail_residual_ratios, dtype=np.float64)
+    average_tail_residual_ratio = _safe_mean(tail_ratios)
+    tail_residual_ratio_std = _safe_std(tail_ratios)
+    maximum_tail_residual_ratio = (
+        None if tail_ratios.size == 0 else float(np.max(tail_ratios))
+    )
+    tail_residual_amplitude = (
+        None if tail_residuals.size == 0 else float(np.max(tail_residuals) - np.min(tail_residuals))
+    )
+    plateau_window_length = _tail_plateau_window_length(behavior.tail_residual_ratios)
+    residual_vectors = tuple(
+        _spin_density_residual_vector(record) for record in result.history[-_TAIL_SUMMARY_LENGTH:]
+    )
+    secant_subspace_condition_proxy = _estimate_secant_subspace_condition(residual_vectors)
+    secant_collinearity_max_abs_cosine = _estimate_secant_collinearity(residual_vectors)
+    weak_cycle_indicator = bool(
+        behavior.detected_two_cycle
+        or (
+            behavior.even_odd_residual_gap is not None
+            and tail_residual_amplitude is not None
+            and tail_residual_amplitude > 0.0
+            and behavior.even_odd_residual_gap > 0.35 * tail_residual_amplitude
+        )
+    )
+
+    if average_tail_residual_ratio is None:
+        local_contraction_verdict = "insufficient_tail"
+    elif weak_cycle_indicator and average_tail_residual_ratio >= _LOCAL_DIFFICULTY_POORLY_CONTRACTIVE_RATIO_THRESHOLD:
+        local_contraction_verdict = "oscillatory_near_neutral"
+    elif (
+        average_tail_residual_ratio >= _LOCAL_DIFFICULTY_NONCONTRACTIVE_RATIO_THRESHOLD
+        or (
+            maximum_tail_residual_ratio is not None
+            and maximum_tail_residual_ratio >= _LOCAL_DIFFICULTY_NONCONTRACTIVE_RATIO_THRESHOLD
+        )
+    ):
+        local_contraction_verdict = "locally_noncontractive_or_expansive"
+    elif average_tail_residual_ratio >= _LOCAL_DIFFICULTY_POORLY_CONTRACTIVE_RATIO_THRESHOLD:
+        local_contraction_verdict = "poorly_contractive_near_unity"
+    else:
+        local_contraction_verdict = "contractive_but_slow"
+
+    plateau_like = bool(
+        behavior.entered_plateau
+        or (
+            average_tail_residual_ratio is not None
+            and tail_residual_ratio_std is not None
+            and tail_residual_amplitude is not None
+            and _LOCAL_DIFFICULTY_PLATEAU_RATIO_LOWER
+            <= average_tail_residual_ratio
+            <= _LOCAL_DIFFICULTY_PLATEAU_RATIO_UPPER
+            and tail_residual_ratio_std <= _LOCAL_DIFFICULTY_PLATEAU_RATIO_STD_THRESHOLD
+            and tail_residual_amplitude <= _LOCAL_DIFFICULTY_PLATEAU_AMPLITUDE_THRESHOLD
+        )
+    )
+    entered_plateau = bool(plateau_like)
+
+    if entered_plateau and local_contraction_verdict in {
+        "locally_noncontractive_or_expansive",
+        "poorly_contractive_near_unity",
+    }:
+        diagnosis = (
+            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
+            "which is consistent with a locally near-noncontractive singlet fixed-point map"
+        )
+    elif weak_cycle_indicator:
+        diagnosis = (
+            "tail history shows weak periodic structure, so the local map looks oscillatory and only marginally damped"
+        )
+    elif local_contraction_verdict == "contractive_but_slow":
+        diagnosis = (
+            "tail ratios still contract on average, but the contraction is weak enough that the current 20-step window is insufficient"
+        )
+    else:
+        diagnosis = (
+            "tail history does not show decisive contraction, which points more to a hard local map than to a small mixer tweak"
+        )
+
+    if (
+        secant_collinearity_max_abs_cosine is not None
+        and secant_collinearity_max_abs_cosine >= _LOCAL_DIFFICULTY_SECANT_COLLINEARITY_THRESHOLD
+    ):
+        diagnosis += "; recent secant directions are nearly collinear, so the mixer subspace is also becoming low-rank"
+    if (
+        secant_subspace_condition_proxy is not None
+        and np.isfinite(secant_subspace_condition_proxy)
+        and secant_subspace_condition_proxy >= 1.0e8
+    ):
+        diagnosis += "; the secant Gram proxy is very ill-conditioned"
+
+    return H2JaxSingletFixedPointLocalDifficulty(
+        tail_window_length=len(behavior.tail_density_residual_history),
+        average_tail_residual_ratio=average_tail_residual_ratio,
+        tail_residual_ratio_std=tail_residual_ratio_std,
+        maximum_tail_residual_ratio=maximum_tail_residual_ratio,
+        entered_plateau=entered_plateau,
+        plateau_window_length=plateau_window_length,
+        tail_residual_amplitude=tail_residual_amplitude,
+        weak_cycle_indicator=weak_cycle_indicator,
+        local_contraction_verdict=local_contraction_verdict,
+        secant_subspace_condition_proxy=secant_subspace_condition_proxy,
+        secant_collinearity_max_abs_cosine=secant_collinearity_max_abs_cosine,
+        diagnosis=diagnosis,
+    )
 
 
 def _build_behavior(
@@ -398,6 +596,11 @@ def _build_route_result(
     formal_mixer_acceptance_residual_ratio_threshold: float | None,
     formal_mixer_collinearity_cosine_threshold: float | None,
 ) -> H2JaxSingletMainlineRouteResult:
+    behavior = _build_behavior(result, converged=bool(result.converged))
+    fixed_point_local_difficulty = _build_fixed_point_local_difficulty(
+        result,
+        behavior=behavior,
+    )
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
         spin_state_label=result.spin_state_label,
@@ -448,7 +651,8 @@ def _build_route_result(
             density_update_wall_time_seconds=float(result.density_update_wall_time_seconds),
             bookkeeping_wall_time_seconds=float(result.bookkeeping_wall_time_seconds),
         ),
-        behavior=_build_behavior(result, converged=bool(result.converged)),
+        behavior=behavior,
+        fixed_point_local_difficulty=fixed_point_local_difficulty,
         diis_used_iterations=tuple(int(value) for value in result.diis_used_iterations),
         diis_fallback_iterations=tuple(int(value) for value in result.diis_fallback_iterations),
         anderson_used_iterations=tuple(int(value) for value in result.anderson_used_iterations),
@@ -604,6 +808,8 @@ def _build_diagnosis(
     anderson_productionish: H2JaxSingletMainlineRouteResult,
     supplemental_anderson: H2JaxSingletMainlineRouteResult,
 ) -> str:
+    productionish_difficulty = anderson_productionish.fixed_point_local_difficulty
+    supplemental_difficulty = supplemental_anderson.fixed_point_local_difficulty
     if anderson_productionish.converged:
         return (
             "The productionish Anderson route converges within the 20-step main acceptance window. "
@@ -628,17 +834,17 @@ def _build_diagnosis(
         and anderson_productionish.final_density_residual < best_simple_residual - 1.0e-2
     )
     steady_supplement = (
-        supplemental_anderson.behavior.average_tail_residual_ratio is not None
-        and supplemental_anderson.behavior.average_tail_residual_ratio < 0.98
-        and not supplemental_anderson.behavior.entered_plateau
+        supplemental_difficulty.average_tail_residual_ratio is not None
+        and supplemental_difficulty.average_tail_residual_ratio < 0.98
+        and not supplemental_difficulty.entered_plateau
         and supplemental_anderson.behavior.verdict not in {"diverging", "weak_two_cycle"}
     )
     stalled_supplement = (
-        supplemental_anderson.behavior.entered_plateau
+        supplemental_difficulty.entered_plateau
         or supplemental_anderson.behavior.verdict in {"weak_two_cycle", "plateau_or_stall"}
         or (
-            supplemental_anderson.behavior.average_tail_residual_ratio is not None
-            and supplemental_anderson.behavior.average_tail_residual_ratio >= 0.99
+            supplemental_difficulty.average_tail_residual_ratio is not None
+            and supplemental_difficulty.average_tail_residual_ratio >= 0.99
         )
     )
     if productionish_beats_baseline and productionish_beats_simple_baselines and steady_supplement:
@@ -650,9 +856,12 @@ def _build_diagnosis(
         )
     if stalled_supplement:
         return (
-            "The more mature Anderson route still fails to converge in 20 steps, and the 40-step supplement either "
-            "enters a plateau or falls into tail oscillation instead of maintaining strong contraction. That now points "
-            "more toward a hard singlet fixed-point map than toward a small remaining Anderson implementation gap."
+            "The more mature Anderson route still fails to converge in 20 steps. Its tail residual ratios do not "
+            f"recover clean contraction (about {productionish_difficulty.average_tail_residual_ratio}), and the 40-step "
+            f"supplement also stays at or above neutral contraction on average (tail ratio about "
+            f"{supplemental_difficulty.average_tail_residual_ratio}). That combination points more toward a locally "
+            "near-noncontractive or badly conditioned singlet fixed-point map than toward a small remaining Anderson "
+            "implementation gap."
         )
     return (
         "The productionish Anderson route changes the tail behavior only modestly and does not clearly beat the current "
@@ -709,38 +918,55 @@ def run_h2_jax_singlet_mainline_audit(
         anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
         anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
     )
-    best_anderson_20 = _select_best_anderson_route(
-        anderson_baseline_route,
-        anderson_productionish_route,
-    )
     supplemental_anderson_route = _run_route(
         case=case,
         max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
-        mixing=best_anderson_20.mixing,
+        mixing=anderson_productionish_route.mixing,
         mixer="anderson",
-        solver_variant=f"{best_anderson_20.solver_variant}-long40",
+        solver_variant=f"{anderson_productionish_route.solver_variant}-long40",
         enable_anderson=True,
         anderson_history_length=(
-            _SINGLET_MAINLINE_ANDERSON_HISTORY
-            if best_anderson_20.formal_mixer_history_length is None
-            else best_anderson_20.formal_mixer_history_length
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY
+            if anderson_productionish_route.formal_mixer_history_length is None
+            else anderson_productionish_route.formal_mixer_history_length
         ),
         anderson_regularization=(
             _SINGLET_MAINLINE_ANDERSON_REGULARIZATION
-            if best_anderson_20.formal_mixer_regularization is None
-            else best_anderson_20.formal_mixer_regularization
+            if anderson_productionish_route.formal_mixer_regularization is None
+            else anderson_productionish_route.formal_mixer_regularization
         ),
         anderson_damping=(
             _SINGLET_MAINLINE_ANDERSON_DAMPING
-            if best_anderson_20.formal_mixer_damping is None
-            else best_anderson_20.formal_mixer_damping
+            if anderson_productionish_route.formal_mixer_damping is None
+            else anderson_productionish_route.formal_mixer_damping
         ),
-        anderson_step_clip_factor=best_anderson_20.formal_mixer_step_clip_factor,
-        anderson_reset_on_growth=best_anderson_20.formal_mixer_reset_on_growth,
+        anderson_step_clip_factor=anderson_productionish_route.formal_mixer_step_clip_factor,
+        anderson_reset_on_growth=anderson_productionish_route.formal_mixer_reset_on_growth,
         anderson_reset_growth_factor=(
-            _SINGLET_MAINLINE_ANDERSON_EXTENDED_RESET_GROWTH_FACTOR
-            if best_anderson_20.formal_mixer_reset_growth_factor is None
-            else best_anderson_20.formal_mixer_reset_growth_factor
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR
+            if anderson_productionish_route.formal_mixer_reset_growth_factor is None
+            else anderson_productionish_route.formal_mixer_reset_growth_factor
+        ),
+        anderson_adaptive_damping_enabled=anderson_productionish_route.formal_mixer_adaptive_damping_enabled,
+        anderson_min_damping=(
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING
+            if anderson_productionish_route.formal_mixer_min_damping is None
+            else anderson_productionish_route.formal_mixer_min_damping
+        ),
+        anderson_max_damping=(
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING
+            if anderson_productionish_route.formal_mixer_max_damping is None
+            else anderson_productionish_route.formal_mixer_max_damping
+        ),
+        anderson_acceptance_residual_ratio_threshold=(
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO
+            if anderson_productionish_route.formal_mixer_acceptance_residual_ratio_threshold is None
+            else anderson_productionish_route.formal_mixer_acceptance_residual_ratio_threshold
+        ),
+        anderson_collinearity_cosine_threshold=(
+            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY
+            if anderson_productionish_route.formal_mixer_collinearity_cosine_threshold is None
+            else anderson_productionish_route.formal_mixer_collinearity_cosine_threshold
         ),
     )
     return H2JaxSingletMainlineAuditResult(
@@ -760,7 +986,7 @@ def run_h2_jax_singlet_mainline_audit(
             supplemental_anderson=supplemental_anderson_route,
         ),
         note=(
-            "Formal singlet-only productionish Anderson audit on the frozen A-grid local-only mainline. The physical "
+            "Singlet-only fixed-point local-difficulty audit on the frozen A-grid local-only mainline. The physical "
             "chain is held fixed and only the singlet mixer behavior changes between linear-0p10, a minimal "
             "DIIS/Pulay-style density mixer, the frozen Anderson baseline, and a more productionish Anderson route. "
             "The productionish Anderson keeps the same residual definition rho_out-rho_in and the same density-mixing "
@@ -804,6 +1030,19 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
         f"ratio_std={route.behavior.tail_residual_ratio_std}, "
         f"entered_plateau={route.behavior.entered_plateau}"
     )
+    print(
+        "  fixed-point proxy: "
+        f"contraction={route.fixed_point_local_difficulty.local_contraction_verdict}, "
+        f"avg_tail_ratio={route.fixed_point_local_difficulty.average_tail_residual_ratio}, "
+        f"ratio_std={route.fixed_point_local_difficulty.tail_residual_ratio_std}, "
+        f"max_tail_ratio={route.fixed_point_local_difficulty.maximum_tail_residual_ratio}, "
+        f"plateau={route.fixed_point_local_difficulty.entered_plateau}, "
+        f"plateau_window={route.fixed_point_local_difficulty.plateau_window_length}, "
+        f"tail_amplitude={route.fixed_point_local_difficulty.tail_residual_amplitude}, "
+        f"secant_cond={route.fixed_point_local_difficulty.secant_subspace_condition_proxy}, "
+        f"secant_collinearity={route.fixed_point_local_difficulty.secant_collinearity_max_abs_cosine}"
+    )
+    print(f"  fixed-point diagnosis: {route.fixed_point_local_difficulty.diagnosis}")
     if route.mixer == "diis":
         print(f"  diis used iterations: {route.diis_used_iterations}")
         print(f"  diis fallback iterations: {route.diis_fallback_iterations}")
@@ -842,9 +1081,9 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
 
 
 def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResult) -> None:
-    """Print the compact H2 singlet Anderson adequacy audit summary."""
+    """Print the compact H2 singlet fixed-point local-difficulty audit summary."""
 
-    print("IsoGridDFT H2 singlet productionish Anderson audit")
+    print("IsoGridDFT H2 singlet fixed-point local-difficulty audit")
     print(f"note: {result.note}")
     print(
         "previous frozen-mainline baseline: "

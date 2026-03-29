@@ -65,7 +65,7 @@ That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run 
 
 The current triplet-only JAX Hartree follow-up is now even narrower: the stronger line preconditioner already shows that reducing Hartree iteration count is possible, so the present focus is on the engineering cost of `line` preconditioner apply itself, especially tridiagonal solves and axis-reordering overhead, before any broader solver redesign is considered.
 
-In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically, with the immediate question now narrowed to whether a more productionish Anderson mixer can stabilize the fixed-point map under the frozen JAX Hartree mainline, or whether that singlet map is still intrinsically too hard even for a better-engineered Anderson within the same family. Nonlocal still remains absent from that path.
+In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically, with the immediate question now narrowed to a fixed-point local-difficulty audit: whether the best current productionish Anderson route still fails mainly because the mixer is too weak, or because the singlet map itself is already locally near-noncontractive under the frozen JAX Hartree mainline. Nonlocal still remains absent from that path.
 
 What is present today:
 
@@ -175,7 +175,7 @@ It does not yet implement GGA, meta-GGA, hybrid functionals, or a standalone int
 The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dry-run validation.
 
 - H2 triplet dry-run is already convergent on the local static chain
-- H2 singlet is currently under a small DIIS/Pulay prototype audit
+- H2 singlet is currently under a fixed-point local-difficulty audit on top of the productionish Anderson route
 - nonlocal ionic action is still not migrated onto the A-grid path
 
 ## Minimal Setup

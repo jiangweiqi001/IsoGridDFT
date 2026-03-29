@@ -4,6 +4,9 @@ from importlib import import_module
 
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBehavior
+from isogrid.audit.h2_jax_singlet_mainline_audit import (
+    H2JaxSingletFixedPointLocalDifficulty,
+)
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineParameterSummary
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineRouteResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineTimingBreakdown
@@ -124,6 +127,20 @@ def _build_route(
             tail_residual_ratio_std=0.018,
             entered_plateau=True,
         ),
+        fixed_point_local_difficulty=H2JaxSingletFixedPointLocalDifficulty(
+            tail_window_length=5,
+            average_tail_residual_ratio=0.9975,
+            tail_residual_ratio_std=0.018,
+            maximum_tail_residual_ratio=1.02,
+            entered_plateau=True,
+            plateau_window_length=4,
+            tail_residual_amplitude=0.01,
+            weak_cycle_indicator=False,
+            local_contraction_verdict="poorly_contractive_near_unity",
+            secant_subspace_condition_proxy=1.0e6,
+            secant_collinearity_max_abs_cosine=0.99,
+            diagnosis="tail ratios stay near unity and the residual enters a plateau",
+        ),
         diis_used_iterations=(3, 4, 5) if mixer == "diis" else (),
         diis_fallback_iterations=(6,) if mixer == "diis" else (),
         anderson_used_iterations=(4, 5, 7) if mixer == "anderson" else (),
@@ -214,3 +231,11 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
     assert result.anderson_productionish_route.final_density_residual == 0.30
     assert result.anderson_productionish_route.anderson_rejected_iterations == (8,)
     assert result.anderson_productionish_route.behavior.verdict == "plateau_or_stall"
+    assert (
+        result.anderson_productionish_route.fixed_point_local_difficulty.local_contraction_verdict
+        == "poorly_contractive_near_unity"
+    )
+    assert (
+        result.anderson_productionish_route.fixed_point_local_difficulty.secant_subspace_condition_proxy
+        == 1.0e6
+    )

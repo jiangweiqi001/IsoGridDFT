@@ -509,4 +509,12 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
         H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.anderson_adaptive_damping_enabled
         is True
     )
+    assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.fixed_point_local_contraction_verdict
+        == "locally_noncontractive_or_expansive"
+    )
+    assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_anderson_route.fixed_point_entered_plateau
+        is True
+    )
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_anderson_route.max_iterations == 40
