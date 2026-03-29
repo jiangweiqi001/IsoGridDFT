@@ -432,6 +432,8 @@ def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     assert H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE.optimized_jax_k1_route.use_jax_cached_kernels is True
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k1_route.solver_backend == "jax"
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k1_route.use_scipy_fallback is False
+    assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k2_route.solver_backend == "jax"
+    assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k2_route.converged is True
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.scipy_fallback_k1_route is not None
 
 

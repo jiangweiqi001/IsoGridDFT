@@ -37,16 +37,16 @@ def test_construct_h2_fixed_potential_route_result() -> None:
             correction_strength=1.30,
             interpolation_neighbors=8,
         ),
-        target_orbitals=1,
+        target_orbitals=2,
         solver_backend="jax",
         use_scipy_fallback=False,
-        iteration_count=17,
-        eigenvalues=np.asarray([-0.2]),
-        orbital_weighted_norms=np.asarray([1.0]),
+        iteration_count=397,
+        eigenvalues=np.asarray([-0.2, -0.19]),
+        orbital_weighted_norms=np.asarray([1.0, 1.0]),
         max_orthogonality_error=1.0e-12,
-        residual_norms=np.asarray([1.0e-3]),
-        converged=False,
-        solver_method="scipy_eigsh_lanczos",
+        residual_norms=np.asarray([9.0e-4, 1.0e-3]),
+        converged=True,
+        solver_method="jax_block_subspace_iteration",
         solver_note="audit smoke",
         frozen_density_integral=2.0,
         rho_up_integral=1.0,
@@ -66,10 +66,10 @@ def test_construct_h2_fixed_potential_route_result() -> None:
     assert route.path_type == "monitor_a_grid_plus_patch"
     assert route.solver_backend == "jax"
     assert route.use_scipy_fallback is False
-    assert route.iteration_count == 17
+    assert route.iteration_count == 397
     assert float(route.eigenvalues[0]) == -0.2
-    assert float(route.residual_norms[0]) == 1.0e-3
-    assert route.converged is False
+    assert float(route.residual_norms[1]) == 1.0e-3
+    assert route.converged is True
     assert route.use_jax_block_kernels is False
     assert route.use_jax_cached_kernels is False
     assert route.wall_time_seconds is None

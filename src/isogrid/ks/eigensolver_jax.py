@@ -60,9 +60,14 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
     from isogrid.ks.eigensolver import validate_orbital_block
 
     grid_geometry = operator_context.grid_geometry
+    # Keep a materially larger working subspace for small near-degenerate blocks.
+    # For k=2 on the current H2 local-only route, a tiny basis tends to collapse
+    # the second Ritz vector; we therefore reinterpret `ncv` as a minimum working
+    # subspace size and enforce a larger floor for multi-state solves.
     block_size = max(
         2 * k + 2,
         4,
+        12 * k + 8,
         0 if initial_subspace_size is None else int(initial_subspace_size),
         0 if ncv is None else int(ncv),
     )
@@ -97,6 +102,10 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
     def _weighted_column_norms(columns):
         norms_squared = jnp.sum(jnp.abs(columns) ** 2 * weights_flat[:, None], axis=0)
         return jnp.sqrt(jnp.clip(norms_squared, 0.0, None))
+
+    def _project_out_weighted(columns, against):
+        projection = _weighted_overlap_columns(against, columns)
+        return columns - against @ projection
 
     @jax.jit
     def _run(initial_block):
@@ -164,16 +173,22 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             ritz_value_history = ritz_value_history.at[iteration].set(subspace_eigenvalues[:k])
             subspace_dimensions = subspace_dimensions.at[iteration].set(basis_columns.shape[1])
 
-            rotated_columns = basis_columns @ subspace_vectors
-            candidate_columns = jnp.concatenate(
-                [
-                    orbital_columns,
-                    residual_columns,
-                    rotated_columns[:, k:],
-                ],
-                axis=1,
-            )[:, : basis_columns.shape[1]]
-            next_basis_columns = _weighted_qr_columns(candidate_columns)
+            residual_columns = _project_out_weighted(residual_columns, basis_columns)
+            residual_columns = _weighted_qr_columns(residual_columns)
+
+            # Expand the working subspace with fresh residual directions, then
+            # compress it back to the fixed block size via a second Ritz solve.
+            trial_columns = jnp.concatenate([basis_columns, residual_columns], axis=1)
+            trial_columns = _weighted_qr_columns(trial_columns)
+            trial_block = _columns_to_block(trial_columns)
+            trial_action_columns = flatten_orbital_block_jax(block_apply(trial_block))
+            trial_projected = _weighted_overlap_columns(trial_columns, trial_action_columns)
+            trial_projected = 0.5 * (trial_projected + jnp.conjugate(trial_projected).T)
+            trial_eigenvalues, trial_vectors = jnp.linalg.eigh(trial_projected)
+            trial_order = jnp.argsort(trial_eigenvalues)
+            trial_vectors = trial_vectors[:, trial_order]
+            next_basis_columns = trial_columns @ trial_vectors[:, : basis_columns.shape[1]]
+            next_basis_columns = _weighted_qr_columns(next_basis_columns)
             basis_columns = jax.lax.select(converged, basis_columns, next_basis_columns)
 
             return (
@@ -227,8 +242,10 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         solver_method="jax_block_subspace_iteration",
         solver_note=(
             "JAX-native fixed-size block subspace iteration on the cached local-only block Hamiltonian. "
+            "Each step expands the current basis with weighted-orthogonalized residual directions and "
+            "compresses the enlarged trial space back through a Rayleigh-Ritz restart in JAX. "
             "The outer eigensolver loop, orthogonalization, projected solve, and residual update stay in JAX, "
-            "and `ncv` is reinterpreted as the fixed subspace size on this route."
+            "and `ncv` is reinterpreted as a minimum working subspace size on this route."
         ),
         converged=bool(converged),
         iteration_count=iteration_count_int,

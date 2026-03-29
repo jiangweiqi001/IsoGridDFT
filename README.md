@@ -57,7 +57,7 @@ The current follow-up on that monitor-grid SCF line is intentionally narrow: H2 
 
 The first JAX migration slice has now started as well, but it is intentionally narrow: only already-stable hot kernels are being moved first, namely weighted reductions / block linear algebra, the repaired monitor-grid Poisson CG hot path, and the local-only A-grid Hamiltonian matvec. Nonlocal, the SCF outer control flow, and the eigensolver outer iteration still remain on their current Python/SciPy auditable routes.
 
-That first JAX slice has now been pushed through the fixed-potential eigensolver itself: the current A-grid local-only formal path now uses a JAX-native block subspace iteration, while SciPy is retained only as an explicit fallback / audit cross-check route.
+That first JAX slice has now been pushed through the fixed-potential eigensolver itself: the current A-grid local-only formal path now uses a JAX-native block subspace iteration, while SciPy is retained only as an explicit fallback / audit cross-check route. The current follow-up is narrowly focused on small-block maturity: `k=1` is already usable, and the present work is to make `k=2` near-degenerate pairs numerically stable enough on the same JAX-native path.
 
 The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
 

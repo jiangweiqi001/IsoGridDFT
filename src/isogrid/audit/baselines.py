@@ -2776,46 +2776,47 @@ H2_JAX_NATIVE_EIGENSOLVER_BASELINE = H2JaxNativeFixedPotentialEigensolverRegress
     jax_native_k1_route=H2FixedPotentialEigensolverRouteBaseline(
         path_type="monitor_a_grid_plus_patch",
         target_orbitals=1,
-        eigenvalues_ha=(-0.18662668388477824,),
-        max_residual_norm=0.0009683459054785708,
-        max_orthogonality_error=2.886579864025407e-15,
+        eigenvalues_ha=(-0.18662679302057703,),
+        max_residual_norm=0.000983035773158209,
+        max_orthogonality_error=9.103828801926284e-15,
         converged=True,
         kinetic_version="trial_fix",
         solver_backend="jax",
         use_scipy_fallback=False,
-        iteration_count=139,
+        iteration_count=133,
         use_jax_block_kernels=True,
         use_jax_cached_kernels=True,
-        wall_time_seconds=0.7202104399984819,
+        wall_time_seconds=1.794407544999558,
     ),
     jax_native_k2_route=H2FixedPotentialEigensolverRouteBaseline(
         path_type="monitor_a_grid_plus_patch",
         target_orbitals=2,
-        eigenvalues_ha=(-0.18662960075396284, -0.1861733677114156),
-        max_residual_norm=0.021815818545911275,
-        max_orthogonality_error=2.4202861936828413e-14,
-        converged=False,
+        eigenvalues_ha=(-0.18665773152049533, -0.1865950095267429),
+        max_residual_norm=0.0009934008750981486,
+        max_orthogonality_error=1.765254609153999e-14,
+        converged=True,
         kinetic_version="trial_fix",
         solver_backend="jax",
         use_scipy_fallback=False,
-        iteration_count=400,
+        iteration_count=397,
         use_jax_block_kernels=True,
         use_jax_cached_kernels=True,
-        wall_time_seconds=0.6329273369992734,
+        wall_time_seconds=1.4431284989987034,
     ),
     diagnosis=(
         "The fixed-potential A-grid local-only main path has now been pulled fully out of SciPy's "
         "hot loop for the JAX route. The formal JAX-native solver keeps the outer subspace iteration, "
-        "orthogonalization, projected solve, and residual update in JAX and reaches a converged k=1 "
-        "state with a sub-microhartree eigenvalue delta against the SciPy fallback while running much "
-        "faster on the same CPU environment. The current k=2 route still runs entirely in JAX but has "
-        "not yet reduced the second-state residual enough, so the architecture repair is in place even "
-        "though the small block-subspace implementation is not yet equally mature for k=2."
+        "orthogonalization, projected solve, and residual update in JAX. After the small-block repair, "
+        "the k=2 route now uses a larger working subspace plus residual-expanded Rayleigh-Ritz restarts, "
+        "which moves the near-degenerate H2 pair onto the correct branch and reduces the max k=2 residual "
+        "from O(1e-2) to O(1e-3) while staying fully on the JAX side. A same-case SciPy fallback cross-check "
+        "still attains tighter residuals, so k=2 is now basically usable but not yet as numerically mature "
+        "as the fallback route."
     ),
     note=(
         "JAX-native fixed-potential eigensolver baseline for the current A-grid+patch+kinetic-trial-fix "
-        "local-only route. SciPy is retained only as an explicit k=1 fallback/cross-check route and is "
-        "no longer the intended production hot loop for the JAX monitor-grid path."
+        "local-only route. SciPy is retained only as an explicit fallback/cross-check route and is no "
+        "longer the intended production hot loop for the JAX monitor-grid path."
     ),
 )
 
