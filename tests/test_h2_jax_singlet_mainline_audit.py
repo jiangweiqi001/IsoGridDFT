@@ -7,6 +7,9 @@ from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBeha
 from isogrid.audit.h2_jax_singlet_mainline_audit import (
     H2JaxSingletFixedPointLocalDifficulty,
 )
+from isogrid.audit.h2_jax_singlet_mainline_audit import (
+    H2JaxSingletResponseChannelDifficulty,
+)
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineParameterSummary
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineRouteResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineTimingBreakdown
@@ -162,6 +165,29 @@ def _build_route(
             total=-0.17,
         ),
         note="singlet adequacy smoke",
+        response_channel_difficulty=(
+            H2JaxSingletResponseChannelDifficulty(
+                tail_pair_iterations=(19, 20),
+                density_secant_norm=0.15,
+                total_output_response_proxy=1.01,
+                total_effective_potential_amplification_proxy=1.8,
+                hartree_potential_amplification_proxy=0.7,
+                xc_potential_amplification_proxy=0.4,
+                local_orbital_potential_amplification_proxy=0.7,
+                hartree_potential_contribution_share=0.45,
+                xc_potential_contribution_share=0.20,
+                local_orbital_potential_contribution_share=0.35,
+                hartree_output_sensitivity_proxy=0.44,
+                xc_output_sensitivity_proxy=0.19,
+                local_orbital_output_sensitivity_proxy=0.38,
+                coupling_excess_output_sensitivity_proxy=0.0,
+                primary_difficulty_channel="hartree",
+                dominant_coupling_label="hartree+local_orbital",
+                diagnosis="channel proxy smoke",
+            )
+            if mixer == "anderson"
+            else None
+        ),
     )
 
 
@@ -239,3 +265,5 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         result.anderson_productionish_route.fixed_point_local_difficulty.secant_subspace_condition_proxy
         == 1.0e6
     )
+    assert result.anderson_productionish_route.response_channel_difficulty is not None
+    assert result.anderson_productionish_route.response_channel_difficulty.primary_difficulty_channel == "hartree"

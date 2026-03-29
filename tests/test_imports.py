@@ -514,6 +514,14 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
         == "locally_noncontractive_or_expansive"
     )
     assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.response_channel_difficulty
+        is not None
+    )
+    assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.response_channel_difficulty.primary_difficulty_channel
+        == "hartree"
+    )
+    assert (
         H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_anderson_route.fixed_point_entered_plateau
         is True
     )

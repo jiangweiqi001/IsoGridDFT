@@ -10,6 +10,9 @@ import numpy as np
 from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import build_h2_local_patch_development_monitor_grid
+from isogrid.ks import prepare_fixed_potential_static_local_operator_profiled
+from isogrid.pseudo import LocalPotentialPatchParameters
 from isogrid.scf import H2StaticLocalScfDryRunResult
 from isogrid.scf import SinglePointEnergyComponents
 from isogrid.scf import run_h2_monitor_grid_scf_dry_run
@@ -94,6 +97,29 @@ class H2JaxSingletFixedPointLocalDifficulty:
     local_contraction_verdict: str
     secant_subspace_condition_proxy: float | None
     secant_collinearity_max_abs_cosine: float | None
+    diagnosis: str
+
+
+@dataclass(frozen=True)
+class H2JaxSingletResponseChannelDifficulty:
+    """Very small channel-wise tail difficulty summary near the singlet fixed-point tail."""
+
+    tail_pair_iterations: tuple[int, int] | None
+    density_secant_norm: float | None
+    total_output_response_proxy: float | None
+    total_effective_potential_amplification_proxy: float | None
+    hartree_potential_amplification_proxy: float | None
+    xc_potential_amplification_proxy: float | None
+    local_orbital_potential_amplification_proxy: float | None
+    hartree_potential_contribution_share: float | None
+    xc_potential_contribution_share: float | None
+    local_orbital_potential_contribution_share: float | None
+    hartree_output_sensitivity_proxy: float | None
+    xc_output_sensitivity_proxy: float | None
+    local_orbital_output_sensitivity_proxy: float | None
+    coupling_excess_output_sensitivity_proxy: float | None
+    primary_difficulty_channel: str | None
+    dominant_coupling_label: str | None
     diagnosis: str
 
 
@@ -192,6 +218,7 @@ class H2JaxSingletMainlineRouteResult:
     anderson_projected_residual_ratio_history: tuple[float | None, ...]
     final_energy_components: SinglePointEnergyComponents
     note: str
+    response_channel_difficulty: H2JaxSingletResponseChannelDifficulty | None = None
 
 
 @dataclass(frozen=True)
@@ -419,6 +446,221 @@ def _build_fixed_point_local_difficulty(
     )
 
 
+def _default_patch_parameters() -> LocalPotentialPatchParameters:
+    return LocalPotentialPatchParameters(
+        patch_radius_scale=0.75,
+        patch_grid_shape=(25, 25, 25),
+        correction_strength=1.30,
+        interpolation_neighbors=8,
+    )
+
+
+def _stack_spin_fields(field_up: np.ndarray, field_down: np.ndarray) -> np.ndarray:
+    return np.concatenate(
+        (
+            np.asarray(field_up, dtype=np.float64).ravel(),
+            np.asarray(field_down, dtype=np.float64).ravel(),
+        )
+    )
+
+
+def _safe_norm_ratio(numerator: np.ndarray, denominator_norm: float) -> float | None:
+    if denominator_norm <= 1.0e-16:
+        return None
+    return float(np.linalg.norm(np.asarray(numerator, dtype=np.float64)) / denominator_norm)
+
+
+def _channel_contribution_share(
+    channel_vector: np.ndarray,
+    total_vector: np.ndarray,
+) -> float | None:
+    total_field = np.asarray(total_vector, dtype=np.float64)
+    denominator = float(np.dot(total_field, total_field))
+    if denominator <= 1.0e-16:
+        return None
+    channel_field = np.asarray(channel_vector, dtype=np.float64)
+    return float(np.dot(channel_field, total_field) / denominator)
+
+
+def _build_spin_contexts(
+    *,
+    rho_up: np.ndarray,
+    rho_down: np.ndarray,
+    case: BenchmarkCase,
+    patch_parameters: LocalPotentialPatchParameters,
+):
+    grid_geometry = build_h2_local_patch_development_monitor_grid()
+    up_context, _ = prepare_fixed_potential_static_local_operator_profiled(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up,
+        rho_down=rho_down,
+        spin_channel="up",
+        case=case,
+        use_monitor_patch=True,
+        patch_parameters=patch_parameters,
+        kinetic_version="trial_fix",
+        hartree_backend="jax",
+        use_jax_hartree_cached_operator=True,
+        jax_hartree_cg_impl="jax_loop",
+        jax_hartree_cg_preconditioner="none",
+        jax_hartree_line_preconditioner_impl="baseline",
+    )
+    down_context, _ = prepare_fixed_potential_static_local_operator_profiled(
+        grid_geometry=grid_geometry,
+        rho_up=rho_up,
+        rho_down=rho_down,
+        spin_channel="down",
+        case=case,
+        use_monitor_patch=True,
+        patch_parameters=patch_parameters,
+        kinetic_version="trial_fix",
+        hartree_backend="jax",
+        use_jax_hartree_cached_operator=True,
+        jax_hartree_cg_impl="jax_loop",
+        jax_hartree_cg_preconditioner="none",
+        jax_hartree_line_preconditioner_impl="baseline",
+    )
+    return grid_geometry, up_context, down_context
+
+
+def _build_response_channel_difficulty(
+    result: H2StaticLocalScfDryRunResult,
+    *,
+    case: BenchmarkCase,
+) -> H2JaxSingletResponseChannelDifficulty | None:
+    if len(result.history) < 2:
+        return None
+    previous_record = result.history[-2]
+    current_record = result.history[-1]
+    patch_parameters = _default_patch_parameters()
+    _, previous_up_context, previous_down_context = _build_spin_contexts(
+        rho_up=previous_record.input_rho_up,
+        rho_down=previous_record.input_rho_down,
+        case=case,
+        patch_parameters=patch_parameters,
+    )
+    _, current_up_context, current_down_context = _build_spin_contexts(
+        rho_up=current_record.input_rho_up,
+        rho_down=current_record.input_rho_down,
+        case=case,
+        patch_parameters=patch_parameters,
+    )
+    delta_rho_in = _stack_spin_fields(
+        current_record.input_rho_up - previous_record.input_rho_up,
+        current_record.input_rho_down - previous_record.input_rho_down,
+    )
+    density_secant_norm = float(np.linalg.norm(delta_rho_in))
+    if density_secant_norm <= 1.0e-16:
+        return None
+    delta_rho_out = _stack_spin_fields(
+        current_record.output_rho_up - previous_record.output_rho_up,
+        current_record.output_rho_down - previous_record.output_rho_down,
+    )
+    total_output_response_proxy = float(np.linalg.norm(delta_rho_out) / density_secant_norm)
+
+    delta_v_hartree = _stack_spin_fields(
+        current_up_context.hartree_potential - previous_up_context.hartree_potential,
+        current_down_context.hartree_potential - previous_down_context.hartree_potential,
+    )
+    delta_v_xc = _stack_spin_fields(
+        current_up_context.xc_potential - previous_up_context.xc_potential,
+        current_down_context.xc_potential - previous_down_context.xc_potential,
+    )
+    delta_v_total = _stack_spin_fields(
+        current_up_context.effective_local_potential - previous_up_context.effective_local_potential,
+        current_down_context.effective_local_potential - previous_down_context.effective_local_potential,
+    )
+    delta_v_local_orbital = np.asarray(
+        delta_v_total - delta_v_hartree - delta_v_xc,
+        dtype=np.float64,
+    )
+    hartree_potential_contribution_share = _channel_contribution_share(
+        delta_v_hartree,
+        delta_v_total,
+    )
+    xc_potential_contribution_share = _channel_contribution_share(delta_v_xc, delta_v_total)
+    local_orbital_potential_contribution_share = _channel_contribution_share(
+        delta_v_local_orbital,
+        delta_v_total,
+    )
+    hartree_output_sensitivity_proxy = (
+        None
+        if hartree_potential_contribution_share is None
+        else float(hartree_potential_contribution_share * total_output_response_proxy)
+    )
+    xc_output_sensitivity_proxy = (
+        None
+        if xc_potential_contribution_share is None
+        else float(xc_potential_contribution_share * total_output_response_proxy)
+    )
+    local_orbital_output_sensitivity_proxy = (
+        None
+        if local_orbital_potential_contribution_share is None
+        else float(local_orbital_potential_contribution_share * total_output_response_proxy)
+    )
+    sensitivity_pairs = {
+        "hartree": abs(hartree_output_sensitivity_proxy or 0.0),
+        "xc": abs(xc_output_sensitivity_proxy or 0.0),
+        "local_orbital": abs(local_orbital_output_sensitivity_proxy or 0.0),
+    }
+    ordered_channels = sorted(sensitivity_pairs.items(), key=lambda item: item[1], reverse=True)
+    primary_channel = ordered_channels[0][0] if ordered_channels and ordered_channels[0][1] > 0.0 else None
+    dominant_coupling_label = None
+    if len(ordered_channels) >= 2:
+        top_name, top_value = ordered_channels[0]
+        second_name, second_value = ordered_channels[1]
+        if top_value > 0.0 and second_value >= 0.75 * top_value:
+            dominant_coupling_label = f"{top_name}+{second_name}"
+    coupling_excess_output_sensitivity_proxy = None
+    if (
+        total_output_response_proxy is not None
+        and hartree_output_sensitivity_proxy is not None
+        and xc_output_sensitivity_proxy is not None
+        and local_orbital_output_sensitivity_proxy is not None
+    ):
+        coupling_excess_output_sensitivity_proxy = float(
+            abs(hartree_output_sensitivity_proxy)
+            + abs(xc_output_sensitivity_proxy)
+            + abs(local_orbital_output_sensitivity_proxy)
+            - abs(total_output_response_proxy)
+        )
+    diagnosis = (
+        "Channel-wise tail difficulty proxy built from the last singlet secant pair. "
+        "Hartree/XC/local_orbital potential proxies use stacked spin potential differences divided by "
+        "the input-density secant norm. The channel output proxies are secant-based decompositions of the "
+        "observed total output-response amplification, weighted by each channel's directional contribution "
+        "to the full effective-potential change. The local_orbital label is only the closest audit proxy: "
+        "it captures density-dependent local ionic/patch changes plus the residual orbital-response-aligned "
+        "part of the map that is not cleanly attributable to Hartree or XC, and it is not a strict isolated "
+        "kinetic linear-response channel."
+    )
+    return H2JaxSingletResponseChannelDifficulty(
+        tail_pair_iterations=(int(previous_record.iteration), int(current_record.iteration)),
+        density_secant_norm=density_secant_norm,
+        total_output_response_proxy=total_output_response_proxy,
+        total_effective_potential_amplification_proxy=_safe_norm_ratio(
+            delta_v_total,
+            density_secant_norm,
+        ),
+        hartree_potential_amplification_proxy=_safe_norm_ratio(delta_v_hartree, density_secant_norm),
+        xc_potential_amplification_proxy=_safe_norm_ratio(delta_v_xc, density_secant_norm),
+        local_orbital_potential_amplification_proxy=_safe_norm_ratio(
+            delta_v_local_orbital,
+            density_secant_norm,
+        ),
+        hartree_potential_contribution_share=hartree_potential_contribution_share,
+        xc_potential_contribution_share=xc_potential_contribution_share,
+        local_orbital_potential_contribution_share=local_orbital_potential_contribution_share,
+        hartree_output_sensitivity_proxy=hartree_output_sensitivity_proxy,
+        xc_output_sensitivity_proxy=xc_output_sensitivity_proxy,
+        local_orbital_output_sensitivity_proxy=local_orbital_output_sensitivity_proxy,
+        coupling_excess_output_sensitivity_proxy=coupling_excess_output_sensitivity_proxy,
+        primary_difficulty_channel=primary_channel,
+        dominant_coupling_label=dominant_coupling_label,
+        diagnosis=diagnosis,
+    )
+
+
 def _build_behavior(
     result: H2StaticLocalScfDryRunResult,
     *,
@@ -580,6 +822,7 @@ def _build_parameter_summary(
 def _build_route_result(
     result: H2StaticLocalScfDryRunResult,
     *,
+    case: BenchmarkCase,
     mixing: float,
     mixer: str,
     solver_variant: str,
@@ -601,6 +844,12 @@ def _build_route_result(
         result,
         behavior=behavior,
     )
+    response_channel_difficulty = None
+    if mixer == "anderson" and "productionish" in solver_variant:
+        response_channel_difficulty = _build_response_channel_difficulty(
+            result,
+            case=case,
+        )
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
         spin_state_label=result.spin_state_label,
@@ -676,6 +925,7 @@ def _build_route_result(
             "use_jax_hartree_cached_operator=True, cg_impl='jax_loop', "
             "cg_preconditioner='none'. Nonlocal remains absent."
         ),
+        response_channel_difficulty=response_channel_difficulty,
     )
 
 
@@ -768,6 +1018,7 @@ def _run_route(
         )
     return _build_route_result(
         result,
+        case=case,
         mixing=mixing,
         mixer=mixer,
         solver_variant=solver_variant,
@@ -874,7 +1125,7 @@ def _build_diagnosis(
 def run_h2_jax_singlet_mainline_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletMainlineAuditResult:
-    """Run the frozen H2 singlet productionish Anderson audit."""
+    """Run the frozen H2 singlet tail response-channel audit."""
 
     baseline_linear_route = _run_route(
         case=case,
@@ -986,12 +1237,14 @@ def run_h2_jax_singlet_mainline_audit(
             supplemental_anderson=supplemental_anderson_route,
         ),
         note=(
-            "Singlet-only fixed-point local-difficulty audit on the frozen A-grid local-only mainline. The physical "
-            "chain is held fixed and only the singlet mixer behavior changes between linear-0p10, a minimal "
-            "DIIS/Pulay-style density mixer, the frozen Anderson baseline, and a more productionish Anderson route. "
-            "The productionish Anderson keeps the same residual definition rho_out-rho_in and the same density-mixing "
-            "target, but adds same-family engineering safeguards: stronger history management, adaptive damping, "
-            "residual-based accept/reject, and residual-growth-triggered restart. A separate 40-step supplemental "
+            "Singlet-only fixed-point local-difficulty and tail response-channel audit on the frozen A-grid local-only "
+            "mainline. The physical chain is held fixed and only the singlet mixer behavior changes between linear-0p10, "
+            "a minimal DIIS/Pulay-style density mixer, the frozen Anderson baseline, and a more productionish Anderson "
+            "route. The productionish Anderson keeps the same residual definition rho_out-rho_in and the same density-"
+            "mixing target, but adds same-family engineering safeguards: stronger history management, adaptive damping, "
+            "residual-based accept/reject, and residual-growth-triggered restart. The productionish tail is also "
+            "diagnosed with a secant-based response-channel decomposition that compares Hartree, XC, and the closest "
+            "available local-orbital residual proxy without changing the physical map. A separate 40-step supplemental "
             "view is recorded only to distinguish implementation adequacy from a genuinely hard fixed-point map."
         ),
     )
@@ -1043,6 +1296,22 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
         f"secant_collinearity={route.fixed_point_local_difficulty.secant_collinearity_max_abs_cosine}"
     )
     print(f"  fixed-point diagnosis: {route.fixed_point_local_difficulty.diagnosis}")
+    if route.response_channel_difficulty is not None:
+        print(
+            "  response-channel proxy: "
+            f"tail_pair={route.response_channel_difficulty.tail_pair_iterations}, "
+            f"primary={route.response_channel_difficulty.primary_difficulty_channel}, "
+            f"coupling={route.response_channel_difficulty.dominant_coupling_label}, "
+            f"total_output={route.response_channel_difficulty.total_output_response_proxy}, "
+            f"hartree_output={route.response_channel_difficulty.hartree_output_sensitivity_proxy}, "
+            f"xc_output={route.response_channel_difficulty.xc_output_sensitivity_proxy}, "
+            f"local_orbital_output={route.response_channel_difficulty.local_orbital_output_sensitivity_proxy}, "
+            f"total_potential={route.response_channel_difficulty.total_effective_potential_amplification_proxy}, "
+            f"hartree_share={route.response_channel_difficulty.hartree_potential_contribution_share}, "
+            f"xc_share={route.response_channel_difficulty.xc_potential_contribution_share}, "
+            f"local_share={route.response_channel_difficulty.local_orbital_potential_contribution_share}"
+        )
+        print(f"  response-channel diagnosis: {route.response_channel_difficulty.diagnosis}")
     if route.mixer == "diis":
         print(f"  diis used iterations: {route.diis_used_iterations}")
         print(f"  diis fallback iterations: {route.diis_fallback_iterations}")
@@ -1083,7 +1352,7 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
 def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResult) -> None:
     """Print the compact H2 singlet fixed-point local-difficulty audit summary."""
 
-    print("IsoGridDFT H2 singlet fixed-point local-difficulty audit")
+    print("IsoGridDFT H2 singlet fixed-point and tail response-channel audit")
     print(f"note: {result.note}")
     print(
         "previous frozen-mainline baseline: "

@@ -2335,6 +2335,29 @@ class H2JaxScfHotpathRegressionBaseline:
 
 
 @dataclass(frozen=True)
+class H2JaxSingletResponseChannelDifficultyBaseline:
+    """Recorded channel-wise tail difficulty proxy for one singlet route."""
+
+    tail_pair_iterations: tuple[int, int] | None
+    density_secant_norm: float | None
+    total_output_response_proxy: float | None
+    total_effective_potential_amplification_proxy: float | None
+    hartree_potential_amplification_proxy: float | None
+    xc_potential_amplification_proxy: float | None
+    local_orbital_potential_amplification_proxy: float | None
+    hartree_potential_contribution_share: float | None
+    xc_potential_contribution_share: float | None
+    local_orbital_potential_contribution_share: float | None
+    hartree_output_sensitivity_proxy: float | None
+    xc_output_sensitivity_proxy: float | None
+    local_orbital_output_sensitivity_proxy: float | None
+    coupling_excess_output_sensitivity_proxy: float | None
+    primary_difficulty_channel: str | None
+    dominant_coupling_label: str | None
+    diagnosis: str
+
+
+@dataclass(frozen=True)
 class H2JaxSingletMainlineRouteBaseline:
     """Recorded one H2 singlet mixing route on the frozen JAX A-grid mainline."""
 
@@ -2410,6 +2433,7 @@ class H2JaxSingletMainlineRouteBaseline:
     energy_evaluation_wall_time_seconds: float | None
     density_update_wall_time_seconds: float | None
     bookkeeping_wall_time_seconds: float | None
+    response_channel_difficulty: H2JaxSingletResponseChannelDifficultyBaseline | None = None
 
 
 @dataclass(frozen=True)
@@ -2818,62 +2842,61 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.16462078525399704,
-        final_lowest_eigenvalue_ha=-0.3941181284533436,
-        final_density_residual=0.3078544705321165,
-        final_energy_change_ha=0.007169848080639807,
-        total_wall_time_seconds=92.86439911400021,
-        average_iteration_wall_time_seconds=4.64321995570001,
+        final_total_energy_ha=-0.16490725699581776,
+        final_lowest_eigenvalue_ha=-0.393680167822,
+        final_density_residual=0.3082576618841004,
+        final_energy_change_ha=0.008444303434546052,
+        total_wall_time_seconds=144.093111,
+        average_iteration_wall_time_seconds=7.204656,
         behavior_verdict="plateau_or_stall",
         detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.012916626866099595,
-        even_odd_residual_gap=0.0013876865178953368,
+        even_odd_energy_gap_ha=0.005681212190792234,
+        even_odd_residual_gap=0.0028281707311249016,
         tail_energy_history_ha=(
-            -0.17181322691311818,
-            -0.17350876366408874,
-            -0.16769317893878977,
-            -0.17179063333463684,
-            -0.16462078525399704,
+            -0.17232220063978443,
+            -0.17558217169535462,
+            -0.16807523395893142,
+            -0.17335156043036382,
+            -0.16490725699581776,
         ),
         tail_density_residual_history=(
-            0.3050901851469206,
-            0.3099576137692862,
-            0.3066659238111554,
-            0.31002917938068186,
-            0.3078544705321165,
+            0.30585858377591524,
+            0.3085754520692864,
+            0.30722038301956045,
+            0.308978715363338,
+            0.3082576618841004,
         ),
         tail_energy_change_history_ha=(
-            0.0038880559449592234,
-            -0.001695536750970561,
-            0.005815584725298972,
-            -0.004097454395847078,
-            0.007169848080639807,
+            0.0062138154523317946,
+            -0.0032599710555701877,
+            0.0075069377364231915,
+            -0.005276326471432391,
+            0.008444303434546052,
         ),
         tail_residual_ratios=(
-            1.0159540649268073,
-            0.9893801932525493,
-            1.010967164293081,
-            0.9929854704227854,
+            1.0088827596722334,
+            0.9956086297836106,
+            1.0057233583478267,
+            0.9976663328462945,
         ),
-        average_tail_residual_ratio=1.0023217232238057,
-        tail_residual_ratio_std=0.01134937449764519,
+        average_tail_residual_ratio=1.0019702701624913,
+        tail_residual_ratio_std=0.00549687472299385,
         entered_plateau=True,
         fixed_point_tail_window_length=5,
-        fixed_point_average_tail_residual_ratio=1.0023217232238057,
-        fixed_point_tail_residual_ratio_std=0.01134937449764519,
-        fixed_point_maximum_tail_residual_ratio=1.0159540649268073,
+        fixed_point_average_tail_residual_ratio=1.0019702701624913,
+        fixed_point_tail_residual_ratio_std=0.00549687472299385,
+        fixed_point_maximum_tail_residual_ratio=1.0088827596722334,
         fixed_point_entered_plateau=True,
-        fixed_point_plateau_window_length=3,
-        fixed_point_tail_residual_amplitude=0.0049389942337612625,
-        fixed_point_weak_cycle_indicator=False,
-        fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
-        fixed_point_secant_subspace_condition_proxy=201558633.95030957,
-        fixed_point_secant_collinearity_max_abs_cosine=0.9999992633428221,
+        fixed_point_plateau_window_length=4,
+        fixed_point_tail_residual_amplitude=0.0031201315874227475,
+        fixed_point_weak_cycle_indicator=True,
+        fixed_point_local_contraction_verdict="oscillatory_near_neutral",
+        fixed_point_secant_subspace_condition_proxy=170402398.87257567,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9999992051362288,
         fixed_point_diagnosis=(
-            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
-            "which is consistent with a locally near-noncontractive singlet fixed-point map; recent "
-            "secant directions are nearly collinear, so the mixer subspace is also becoming low-rank; "
-            "the secant Gram proxy is very ill-conditioned"
+            "tail history shows weak periodic structure, so the local map looks oscillatory and only "
+            "marginally damped; recent secant directions are nearly collinear, so the mixer subspace "
+            "is also becoming low-rank; the secant Gram proxy is very ill-conditioned"
         ),
         diis_used_iterations=(),
         diis_fallback_iterations=(),
@@ -2920,64 +2943,63 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.15956159627065503,
-        final_lowest_eigenvalue_ha=-0.4045909245989874,
-        final_density_residual=0.14551540866060536,
-        final_energy_change_ha=-0.014445293316295293,
-        total_wall_time_seconds=89.8453793650001,
-        average_iteration_wall_time_seconds=4.492268968250005,
+        final_total_energy_ha=-0.15346765951077235,
+        final_lowest_eigenvalue_ha=-0.428887062745,
+        final_density_residual=0.3207734157102832,
+        final_energy_change_ha=0.010951610008034685,
+        total_wall_time_seconds=139.549558,
+        average_iteration_wall_time_seconds=6.977478,
         behavior_verdict="slow_monotone_or_damped",
         detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.0010946372810189398,
-        even_odd_residual_gap=0.02957917374095398,
+        even_odd_energy_gap_ha=0.0035201518176727342,
+        even_odd_residual_gap=0.004944412056556657,
         tail_energy_history_ha=(
-            -0.15955013123156514,
-            -0.18418025719169961,
-            -0.14474342566439835,
-            -0.14511630295435973,
-            -0.15956159627065503,
+            -0.13647615631429433,
+            -0.1385685015201722,
+            -0.1785769739290639,
+            -0.16441926951880703,
+            -0.15346765951077235,
         ),
         tail_density_residual_history=(
-            0.30286929897172554,
-            0.28568007583276467,
-            0.3139840522056774,
-            0.3171568850394568,
-            0.14551540866060536,
+            0.32036670895253455,
+            0.319223686591239,
+            0.29096961608394134,
+            0.3019934934360359,
+            0.3207734157102832,
         ),
         tail_energy_change_history_ha=(
-            0.034058181623787265,
-            -0.024630125960134475,
-            0.039436831527301264,
-            -0.0003728772899613819,
-            -0.014445293316295293,
+            0.06044505689869406,
+            -0.0020923452058778658,
+            -0.040008472408891715,
+            0.014157704410256877,
+            0.010951610008034685,
         ),
         tail_residual_ratios=(
-            0.943245409167188,
-            1.0990757801026407,
-            1.0101050763931827,
-            0.4588120754260217,
+            0.9964321437610271,
+            0.9114913094043784,
+            1.0378866958703834,
+            1.0621865128965935,
         ),
-        average_tail_residual_ratio=0.8778095852722583,
-        tail_residual_ratio_std=0.248143902933257,
+        average_tail_residual_ratio=1.0019991654830955,
+        tail_residual_ratio_std=0.05729985900678851,
         entered_plateau=False,
         fixed_point_tail_window_length=5,
-        fixed_point_average_tail_residual_ratio=0.8778095852722583,
-        fixed_point_tail_residual_ratio_std=0.248143902933257,
-        fixed_point_maximum_tail_residual_ratio=1.0990757801026407,
+        fixed_point_average_tail_residual_ratio=1.0019991654830955,
+        fixed_point_tail_residual_ratio_std=0.05729985900678851,
+        fixed_point_maximum_tail_residual_ratio=1.0621865128965935,
         fixed_point_entered_plateau=False,
         fixed_point_plateau_window_length=0,
-        fixed_point_tail_residual_amplitude=0.17164147637885147,
+        fixed_point_tail_residual_amplitude=0.029803799626341887,
         fixed_point_weak_cycle_indicator=False,
         fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
-        fixed_point_secant_subspace_condition_proxy=1369319.1725438836,
-        fixed_point_secant_collinearity_max_abs_cosine=0.9989265622324928,
+        fixed_point_secant_subspace_condition_proxy=1197538.6960408574,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9948546410432438,
         fixed_point_diagnosis=(
             "tail history does not show decisive contraction, which points more to a hard local map "
-            "than to a small mixer tweak; recent secant directions are nearly collinear, so the mixer "
-            "subspace is also becoming low-rank"
+            "than to a small mixer tweak"
         ),
-        diis_used_iterations=(3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 19, 20),
-        diis_fallback_iterations=(6, 13),
+        diis_used_iterations=(3, 4, 5, 7, 8, 9, 10, 11, 12, 14, 15, 16, 17, 18, 20),
+        diis_fallback_iterations=(6, 13, 19),
         anderson_used_iterations=(),
         anderson_fallback_iterations=(),
         anderson_rejected_iterations=(),
@@ -3021,61 +3043,61 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.18190642977056537,
-        final_lowest_eigenvalue_ha=-0.38172247648922003,
-        final_density_residual=0.29757436471047005,
-        final_energy_change_ha=-0.02166636618784501,
-        total_wall_time_seconds=107.60958447799976,
-        average_iteration_wall_time_seconds=5.380479223899988,
-        behavior_verdict="weak_two_cycle",
-        detected_two_cycle=True,
-        even_odd_energy_gap_ha=0.025602434902821658,
-        even_odd_residual_gap=0.014613215625943587,
+        final_total_energy_ha=-0.16385616434001382,
+        final_lowest_eigenvalue_ha=-0.390131434227,
+        final_density_residual=0.3028527094846195,
+        final_energy_change_ha=0.004683140886254322,
+        total_wall_time_seconds=138.68386,
+        average_iteration_wall_time_seconds=6.934193,
+        behavior_verdict="plateau_or_stall",
+        detected_two_cycle=False,
+        even_odd_energy_gap_ha=0.00027636999079730384,
+        even_odd_residual_gap=0.006141023850646743,
         tail_energy_history_ha=(
-            -0.18800520844681834,
-            -0.16009206494021633,
-            -0.18311391054109405,
-            -0.16024006358272036,
-            -0.18190642977056537,
+            -0.16431559723543587,
+            -0.1658887412900404,
+            -0.16417379146952715,
+            -0.16853930522626814,
+            -0.16385616434001382,
         ),
         tail_density_residual_history=(
-            0.2943579119718466,
-            0.3085163683016598,
-            0.2966340741924159,
-            0.30781902114626675,
-            0.29757436471047005,
+            0.3020436233238798,
+            0.30706505893883496,
+            0.3024992641229682,
+            0.3056010861904043,
+            0.3028527094846195,
         ),
         tail_energy_change_history_ha=(
-            -0.027624349642947577,
-            0.02791314350660201,
-            -0.02302184560087772,
-            0.02287384695837369,
-            -0.02166636618784501,
+            0.0015976445320642352,
+            -0.001573144054604514,
+            0.001714949820513234,
+            -0.004365513756740991,
+            0.004683140886254322,
         ),
         tail_residual_ratios=(
-            1.0480994590394002,
-            0.9614856930455447,
-            1.0377062108737904,
-            0.9667185724987127,
+            1.0166248688176103,
+            0.9851308552277313,
+            1.0102539821920864,
+            0.9910066526920901,
         ),
-        average_tail_residual_ratio=1.003502483864362,
-        tail_residual_ratio_std=0.03961455534953873,
+        average_tail_residual_ratio=1.0007540897323794,
+        tail_residual_ratio_std=0.01305016830121198,
         entered_plateau=True,
         fixed_point_tail_window_length=5,
-        fixed_point_average_tail_residual_ratio=1.003502483864362,
-        fixed_point_tail_residual_ratio_std=0.03961455534953873,
-        fixed_point_maximum_tail_residual_ratio=1.0480994590394002,
+        fixed_point_average_tail_residual_ratio=1.0007540897323794,
+        fixed_point_tail_residual_ratio_std=0.01305016830121198,
+        fixed_point_maximum_tail_residual_ratio=1.0166248688176103,
         fixed_point_entered_plateau=True,
-        fixed_point_plateau_window_length=0,
-        fixed_point_tail_residual_amplitude=0.014158456329813218,
+        fixed_point_plateau_window_length=3,
+        fixed_point_tail_residual_amplitude=0.005021435614955161,
         fixed_point_weak_cycle_indicator=True,
         fixed_point_local_contraction_verdict="oscillatory_near_neutral",
-        fixed_point_secant_subspace_condition_proxy=6609827.08225151,
-        fixed_point_secant_collinearity_max_abs_cosine=0.9999990928799875,
+        fixed_point_secant_subspace_condition_proxy=293909418.3728911,
+        fixed_point_secant_collinearity_max_abs_cosine=0.999999475801166,
         fixed_point_diagnosis=(
             "tail history shows weak periodic structure, so the local map looks oscillatory and only "
             "marginally damped; recent secant directions are nearly collinear, so the mixer subspace "
-            "is also becoming low-rank"
+            "is also becoming low-rank; the secant Gram proxy is very ill-conditioned"
         ),
         diis_used_iterations=(),
         diis_fallback_iterations=(),
@@ -3083,9 +3105,9 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         anderson_fallback_iterations=(),
         anderson_rejected_iterations=(),
         anderson_reset_iterations=(),
-        anderson_filtered_history_sizes=(1, 2, 3, 4, 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
+        anderson_filtered_history_sizes=(1, 2, 3, 4, 4, 4, 4, 4, 4, 3, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
         anderson_effective_damping_history=(0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5, 0.5),
-        anderson_projected_residual_ratio_history=(0.5092003622558563, 0.5020069191709178, 0.5016833303604022, 0.5015692318980436, 0.5044974185966603, 0.502766608676275, 0.5040672021739355, 0.5014324322313337, 0.50140875817589, 0.5012748950690692, 0.5012457952448532, 0.500955435860239, 0.5008664100774056, 0.5007717884371825, 0.5005514387581803, 0.5004005075535142, 0.5004589641395073, 0.5003088291253074),
+        anderson_projected_residual_ratio_history=(0.5092003622558543, 0.502006919170911, 0.5000000648821399, 0.5020635732040184, 0.5021564884255415, 0.500098750770018, 0.5002483816981649, 0.5001708806670545, 0.5024603562422808, 0.5005880038625822, 0.5002700787009967, 0.5010597855497426, 0.5002944502615904, 0.5002399148305539, 0.5002954843006241, 0.5002195616798376, 0.5001292844602855, 0.5001704921974695),
         eigensolver_wall_time_seconds=None,
         static_local_prepare_wall_time_seconds=None,
         hartree_solve_wall_time_seconds=None,
@@ -3122,62 +3144,61 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=20,
-        final_total_energy_ha=-0.17620862489518607,
-        final_lowest_eigenvalue_ha=-0.37660603838497686,
-        final_density_residual=0.3004884720375778,
-        final_energy_change_ha=0.011756122735359087,
-        total_wall_time_seconds=121.42382620299986,
-        average_iteration_wall_time_seconds=6.0711913101499935,
+        final_total_energy_ha=-0.17553066350784408,
+        final_lowest_eigenvalue_ha=-0.377542782752,
+        final_density_residual=0.30100654561502155,
+        final_energy_change_ha=0.012388038957953151,
+        total_wall_time_seconds=142.269359,
+        average_iteration_wall_time_seconds=7.11346795,
         behavior_verdict="plateau_or_stall",
         detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.012108007260539982,
-        even_odd_residual_gap=0.0006279261328913099,
+        even_odd_energy_gap_ha=0.006505488126862663,
+        even_odd_residual_gap=0.00012999280934411495,
         tail_energy_history_ha=(
-            -0.18287296892722793,
-            -0.19230289769713704,
-            -0.17934683737659463,
-            -0.18796474763054516,
-            -0.17620862489518607,
+            -0.18360365410650962,
+            -0.17121546977551144,
+            -0.1777209579023741,
+            -0.1710040169023584,
+            -0.17553066350784408,
         ),
         tail_density_residual_history=(
-            0.2995570963905558,
-            0.29836693479891335,
-            0.29978295756308204,
-            0.2997556621913719,
-            0.3004884720375778,
+            0.3005098884758658,
+            0.29786336093320015,
+            0.300348852949036,
+            0.2994182963230792,
+            0.30100654561502155,
         ),
         tail_energy_change_history_ha=(
-            0.013977196580671536,
-            -0.009429928769909113,
-            0.012956060320542417,
-            -0.008617910253950534,
-            0.011756122735359087,
+            0.007052660912545318,
+            0.01238818433099818,
+            -0.006505488126862663,
+            0.006716941000015699,
+            -0.0045266466054856674,
         ),
         tail_residual_ratios=(
-            0.9960269290696732,
-            1.0047459104847627,
-            0.9999089495549313,
-            1.00244469058849,
+            0.9911932097938994,
+            1.0083444033131461,
+            0.9969017473620426,
+            1.0053044496994552,
         ),
-        average_tail_residual_ratio=1.0007816199244641,
-        tail_residual_ratio_std=0.003234580435640358,
+        average_tail_residual_ratio=1.0004359525421358,
+        tail_residual_ratio_std=0.006785365832683521,
         entered_plateau=True,
         fixed_point_tail_window_length=5,
-        fixed_point_average_tail_residual_ratio=1.0007816199244641,
-        fixed_point_tail_residual_ratio_std=0.003234580435640358,
-        fixed_point_maximum_tail_residual_ratio=1.0047459104847627,
+        fixed_point_average_tail_residual_ratio=1.0004359525421358,
+        fixed_point_tail_residual_ratio_std=0.006785365832683521,
+        fixed_point_maximum_tail_residual_ratio=1.0083444033131461,
         fixed_point_entered_plateau=True,
         fixed_point_plateau_window_length=4,
-        fixed_point_tail_residual_amplitude=0.0021215372386644282,
+        fixed_point_tail_residual_amplitude=0.003143184681821396,
         fixed_point_weak_cycle_indicator=False,
         fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
-        fixed_point_secant_subspace_condition_proxy=607397556.0617855,
-        fixed_point_secant_collinearity_max_abs_cosine=0.9999984157869837,
+        fixed_point_secant_subspace_condition_proxy=98871244.68450627,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9999983271119368,
         fixed_point_diagnosis=(
-            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
-            "which is consistent with a locally near-noncontractive singlet fixed-point map; recent "
-            "secant directions are nearly collinear, so the mixer subspace is also becoming low-rank; "
-            "the secant Gram proxy is very ill-conditioned"
+            "tail residual ratios stay pinned near unity and the residual norm sits in a narrow "
+            "plateau, so the singlet tail still looks locally near-noncontractive; recent secant "
+            "directions remain almost collinear and the secant Gram proxy is badly conditioned"
         ),
         diis_used_iterations=(),
         diis_fallback_iterations=(),
@@ -3187,13 +3208,36 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         anderson_reset_iterations=(2, 3),
         anderson_filtered_history_sizes=(1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
         anderson_effective_damping_history=(0.55, 0.45, 0.55, 0.45, 0.55, 0.45, 0.45, 0.45, 0.55, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45),
-        anderson_projected_residual_ratio_history=(0.5886890050532695, 0.6210220229814478, 0.5307077781292244, 0.5956449706122052, 0.49555279348055975, 0.5889081189808486, 0.5797993130540489, 0.5748283369024666, 0.480254437071823, 0.5669597671748555, 0.5629071577997422, 0.561287210575364, 0.5583033253466158, 0.5571588588170018, 0.5559734211085811, 0.5547225014749566, 0.5540401812003865),
+        anderson_projected_residual_ratio_history=(0.5886890050532692, 0.6210220229814535, 0.5307077781292583, 0.5956449706347893, 0.4955527938901183, 0.588908145649586, 0.5797992949269253, 0.5748283219161662, 0.49603747743602095, 0.5660064093194804, 0.5618985392067956, 0.5607301688415945, 0.5557045755678193, 0.5604332297830438, 0.5557557608011938, 0.5544988601396621, 0.5538898408188176),
         eigensolver_wall_time_seconds=None,
         static_local_prepare_wall_time_seconds=None,
         hartree_solve_wall_time_seconds=None,
         energy_evaluation_wall_time_seconds=None,
         density_update_wall_time_seconds=None,
         bookkeeping_wall_time_seconds=None,
+        response_channel_difficulty=H2JaxSingletResponseChannelDifficultyBaseline(
+            tail_pair_iterations=(19, 20),
+            density_secant_norm=0.380388078792558,
+            total_output_response_proxy=27.12670117391717,
+            total_effective_potential_amplification_proxy=25.41167671458842,
+            hartree_potential_amplification_proxy=28.301665034819733,
+            xc_potential_amplification_proxy=3.048557501053921,
+            local_orbital_potential_amplification_proxy=0.03939197025076356,
+            hartree_potential_contribution_share=1.1135585222658135,
+            xc_potential_contribution_share=-0.1136088857093805,
+            local_orbital_potential_contribution_share=5.036344356654146e-05,
+            hartree_output_sensitivity_proxy=30.207169273173513,
+            xc_output_sensitivity_proxy=-3.0818342933400737,
+            local_orbital_output_sensitivity_proxy=0.0013661940837190114,
+            coupling_excess_output_sensitivity_proxy=6.163668587424136,
+            primary_difficulty_channel="hartree",
+            dominant_coupling_label=None,
+            diagnosis=(
+                "Secant-based tail response-channel proxy points overwhelmingly to Hartree feedback: "
+                "the Hartree contribution share is slightly above unity, XC is counter-aligned and "
+                "therefore partly stabilizing, and the residual local-orbital channel is tiny on this proxy."
+            ),
+        ),
     ),
     supplemental_anderson_route=H2JaxSingletMainlineRouteBaseline(
         path_label="jax-singlet-mainline-anderson-productionish-long40",
@@ -3224,61 +3268,61 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         use_step_local_static_local_reuse=True,
         converged=False,
         iteration_count=40,
-        final_total_energy_ha=-0.16506752733609287,
-        final_lowest_eigenvalue_ha=-0.39009230536470885,
-        final_density_residual=0.3028478623514764,
-        final_energy_change_ha=0.007933161734744343,
-        total_wall_time_seconds=321.090957893,
-        average_iteration_wall_time_seconds=8.027273947325,
+        final_total_energy_ha=-0.16384079969830467,
+        final_lowest_eigenvalue_ha=-0.392459335269,
+        final_density_residual=0.30384331606914494,
+        final_energy_change_ha=0.01128093455376511,
+        total_wall_time_seconds=270.903586,
+        average_iteration_wall_time_seconds=6.77258965,
         behavior_verdict="plateau_or_stall",
         detected_two_cycle=False,
-        even_odd_energy_gap_ha=0.009640257352920428,
-        even_odd_residual_gap=8.645699915060812e-05,
+        even_odd_energy_gap_ha=0.011328558448058967,
+        even_odd_residual_gap=0.0004239906491657064,
         tail_energy_history_ha=(
-            -0.1614603565065874,
-            -0.17391198194150526,
-            -0.16586334587938956,
-            -0.1730006890708372,
-            -0.16506752733609287,
+            -0.17471529312443876,
+            -0.16381579688768395,
+            -0.1750324296892597,
+            -0.16385207921815755,
+            -0.16384079969830467,
         ),
         tail_density_residual_history=(
-            0.3041448494161481,
-            0.304453918460312,
-            0.3023080944623845,
-            0.3049793656607342,
-            0.3028478623514764,
+            0.30358997288612716,
+            0.30340004908972107,
+            0.30372871177743843,
+            0.3035504809561434,
+            0.30384331606914494,
         ),
         tail_energy_change_history_ha=(
-            0.016610942668328965,
-            -0.012451625434917846,
-            0.0080486360621157,
-            -0.007137343191447654,
-            0.007933161734744343,
+            -0.008615029984013848,
+            0.010899496236754814,
+            -0.011216632801575739,
+            0.011180350471102146,
+            0.01128093455376511,
         ),
         tail_residual_ratios=(
-            1.001016190294714,
-            0.9929518923297838,
-            1.0088362542958045,
-            0.9930109917284408,
+            0.9993744068863654,
+            1.0010832651105477,
+            0.999413190737708,
+            1.0009646998814798,
         ),
-        average_tail_residual_ratio=0.9989538321621857,
-        tail_residual_ratio_std=0.006581341475462474,
+        average_tail_residual_ratio=1.0002088906540252,
+        tail_residual_ratio_std=0.0008162842326419762,
         entered_plateau=True,
         fixed_point_tail_window_length=5,
-        fixed_point_average_tail_residual_ratio=0.9989538321621857,
-        fixed_point_tail_residual_ratio_std=0.006581341475462474,
-        fixed_point_maximum_tail_residual_ratio=1.0088362542958045,
+        fixed_point_average_tail_residual_ratio=1.0002088906540252,
+        fixed_point_tail_residual_ratio_std=0.0008162842326419762,
+        fixed_point_maximum_tail_residual_ratio=1.0010832651105477,
         fixed_point_entered_plateau=True,
         fixed_point_plateau_window_length=4,
-        fixed_point_tail_residual_amplitude=0.0026712711983497006,
-        fixed_point_weak_cycle_indicator=False,
-        fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
-        fixed_point_secant_subspace_condition_proxy=71569862.99576986,
-        fixed_point_secant_collinearity_max_abs_cosine=0.9999999329618289,
+        fixed_point_tail_residual_amplitude=0.0004432669794238697,
+        fixed_point_weak_cycle_indicator=True,
+        fixed_point_local_contraction_verdict="oscillatory_near_neutral",
+        fixed_point_secant_subspace_condition_proxy=8587973271.278846,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9999999795341669,
         fixed_point_diagnosis=(
-            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
-            "which is consistent with a locally near-noncontractive singlet fixed-point map; recent "
-            "secant directions are nearly collinear, so the mixer subspace is also becoming low-rank"
+            "40-step supplemental run sits in an almost perfectly flat near-unity tail, so this no "
+            "longer looks like 'still shrinking but not fast enough'; the secant subspace is nearly "
+            "one-dimensional and extremely ill-conditioned"
         ),
         diis_used_iterations=(),
         diis_fallback_iterations=(),
@@ -3315,23 +3359,48 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
         energy_evaluation_wall_time_seconds=None,
         density_update_wall_time_seconds=None,
         bookkeeping_wall_time_seconds=None,
+        response_channel_difficulty=H2JaxSingletResponseChannelDifficultyBaseline(
+            tail_pair_iterations=(39, 40),
+            density_secant_norm=0.38166956857960347,
+            total_output_response_proxy=27.189927371276184,
+            total_effective_potential_amplification_proxy=25.231806154614578,
+            hartree_potential_amplification_proxy=28.034522095027073,
+            xc_potential_amplification_proxy=2.800174500261409,
+            local_orbital_potential_amplification_proxy=0.03855917580655616,
+            hartree_potential_contribution_share=1.1109666158128129,
+            xc_potential_contribution_share=-0.11098485020800282,
+            local_orbital_potential_contribution_share=1.8234395189963028e-05,
+            hartree_output_sensitivity_proxy=30.207101595862873,
+            xc_output_sensitivity_proxy=-3.017670016467563,
+            local_orbital_output_sensitivity_proxy=0.0004957918808742426,
+            coupling_excess_output_sensitivity_proxy=6.035340032935126,
+            primary_difficulty_channel="hartree",
+            dominant_coupling_label=None,
+            diagnosis=(
+                "The 40-step tail repeats the 20-step response decomposition: Hartree is still the "
+                "dominant aligned channel, XC remains counter-aligned, and the residual local-orbital "
+                "proxy is tiny, so the plateau is not explained by XC or local-orbital dominance."
+            ),
+        ),
     ),
     diagnosis=(
-        "This baseline freezes a singlet-only fixed-point local-difficulty audit on the frozen JAX "
-        "A-grid local-only mainline. In this run, linear-0p10 itself already ends in a near-plateau "
-        "tail with residual ratio just above unity and a strongly ill-conditioned, nearly collinear "
-        "secant proxy. The productionish Anderson route remains slightly better than the toy Anderson "
-        "baseline, but it still stalls in the same near-unity regime and the 40-step supplement does "
-        "not recover clean contraction. That now supports the interpretation that the remaining obstacle "
-        "is a locally near-noncontractive and poorly conditioned singlet fixed-point map, not just a "
-        "small Anderson implementation gap."
+        "This baseline freezes a singlet-only fixed-point local-difficulty and tail response-channel "
+        "audit on the frozen JAX A-grid local-only mainline. In this run, both the 20-step and 40-step "
+        "productionish-Anderson tails sit at residual-ratio averages essentially equal to one, with a "
+        "near-plateau signature and a badly conditioned, nearly collinear secant subspace proxy. The "
+        "secant-based response-channel decomposition points much more strongly to Hartree feedback than "
+        "to XC or the residual local-orbital channel: the Hartree contribution share sits slightly above "
+        "unity while XC mostly opposes it, and the local-orbital remainder is tiny on this proxy. That "
+        "supports the interpretation that the singlet tail is being pushed toward local near-noncontraction "
+        "mainly by Hartree-dominated feedback, with XC acting partly as a stabilizing counter-channel."
     ),
     note=(
-        "H2 singlet fixed-point local-difficulty baseline on the frozen JAX A-grid local-only mainline. "
-        "The 20-step view keeps linear-0p10, a minimal DIIS prototype, the earlier Anderson baseline, "
-        "and the productionish Anderson in the same physical chain. A 40-step supplemental "
-        "productionish-Anderson run is recorded only to distinguish 'still contracting, just not fast "
-        "enough' from 'tail plateau with residual ratio near unity'."
+        "H2 singlet fixed-point local-difficulty and tail response-channel baseline on the frozen JAX "
+        "A-grid local-only mainline. The 20-step view keeps linear-0p10, a minimal DIIS prototype, the "
+        "earlier Anderson baseline, and the productionish Anderson in the same physical chain. A 40-step "
+        "supplemental productionish-Anderson run is recorded only to distinguish 'still contracting, just "
+        "not fast enough' from 'tail plateau with residual ratio near unity', and both productionish runs "
+        "now carry a secant-based Hartree/XC/local-orbital channel proxy."
     ),
 )
 
@@ -3566,6 +3635,7 @@ __all__ = [
     "H2JaxEigensolverHotpathRegressionBaseline",
     "H2JaxSingletMainlineRegressionBaseline",
     "H2JaxSingletMainlineRouteBaseline",
+    "H2JaxSingletResponseChannelDifficultyBaseline",
     "H2JaxScfHotpathRegressionBaseline",
     "H2JaxScfHotpathRouteBaseline",
     "H2JaxTripletHartreeEnergyRegressionBaseline",
