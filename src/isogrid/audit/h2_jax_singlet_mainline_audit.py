@@ -18,7 +18,7 @@ from isogrid.scf import SinglePointEnergyComponents
 from isogrid.scf import run_h2_monitor_grid_scf_dry_run
 
 _SINGLET_MAINLINE_MAX_ITERATIONS = 20
-_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS = 40
+_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS = 30
 _SINGLET_MAINLINE_BASELINE_MIXING = 0.10
 _SINGLET_MAINLINE_DENSITY_TOLERANCE = 5.0e-3
 _SINGLET_MAINLINE_ENERGY_TOLERANCE = 5.0e-5
@@ -41,6 +41,10 @@ _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING = 0.35
 _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING = 0.75
 _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO = 1.02
 _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY = 0.995
+_SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT = 0.70
+_SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER = 1.00
+_SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER = 0.60
+_SINGLET_MAINLINE_HARTREE_TAIL_HARTREE_SHARE_TRIGGER = 0.80
 _TAIL_SUMMARY_LENGTH = 5
 _LOCAL_DIFFICULTY_PLATEAU_RATIO_LOWER = 0.985
 _LOCAL_DIFFICULTY_PLATEAU_RATIO_UPPER = 1.015
@@ -169,6 +173,11 @@ class H2JaxSingletMainlineParameterSummary:
     anderson_acceptance_residual_ratio_threshold: float
     anderson_collinearity_cosine_threshold: float
     anderson_residual_definition: str
+    singlet_hartree_tail_mitigation_enabled: bool
+    singlet_hartree_tail_mitigation_weight: float | None
+    singlet_hartree_tail_residual_ratio_trigger: float | None
+    singlet_hartree_tail_projected_ratio_trigger: float | None
+    singlet_hartree_tail_hartree_share_trigger: float | None
 
 
 @dataclass(frozen=True)
@@ -216,6 +225,15 @@ class H2JaxSingletMainlineRouteResult:
     anderson_filtered_history_sizes: tuple[int, ...]
     anderson_effective_damping_history: tuple[float, ...]
     anderson_projected_residual_ratio_history: tuple[float | None, ...]
+    singlet_hartree_tail_mitigation_enabled: bool
+    singlet_hartree_tail_mitigation_weight: float | None
+    singlet_hartree_tail_residual_ratio_trigger: float | None
+    singlet_hartree_tail_projected_ratio_trigger: float | None
+    singlet_hartree_tail_hartree_share_trigger: float | None
+    singlet_hartree_tail_mitigation_triggered_iterations: tuple[int, ...]
+    singlet_hartree_tail_hartree_share_history: tuple[float | None, ...]
+    singlet_hartree_tail_residual_ratio_history: tuple[float | None, ...]
+    singlet_hartree_tail_projected_ratio_history: tuple[float | None, ...]
     final_energy_components: SinglePointEnergyComponents
     note: str
     response_channel_difficulty: H2JaxSingletResponseChannelDifficulty | None = None
@@ -228,11 +246,9 @@ class H2JaxSingletMainlineAuditResult:
     path_label: str
     spin_state_label: str
     path_type: str
-    baseline_linear_route: H2JaxSingletMainlineRouteResult
-    diis_route: H2JaxSingletMainlineRouteResult
-    anderson_baseline_route: H2JaxSingletMainlineRouteResult
     anderson_productionish_route: H2JaxSingletMainlineRouteResult
-    supplemental_anderson_route: H2JaxSingletMainlineRouteResult
+    hartree_tail_mitigation_route: H2JaxSingletMainlineRouteResult
+    supplemental_hartree_tail_mitigation_route: H2JaxSingletMainlineRouteResult | None
     diagnosis: str
     note: str
 
@@ -816,6 +832,21 @@ def _build_parameter_summary(
         ),
         anderson_collinearity_cosine_threshold=parameters.anderson_collinearity_cosine_threshold,
         anderson_residual_definition=parameters.anderson_residual_definition,
+        singlet_hartree_tail_mitigation_enabled=(
+            parameters.singlet_hartree_tail_mitigation_enabled
+        ),
+        singlet_hartree_tail_mitigation_weight=(
+            parameters.singlet_hartree_tail_mitigation_weight
+        ),
+        singlet_hartree_tail_residual_ratio_trigger=(
+            parameters.singlet_hartree_tail_residual_ratio_trigger
+        ),
+        singlet_hartree_tail_projected_ratio_trigger=(
+            parameters.singlet_hartree_tail_projected_ratio_trigger
+        ),
+        singlet_hartree_tail_hartree_share_trigger=(
+            parameters.singlet_hartree_tail_hartree_share_trigger
+        ),
     )
 
 
@@ -918,6 +949,44 @@ def _build_route_result(
             None if value is None else float(value)
             for value in result.anderson_projected_residual_ratio_history
         ),
+        singlet_hartree_tail_mitigation_enabled=bool(
+            result.singlet_hartree_tail_mitigation_enabled
+        ),
+        singlet_hartree_tail_mitigation_weight=(
+            None
+            if not result.singlet_hartree_tail_mitigation_enabled
+            else float(result.singlet_hartree_tail_mitigation_weight)
+        ),
+        singlet_hartree_tail_residual_ratio_trigger=(
+            None
+            if not result.singlet_hartree_tail_mitigation_enabled
+            else float(result.singlet_hartree_tail_residual_ratio_trigger)
+        ),
+        singlet_hartree_tail_projected_ratio_trigger=(
+            None
+            if not result.singlet_hartree_tail_mitigation_enabled
+            else float(result.singlet_hartree_tail_projected_ratio_trigger)
+        ),
+        singlet_hartree_tail_hartree_share_trigger=(
+            None
+            if not result.singlet_hartree_tail_mitigation_enabled
+            else float(result.singlet_hartree_tail_hartree_share_trigger)
+        ),
+        singlet_hartree_tail_mitigation_triggered_iterations=tuple(
+            int(value) for value in result.singlet_hartree_tail_mitigation_triggered_iterations
+        ),
+        singlet_hartree_tail_hartree_share_history=tuple(
+            None if value is None else float(value)
+            for value in result.singlet_hartree_tail_hartree_share_history
+        ),
+        singlet_hartree_tail_residual_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in result.singlet_hartree_tail_residual_ratio_history
+        ),
+        singlet_hartree_tail_projected_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in result.singlet_hartree_tail_projected_ratio_history
+        ),
         final_energy_components=result.energy,
         note=(
             "Frozen A-grid local-only mainline: use_jax_block_kernels=True, "
@@ -952,6 +1021,11 @@ def _run_route(
     anderson_max_damping: float = 0.75,
     anderson_acceptance_residual_ratio_threshold: float = 1.02,
     anderson_collinearity_cosine_threshold: float = 0.995,
+    enable_singlet_hartree_tail_mitigation: bool = False,
+    singlet_hartree_tail_mitigation_weight: float = _SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT,
+    singlet_hartree_tail_residual_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER,
+    singlet_hartree_tail_projected_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER,
+    singlet_hartree_tail_hartree_share_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_HARTREE_SHARE_TRIGGER,
 ) -> H2JaxSingletMainlineRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
         "singlet",
@@ -986,6 +1060,11 @@ def _run_route(
         anderson_max_damping=anderson_max_damping,
         anderson_acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
         anderson_collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
+        enable_singlet_hartree_tail_mitigation=enable_singlet_hartree_tail_mitigation,
+        singlet_hartree_tail_mitigation_weight=singlet_hartree_tail_mitigation_weight,
+        singlet_hartree_tail_residual_ratio_trigger=singlet_hartree_tail_residual_ratio_trigger,
+        singlet_hartree_tail_projected_ratio_trigger=singlet_hartree_tail_projected_ratio_trigger,
+        singlet_hartree_tail_hartree_share_trigger=singlet_hartree_tail_hartree_share_trigger,
     )
     formal_mixer_history_length = None
     formal_mixer_regularization = None
@@ -1051,105 +1130,82 @@ def _select_best_anderson_route(
     return min(routes, key=_score)
 
 
+def _route_clearly_beats_baseline(
+    baseline: H2JaxSingletMainlineRouteResult,
+    candidate: H2JaxSingletMainlineRouteResult,
+) -> bool:
+    if baseline.final_density_residual is None or candidate.final_density_residual is None:
+        return False
+    return (
+        candidate.final_density_residual < baseline.final_density_residual - 5.0e-3
+        and candidate.behavior.verdict not in {"diverging", "weak_two_cycle"}
+    )
+
+
 def _build_diagnosis(
     *,
-    linear: H2JaxSingletMainlineRouteResult,
-    diis: H2JaxSingletMainlineRouteResult,
-    anderson_baseline: H2JaxSingletMainlineRouteResult,
-    anderson_productionish: H2JaxSingletMainlineRouteResult,
-    supplemental_anderson: H2JaxSingletMainlineRouteResult,
+    baseline: H2JaxSingletMainlineRouteResult,
+    mitigation: H2JaxSingletMainlineRouteResult,
+    supplemental: H2JaxSingletMainlineRouteResult | None,
 ) -> str:
-    productionish_difficulty = anderson_productionish.fixed_point_local_difficulty
-    supplemental_difficulty = supplemental_anderson.fixed_point_local_difficulty
-    if anderson_productionish.converged:
+    baseline_ratio = baseline.fixed_point_local_difficulty.average_tail_residual_ratio
+    mitigation_ratio = mitigation.fixed_point_local_difficulty.average_tail_residual_ratio
+    if mitigation.converged:
         return (
-            "The productionish Anderson route converges within the 20-step main acceptance window. "
-            "That means the previous Anderson failure was not primarily a statement that the singlet "
-            "fixed-point map is hopeless; the smaller baseline implementation simply was not mature enough."
+            "The singlet-only Hartree-tail mitigation route converges within the 20-step main acceptance window. "
+            "That means the previously stalled productionish Anderson route was still missing a structurally relevant "
+            "tail stabilizer, rather than proving the frozen singlet fixed-point map was hopeless."
         )
-    productionish_beats_baseline = (
-        anderson_productionish.final_density_residual is not None
-        and anderson_baseline.final_density_residual is not None
-        and anderson_productionish.final_density_residual
-        < anderson_baseline.final_density_residual - 1.0e-2
-    )
-    simple_residuals = tuple(
-        value
-        for value in (linear.final_density_residual, diis.final_density_residual)
-        if value is not None
-    )
-    best_simple_residual = min(simple_residuals) if simple_residuals else None
-    productionish_beats_simple_baselines = (
-        best_simple_residual is not None
-        and anderson_productionish.final_density_residual is not None
-        and anderson_productionish.final_density_residual < best_simple_residual - 1.0e-2
-    )
-    steady_supplement = (
-        supplemental_difficulty.average_tail_residual_ratio is not None
-        and supplemental_difficulty.average_tail_residual_ratio < 0.98
-        and not supplemental_difficulty.entered_plateau
-        and supplemental_anderson.behavior.verdict not in {"diverging", "weak_two_cycle"}
-    )
-    stalled_supplement = (
-        supplemental_difficulty.entered_plateau
-        or supplemental_anderson.behavior.verdict in {"weak_two_cycle", "plateau_or_stall"}
-        or (
-            supplemental_difficulty.average_tail_residual_ratio is not None
-            and supplemental_difficulty.average_tail_residual_ratio >= 0.99
-        )
-    )
-    if productionish_beats_baseline and productionish_beats_simple_baselines and steady_supplement:
+    if mitigation.final_density_residual is None or baseline.final_density_residual is None:
         return (
-            "The productionish Anderson route does not quite converge in 20 steps, but it is materially better than the "
-            "current Anderson baseline and the simpler linear/DIIS references, while the longer 40-step supplement "
-            "still shows genuine residual contraction. That supports the interpretation that the earlier Anderson "
-            "prototype was still too immature, rather than proving the singlet map itself is fundamentally unsalvageable."
+            "The mitigation route did not produce enough tail diagnostics to support a sharper adequacy judgment."
         )
-    if stalled_supplement:
+    if mitigation.final_density_residual < baseline.final_density_residual - 5.0e-3:
+        if supplemental is not None:
+            supplemental_ratio = supplemental.fixed_point_local_difficulty.average_tail_residual_ratio
+            if (
+                supplemental_ratio is not None
+                and supplemental_ratio < 0.99
+                and not supplemental.fixed_point_local_difficulty.entered_plateau
+            ):
+                return (
+                    "The Hartree-tail mitigation route materially improves the 20-step singlet residual and the 30-step "
+                    "supplement still keeps contracting. That supports the view that Hartree-tail structural handling is "
+                    "a meaningful direction, even though the current prototype still falls short of full convergence."
+                )
         return (
-            "The more mature Anderson route still fails to converge in 20 steps. Its tail residual ratios do not "
-            f"recover clean contraction (about {productionish_difficulty.average_tail_residual_ratio}), and the 40-step "
-            f"supplement also stays at or above neutral contraction on average (tail ratio about "
-            f"{supplemental_difficulty.average_tail_residual_ratio}). That combination points more toward a locally "
-            "near-noncontractive or badly conditioned singlet fixed-point map than toward a small remaining Anderson "
-            "implementation gap."
+            "The Hartree-tail mitigation route improves the 20-step singlet residual versus productionish Anderson, "
+            "but not enough to claim the tail has been decisively cured. The direction looks right, yet the remaining "
+            "difficulty is deeper than a single lightweight structural fix."
+        )
+    if supplemental is None:
+        return (
+            "The Hartree-tail mitigation route does not clearly beat productionish Anderson in the 20-step main window, "
+            "so no longer supplemental run was justified. That points away from this particular structural mitigation "
+            "being a decisive fix."
+        )
+    supplemental_ratio = supplemental.fixed_point_local_difficulty.average_tail_residual_ratio
+    if supplemental.fixed_point_local_difficulty.entered_plateau or (
+        supplemental_ratio is not None and supplemental_ratio >= 0.99
+    ):
+        return (
+            "Even after adding a Hartree-tail structural mitigation, the singlet route still stalls near neutral "
+            f"contraction (baseline tail ratio about {baseline_ratio}, mitigated 20-step tail ratio about "
+            f"{mitigation_ratio}, 30-step tail ratio about {supplemental_ratio}). That supports the view that the "
+            "singlet map is intrinsically difficult and that Hartree-tail handling alone is not enough."
         )
     return (
-        "The productionish Anderson route changes the tail behavior only modestly and does not clearly beat the current "
-        "Anderson baseline by enough to change the pass/fail conclusion. The longer supplement also does not deliver "
-        "clean, decisive contraction to the acceptance threshold. That suggests the remaining obstacle is already at "
-        "least partly the singlet fixed-point map itself, even if a fuller Anderson implementation could still help at the margins."
+        "The Hartree-tail mitigation route alters the tail modestly but does not clearly change the pass/fail outcome. "
+        "That suggests Hartree-tail structure matters, yet the remaining obstacle still extends beyond this single "
+        "structural update rule."
     )
 
 
 def run_h2_jax_singlet_mainline_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletMainlineAuditResult:
-    """Run the frozen H2 singlet tail response-channel audit."""
+    """Run the frozen H2 singlet Hartree-tail mitigation audit."""
 
-    baseline_linear_route = _run_route(
-        case=case,
-        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
-        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
-        mixer="linear",
-        solver_variant="linear-0p10",
-    )
-    diis_route = _run_route(
-        case=case,
-        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
-        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
-        mixer="diis",
-        solver_variant="diis-prototype",
-        enable_diis=True,
-    )
-    anderson_baseline_route = _run_route(
-        case=case,
-        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
-        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
-        mixer="anderson",
-        solver_variant="anderson-baseline",
-        enable_anderson=True,
-    )
     anderson_productionish_route = _run_route(
         case=case,
         max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
@@ -1169,83 +1225,78 @@ def run_h2_jax_singlet_mainline_audit(
         anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
         anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
     )
-    supplemental_anderson_route = _run_route(
+    hartree_tail_mitigation_route = _run_route(
         case=case,
-        max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
-        mixing=anderson_productionish_route.mixing,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
         mixer="anderson",
-        solver_variant=f"{anderson_productionish_route.solver_variant}-long40",
+        solver_variant="hartree-tail-mitigation",
         enable_anderson=True,
-        anderson_history_length=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY
-            if anderson_productionish_route.formal_mixer_history_length is None
-            else anderson_productionish_route.formal_mixer_history_length
-        ),
-        anderson_regularization=(
-            _SINGLET_MAINLINE_ANDERSON_REGULARIZATION
-            if anderson_productionish_route.formal_mixer_regularization is None
-            else anderson_productionish_route.formal_mixer_regularization
-        ),
-        anderson_damping=(
-            _SINGLET_MAINLINE_ANDERSON_DAMPING
-            if anderson_productionish_route.formal_mixer_damping is None
-            else anderson_productionish_route.formal_mixer_damping
-        ),
-        anderson_step_clip_factor=anderson_productionish_route.formal_mixer_step_clip_factor,
-        anderson_reset_on_growth=anderson_productionish_route.formal_mixer_reset_on_growth,
-        anderson_reset_growth_factor=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR
-            if anderson_productionish_route.formal_mixer_reset_growth_factor is None
-            else anderson_productionish_route.formal_mixer_reset_growth_factor
-        ),
-        anderson_adaptive_damping_enabled=anderson_productionish_route.formal_mixer_adaptive_damping_enabled,
-        anderson_min_damping=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING
-            if anderson_productionish_route.formal_mixer_min_damping is None
-            else anderson_productionish_route.formal_mixer_min_damping
-        ),
-        anderson_max_damping=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING
-            if anderson_productionish_route.formal_mixer_max_damping is None
-            else anderson_productionish_route.formal_mixer_max_damping
-        ),
-        anderson_acceptance_residual_ratio_threshold=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO
-            if anderson_productionish_route.formal_mixer_acceptance_residual_ratio_threshold is None
-            else anderson_productionish_route.formal_mixer_acceptance_residual_ratio_threshold
-        ),
-        anderson_collinearity_cosine_threshold=(
-            _SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY
-            if anderson_productionish_route.formal_mixer_collinearity_cosine_threshold is None
-            else anderson_productionish_route.formal_mixer_collinearity_cosine_threshold
-        ),
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+        enable_singlet_hartree_tail_mitigation=True,
+        singlet_hartree_tail_mitigation_weight=_SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT,
+        singlet_hartree_tail_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER,
+        singlet_hartree_tail_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER,
+        singlet_hartree_tail_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_HARTREE_SHARE_TRIGGER,
     )
+    supplemental_hartree_tail_mitigation_route: H2JaxSingletMainlineRouteResult | None = None
+    if _route_clearly_beats_baseline(
+        anderson_productionish_route,
+        hartree_tail_mitigation_route,
+    ):
+        supplemental_hartree_tail_mitigation_route = _run_route(
+            case=case,
+            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
+            mixing=hartree_tail_mitigation_route.mixing,
+            mixer="anderson",
+            solver_variant=f"{hartree_tail_mitigation_route.solver_variant}-long30",
+            enable_anderson=True,
+            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+            enable_singlet_hartree_tail_mitigation=True,
+            singlet_hartree_tail_mitigation_weight=_SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT,
+            singlet_hartree_tail_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER,
+            singlet_hartree_tail_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER,
+            singlet_hartree_tail_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_HARTREE_SHARE_TRIGGER,
+        )
     return H2JaxSingletMainlineAuditResult(
         path_label="jax-singlet-mainline",
         spin_state_label="singlet",
-        path_type=baseline_linear_route.path_type,
-        baseline_linear_route=baseline_linear_route,
-        diis_route=diis_route,
-        anderson_baseline_route=anderson_baseline_route,
+        path_type=anderson_productionish_route.path_type,
         anderson_productionish_route=anderson_productionish_route,
-        supplemental_anderson_route=supplemental_anderson_route,
+        hartree_tail_mitigation_route=hartree_tail_mitigation_route,
+        supplemental_hartree_tail_mitigation_route=supplemental_hartree_tail_mitigation_route,
         diagnosis=_build_diagnosis(
-            linear=baseline_linear_route,
-            diis=diis_route,
-            anderson_baseline=anderson_baseline_route,
-            anderson_productionish=anderson_productionish_route,
-            supplemental_anderson=supplemental_anderson_route,
+            baseline=anderson_productionish_route,
+            mitigation=hartree_tail_mitigation_route,
+            supplemental=supplemental_hartree_tail_mitigation_route,
         ),
         note=(
-            "Singlet-only fixed-point local-difficulty and tail response-channel audit on the frozen A-grid local-only "
-            "mainline. The physical chain is held fixed and only the singlet mixer behavior changes between linear-0p10, "
-            "a minimal DIIS/Pulay-style density mixer, the frozen Anderson baseline, and a more productionish Anderson "
-            "route. The productionish Anderson keeps the same residual definition rho_out-rho_in and the same density-"
-            "mixing target, but adds same-family engineering safeguards: stronger history management, adaptive damping, "
-            "residual-based accept/reject, and residual-growth-triggered restart. The productionish tail is also "
-            "diagnosed with a secant-based response-channel decomposition that compares Hartree, XC, and the closest "
-            "available local-orbital residual proxy without changing the physical map. A separate 40-step supplemental "
-            "view is recorded only to distinguish implementation adequacy from a genuinely hard fixed-point map."
+            "Singlet-only Hartree-tail mitigation audit on the frozen A-grid local-only mainline. The physical chain is "
+            "held fixed. The baseline route is the current best anderson-productionish configuration, and the only new "
+            "prototype adds a singlet-only structural under-relaxation that is triggered only when the tail looks both "
+            "Hartree-dominated and locally near-noncontractive. This changes the SCF update rule, not the physical "
+            "Hamiltonian or Hartree equation. A 30-step supplemental view is recorded only if the mitigation clearly "
+            "improves the 20-step main-window residual."
         ),
     )
 
@@ -1312,6 +1363,22 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
             f"local_share={route.response_channel_difficulty.local_orbital_potential_contribution_share}"
         )
         print(f"  response-channel diagnosis: {route.response_channel_difficulty.diagnosis}")
+    if route.singlet_hartree_tail_mitigation_enabled:
+        print(
+            "  hartree-tail mitigation: "
+            f"weight={route.singlet_hartree_tail_mitigation_weight}, "
+            f"residual_ratio_trigger={route.singlet_hartree_tail_residual_ratio_trigger}, "
+            f"projected_ratio_trigger={route.singlet_hartree_tail_projected_ratio_trigger}, "
+            f"hartree_share_trigger={route.singlet_hartree_tail_hartree_share_trigger}, "
+            f"trigger_count={len(route.singlet_hartree_tail_mitigation_triggered_iterations)}, "
+            f"triggered_iterations={route.singlet_hartree_tail_mitigation_triggered_iterations}"
+        )
+        print(
+            "  hartree-tail trigger histories: "
+            f"hartree_share={route.singlet_hartree_tail_hartree_share_history}, "
+            f"residual_ratio={route.singlet_hartree_tail_residual_ratio_history}, "
+            f"projected_ratio={route.singlet_hartree_tail_projected_ratio_history}"
+        )
     if route.mixer == "diis":
         print(f"  diis used iterations: {route.diis_used_iterations}")
         print(f"  diis fallback iterations: {route.diis_fallback_iterations}")
@@ -1350,21 +1417,20 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
 
 
 def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResult) -> None:
-    """Print the compact H2 singlet fixed-point local-difficulty audit summary."""
+    """Print the compact H2 singlet Hartree-tail mitigation audit summary."""
 
-    print("IsoGridDFT H2 singlet fixed-point and tail response-channel audit")
+    print("IsoGridDFT H2 singlet Hartree-tail mitigation audit")
     print(f"note: {result.note}")
     print(
         "previous frozen-mainline baseline: "
-        f"linear residual={H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.final_density_residual}, "
-        f"anderson residual={H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_baseline_route.final_density_residual}"
+        f"anderson-productionish residual="
+        f"{H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.final_density_residual}"
     )
     print(f"diagnosis: {result.diagnosis}")
-    _print_route(result.baseline_linear_route)
-    _print_route(result.diis_route)
-    _print_route(result.anderson_baseline_route)
     _print_route(result.anderson_productionish_route)
-    _print_route(result.supplemental_anderson_route)
+    _print_route(result.hartree_tail_mitigation_route)
+    if result.supplemental_hartree_tail_mitigation_route is not None:
+        _print_route(result.supplemental_hartree_tail_mitigation_route)
 
 
 def main() -> int:

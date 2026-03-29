@@ -20,6 +20,12 @@ def test_h2_monitor_grid_fixed_potential_module_imports() -> None:
     assert hasattr(module, "print_h2_monitor_grid_fixed_potential_eigensolver_summary")
 
 
+def test_import_jax_native_fixed_potential_entrypoint() -> None:
+    module = import_module("isogrid.ks")
+
+    assert hasattr(module, "solve_fixed_potential_static_local_eigenproblem_jax")
+
+
 def test_construct_h2_fixed_potential_route_result() -> None:
     route = H2FixedPotentialRouteResult(
         path_type="monitor_a_grid_plus_patch",
@@ -32,6 +38,9 @@ def test_construct_h2_fixed_potential_route_result() -> None:
             interpolation_neighbors=8,
         ),
         target_orbitals=1,
+        solver_backend="jax",
+        use_scipy_fallback=False,
+        iteration_count=17,
         eigenvalues=np.asarray([-0.2]),
         orbital_weighted_norms=np.asarray([1.0]),
         max_orthogonality_error=1.0e-12,
@@ -55,6 +64,9 @@ def test_construct_h2_fixed_potential_route_result() -> None:
     )
 
     assert route.path_type == "monitor_a_grid_plus_patch"
+    assert route.solver_backend == "jax"
+    assert route.use_scipy_fallback is False
+    assert route.iteration_count == 17
     assert float(route.eigenvalues[0]) == -0.2
     assert float(route.residual_norms[0]) == 1.0e-3
     assert route.converged is False

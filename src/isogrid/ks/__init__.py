@@ -21,6 +21,7 @@ from .eigensolver import validate_orbital_block
 from .eigensolver import weighted_orbital_norms
 from .eigensolver import weighted_orthonormalize_orbitals
 from .eigensolver import weighted_overlap_matrix
+from .eigensolver_jax import solve_fixed_potential_static_local_eigenproblem_jax
 from .hamiltonian_local_jax import apply_fixed_potential_static_local_block_jax
 from .hamiltonian_local_jax import apply_fixed_potential_static_local_operator_jax
 from .hamiltonian_local_jax import build_fixed_potential_static_local_operator_jax
@@ -68,6 +69,7 @@ __all__ = [
     "reshape_orbital_columns",
     "solve_fixed_potential_eigenproblem",
     "solve_fixed_potential_static_local_eigenproblem",
+    "solve_fixed_potential_static_local_eigenproblem_jax",
     "validate_orbital_block",
     "weighted_orbital_norms",
     "weighted_orthonormalize_orbitals",

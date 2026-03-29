@@ -55,6 +55,9 @@ class H2FixedPotentialRouteResult:
     grid_parameter_summary: str
     patch_parameter_summary: H2MonitorPatchParameterSummary | None
     target_orbitals: int
+    solver_backend: str
+    use_scipy_fallback: bool
+    iteration_count: int
     eigenvalues: np.ndarray
     orbital_weighted_norms: np.ndarray
     max_orthogonality_error: float
@@ -197,6 +200,9 @@ def _evaluate_route(
         grid_parameter_summary=_grid_parameter_summary(path_type),
         patch_parameter_summary=patch_summary,
         target_orbitals=k,
+        solver_backend=result.solver_backend,
+        use_scipy_fallback=bool(result.use_scipy_fallback),
+        iteration_count=int(result.iteration_count),
         eigenvalues=np.asarray(result.eigenvalues, dtype=np.float64),
         orbital_weighted_norms=weighted_orbital_norms(
             result.orbitals,
@@ -265,8 +271,8 @@ def run_h2_monitor_grid_fixed_potential_eigensolver_audit(
         note=(
             "This audit migrates only the static local chain "
             "T + V_loc,ion + V_H + V_xc to the A-grid+patch fixed-potential eigensolver, "
-            "and now compares the old Python/SciPy block hot path against the new "
-            "JAX block hot path on top of the repaired kinetic-trial-fix branch. "
+            "and now compares the explicit SciPy fallback route against the JAX-native "
+            "fixed-potential solver on top of the repaired kinetic-trial-fix branch. "
             "Nonlocal ionic action and SCF are still not on the A-grid path. "
             "The current static-local regression baseline and Hartree tail baseline remain "
             f"{H2_STATIC_LOCAL_CHAIN_REGRESSION_BASELINE.monitor_patch_vs_legacy_delta_mha:+.3f} mHa "
@@ -285,8 +291,11 @@ def _print_route_result(result: H2FixedPotentialRouteResult) -> None:
     print(f"  jax cache/reuse: {result.use_jax_cached_kernels}")
     print(f"  grid summary: {result.grid_parameter_summary}")
     print(f"  target orbitals: {result.target_orbitals}")
+    print(f"  solver backend: {result.solver_backend}")
+    print(f"  uses SciPy fallback: {result.use_scipy_fallback}")
     print(f"  solver: {result.solver_method}")
     print(f"  converged: {result.converged}")
+    print(f"  iteration count: {result.iteration_count}")
     print(f"  solver note: {result.solver_note}")
     if result.wall_time_seconds is not None:
         print(f"  wall time [s]: {result.wall_time_seconds:.6f}")
@@ -355,11 +364,11 @@ def print_h2_monitor_grid_fixed_potential_eigensolver_summary(
         f"{result.monitor_patch_trial_fix_old_hotpath_k1_result.eigenvalues[0] - result.legacy_k1_result.eigenvalues[0]:+.12f}"
     )
     print(
-        "  jax hot path k=1 eigenvalue delta vs old [Ha]: "
+        "  jax-native k=1 eigenvalue delta vs scipy fallback [Ha]: "
         f"{result.monitor_patch_trial_fix_jax_hotpath_k1_result.eigenvalues[0] - result.monitor_patch_trial_fix_old_hotpath_k1_result.eigenvalues[0]:+.12f}"
     )
     print(
-        "  jax hot path k=1 residual ratio vs old: "
+        "  jax-native k=1 residual ratio vs scipy fallback: "
         f"{result.monitor_patch_trial_fix_jax_hotpath_k1_result.residual_norms[0] / result.monitor_patch_trial_fix_old_hotpath_k1_result.residual_norms[0]:.3e}"
     )
     print(

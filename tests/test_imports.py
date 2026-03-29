@@ -424,11 +424,15 @@ def test_import_h2_jax_eigensolver_hotpath_audit_entrypoint() -> None:
 def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_BASELINE
     from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE
+    from isogrid.audit.baselines import H2_JAX_NATIVE_EIGENSOLVER_BASELINE
 
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.old_k1_route.use_jax_block_kernels is False
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.jax_k1_route.use_jax_block_kernels is True
     assert H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE.optimized_jax_k1_route.use_jax_cached_kernels is True
+    assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k1_route.solver_backend == "jax"
+    assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k1_route.use_scipy_fallback is False
+    assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.scipy_fallback_k1_route is not None
 
 
 def test_import_h2_jax_scf_hotpath_audit_entrypoint() -> None:
@@ -498,12 +502,6 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.monitor_shape == (67, 67, 81)
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.hartree_backend == "jax"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.cg_impl == "jax_loop"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.cg_preconditioner == "none"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.baseline_linear_route.mixer == "linear"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.diis_route.mixer == "diis"
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_baseline_route.mixer == "anderson"
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.mixer == "anderson"
     assert (
         H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.anderson_adaptive_damping_enabled
@@ -521,8 +519,13 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
         H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.response_channel_difficulty.primary_difficulty_channel
         == "hartree"
     )
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.hartree_tail_mitigation_route is not None
     assert (
-        H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_anderson_route.fixed_point_entered_plateau
+        H2_JAX_SINGLET_MAINLINE_BASELINE.hartree_tail_mitigation_route.singlet_hartree_tail_mitigation_enabled
         is True
     )
-    assert H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_anderson_route.max_iterations == 40
+    assert (
+        H2_JAX_SINGLET_MAINLINE_BASELINE.hartree_tail_mitigation_route.singlet_hartree_tail_mitigation_weight
+        == 0.7
+    )
+    assert H2_JAX_SINGLET_MAINLINE_BASELINE.supplemental_hartree_tail_mitigation_route is None

@@ -1,8 +1,12 @@
 """First fixed-potential iterative eigensolver scaffold for the static KS backbone.
 
 This module solves the lowest few orbitals of the current frozen-potential
-static KS Hamiltonian without introducing SCF. The current first-stage solver
-uses an iterative Lanczos solve on the weighted-similarity-transformed operator
+static KS Hamiltonian without introducing SCF. On the current monitor-grid
+static-local route, the formal main path uses a JAX-native block subspace
+iteration. SciPy Lanczos remains available only as an explicit fallback / audit
+route on older code paths and for cross-validation.
+
+The weighted problem is formulated through the similarity-transformed operator
 
     A = W^(1/2) H W^(-1/2)
 
@@ -45,6 +49,7 @@ from isogrid.xc import evaluate_lsda_terms
 
 _VALID_SPIN_CHANNELS = {"up", "down"}
 _VALID_STATIC_LOCAL_KINETIC_VERSIONS = {"production", "trial_fix"}
+_VALID_FIXED_POTENTIAL_SOLVER_BACKENDS = {"auto", "jax", "scipy_fallback"}
 GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
@@ -113,6 +118,8 @@ class FixedPotentialEigensolverResult:
     """Audit-facing result of the first fixed-potential eigensolver."""
 
     target_orbitals: int
+    solver_backend: str
+    use_scipy_fallback: bool
     solver_method: str
     solver_note: str
     converged: bool
@@ -162,6 +169,16 @@ def _normalize_static_local_kinetic_version(kinetic_version: str) -> str:
         raise ValueError(
             "kinetic_version must be `production` or `trial_fix`; "
             f"received `{kinetic_version}`."
+        )
+    return normalized
+
+
+def _normalize_fixed_potential_solver_backend(solver_backend: str) -> str:
+    normalized = solver_backend.strip().lower()
+    if normalized not in _VALID_FIXED_POTENTIAL_SOLVER_BACKENDS:
+        raise ValueError(
+            "solver_backend must be `auto`, `jax`, or `scipy_fallback`; "
+            f"received `{solver_backend}`."
         )
     return normalized
 
@@ -956,7 +973,7 @@ def _build_weighted_euclidean_operator(
     return operator, sqrt_weights, inverse_sqrt_weights
 
 
-def _solve_weighted_fixed_potential_problem(
+def _solve_weighted_fixed_potential_problem_scipy_fallback(
     *,
     operator_context: FixedPotentialOperatorContext | FixedPotentialStaticLocalOperatorContext,
     block_apply,
@@ -1073,6 +1090,8 @@ def _solve_weighted_fixed_potential_problem(
 
     return FixedPotentialEigensolverResult(
         target_orbitals=k,
+        solver_backend="scipy_fallback",
+        use_scipy_fallback=True,
         solver_method="scipy_eigsh_lanczos",
         solver_note=solver_note,
         converged=converged,
@@ -1116,9 +1135,9 @@ def solve_fixed_potential_eigenproblem(
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential static-KS orbitals.
 
-    The current first-stage default route is SciPy's iterative symmetric Lanczos
-    solver `eigsh` applied to the weighted-similarity-transformed operator. This
-    is a formal fixed-potential scaffold, not the final JAX-native SCF solver.
+    The generic structured-grid scaffold still uses SciPy's iterative symmetric
+    Lanczos fallback. The current JAX-native formal main path is implemented on
+    the monitor-grid static-local route below.
     """
 
     operator_context = prepare_fixed_potential_static_ks_operator(
@@ -1132,7 +1151,7 @@ def solve_fixed_potential_eigenproblem(
         xc_potential=xc_potential,
         xc_functional=xc_functional,
     )
-    return _solve_weighted_fixed_potential_problem(
+    return _solve_weighted_fixed_potential_problem_scipy_fallback(
         operator_context=operator_context,
         block_apply=apply_fixed_potential_static_ks_block,
         k=k,
@@ -1173,6 +1192,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    solver_backend: str = "auto",
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -1180,7 +1200,9 @@ def solve_fixed_potential_static_local_eigenproblem(
 
         T + V_loc,ion + V_H + V_xc
 
-    with frozen density-derived local terms and no nonlocal ionic action.
+    with frozen density-derived local terms and no nonlocal ionic action. On the
+    monitor-grid JAX hot path this now defaults to the JAX-native block
+    subspace iteration; SciPy is retained only as an explicit fallback.
     """
 
     if operator_context is None:
@@ -1206,19 +1228,46 @@ def solve_fixed_potential_static_local_eigenproblem(
                 jax_hartree_line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
             )
         )
-    result = _solve_weighted_fixed_potential_problem(
-        operator_context=operator_context,
-        block_apply=apply_fixed_potential_static_local_block,
-        k=k,
-        initial_guess_orbitals=initial_guess_orbitals,
-        max_iterations=max_iterations,
-        tolerance=tolerance,
-        initial_subspace_size=initial_subspace_size,
-        ncv=ncv,
-        use_jax_block_kernels=use_jax_block_kernels,
-    )
+    normalized_solver_backend = _normalize_fixed_potential_solver_backend(solver_backend)
+    if normalized_solver_backend == "auto":
+        if use_jax_block_kernels and isinstance(operator_context.grid_geometry, MonitorGridGeometry):
+            normalized_solver_backend = "jax"
+        else:
+            normalized_solver_backend = "scipy_fallback"
+
+    if normalized_solver_backend == "jax":
+        if not use_jax_block_kernels or not isinstance(operator_context.grid_geometry, MonitorGridGeometry):
+            raise ValueError(
+                "solver_backend='jax' currently requires `use_jax_block_kernels=True` "
+                "and a MonitorGridGeometry static-local operator context."
+            )
+        from isogrid.ks.eigensolver_jax import solve_fixed_potential_static_local_eigenproblem_jax
+
+        result = solve_fixed_potential_static_local_eigenproblem_jax(
+            operator_context=operator_context,
+            k=k,
+            initial_guess_orbitals=initial_guess_orbitals,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            initial_subspace_size=initial_subspace_size,
+            ncv=ncv,
+        )
+    else:
+        result = _solve_weighted_fixed_potential_problem_scipy_fallback(
+            operator_context=operator_context,
+            block_apply=apply_fixed_potential_static_local_block,
+            k=k,
+            initial_guess_orbitals=initial_guess_orbitals,
+            max_iterations=max_iterations,
+            tolerance=tolerance,
+            initial_subspace_size=initial_subspace_size,
+            ncv=ncv,
+            use_jax_block_kernels=use_jax_block_kernels,
+        )
     return FixedPotentialEigensolverResult(
         target_orbitals=result.target_orbitals,
+        solver_backend=normalized_solver_backend,
+        use_scipy_fallback=(normalized_solver_backend == "scipy_fallback"),
         solver_method=result.solver_method,
         solver_note=result.solver_note,
         converged=result.converged,
@@ -1235,9 +1284,11 @@ def solve_fixed_potential_static_local_eigenproblem(
         ritz_matrix=result.ritz_matrix,
         initial_guess_orbitals=result.initial_guess_orbitals,
         final_basis_orbitals=result.final_basis_orbitals,
-        operator_context=result.operator_context,
+        operator_context=operator_context,
         static_local_preparation_profile=operator_preparation_profile,
-        use_jax_block_kernels=result.use_jax_block_kernels,
-        use_jax_cached_kernels=result.use_jax_cached_kernels,
+        use_jax_block_kernels=bool(
+            normalized_solver_backend == "jax" and use_jax_block_kernels
+        ),
+        use_jax_cached_kernels=bool(normalized_solver_backend == "jax"),
         wall_time_seconds=result.wall_time_seconds,
     )

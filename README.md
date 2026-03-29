@@ -57,7 +57,7 @@ The current follow-up on that monitor-grid SCF line is intentionally narrow: H2 
 
 The first JAX migration slice has now started as well, but it is intentionally narrow: only already-stable hot kernels are being moved first, namely weighted reductions / block linear algebra, the repaired monitor-grid Poisson CG hot path, and the local-only A-grid Hamiltonian matvec. Nonlocal, the SCF outer control flow, and the eigensolver outer iteration still remain on their current Python/SciPy auditable routes.
 
-That first JAX slice has now been pushed one step further into the fixed-potential eigensolver itself, but still only at the block hot path: `H @ psi_block`, weighted overlap / Gram, and block orthonormalization can now switch to JAX while the outer eigensolver iteration and SCF control logic remain in Python.
+That first JAX slice has now been pushed through the fixed-potential eigensolver itself: the current A-grid local-only formal path now uses a JAX-native block subspace iteration, while SciPy is retained only as an explicit fallback / audit cross-check route.
 
 The immediate JAX follow-up is now a compiled-kernel reuse / caching pass on that same block hot path, because the first direct handoff was numerically correct but initially too slow to be useful on the current H2 fixed-potential audit route.
 
@@ -65,7 +65,7 @@ That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run 
 
 The current triplet-only JAX Hartree follow-up is now even narrower: the stronger line preconditioner already shows that reducing Hartree iteration count is possible, so the present focus is on the engineering cost of `line` preconditioner apply itself, especially tridiagonal solves and axis-reordering overhead, before any broader solver redesign is considered.
 
-In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically, with the immediate question now narrowed further to a tail response-channel audit: whether the best current productionish Anderson route is being pushed into a near-noncontractive tail mainly by Hartree feedback, by XC, or by a smaller residual local-orbital channel under the frozen JAX Hartree mainline. Nonlocal still remains absent from that path.
+In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically. The immediate focus is no longer broad mixer experimentation, but a targeted Hartree-tail structural mitigation prototype on top of the best current productionish Anderson route, because the latest tail audit points to a Hartree-dominated near-noncontractive singlet tail under the frozen JAX Hartree mainline. Nonlocal still remains absent from that path.
 
 What is present today:
 
@@ -78,7 +78,7 @@ What is present today:
 - a first fixed-potential static-KS eigensolver scaffold that extracts the lowest few orbitals under frozen density and frozen potentials
 - a first minimal H2 SCF single-point driver for the singlet and triplet candidates
 - a first JAX runtime layer plus a first batch of JAX hot kernels for weighted reductions, monitor-grid Poisson, and the local-only A-grid Hamiltonian apply, while keeping the audit and fallback layers intact
-- a first JAX handoff into the fixed-potential eigensolver block hot path, while keeping the outer eigensolver iteration and SCF control flow in Python
+- a JAX-native fixed-potential eigensolver path for the current A-grid local-only route, with SciPy retained only as fallback / audit
 - a first very rough H2 A-grid SCF hot-path profiling audit for checking whether that same JAX eigensolver handoff improves end-to-end triplet dry-run timing
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
@@ -175,7 +175,7 @@ It does not yet implement GGA, meta-GGA, hybrid functionals, or a standalone int
 The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dry-run validation.
 
 - H2 triplet dry-run is already convergent on the local static chain
-- H2 singlet is currently under a fixed-point local-difficulty audit on top of the productionish Anderson route
+- H2 singlet is currently under a Hartree-tail structural mitigation audit on top of the productionish Anderson route
 - nonlocal ionic action is still not migrated onto the A-grid path
 
 ## Minimal Setup

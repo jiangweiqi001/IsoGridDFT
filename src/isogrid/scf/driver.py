@@ -193,6 +193,11 @@ class H2ScfDryRunParameterSummary:
     anderson_acceptance_residual_ratio_threshold: float
     anderson_collinearity_cosine_threshold: float
     anderson_residual_definition: str
+    singlet_hartree_tail_mitigation_enabled: bool
+    singlet_hartree_tail_mitigation_weight: float | None
+    singlet_hartree_tail_residual_ratio_trigger: float | None
+    singlet_hartree_tail_projected_ratio_trigger: float | None
+    singlet_hartree_tail_hartree_share_trigger: float | None
     broyden_enabled: bool
     broyden_warmup_iterations: int
     broyden_history_length: int
@@ -304,6 +309,15 @@ class H2StaticLocalScfDryRunResult:
     anderson_reset_iterations: tuple[int, ...]
     anderson_effective_damping_history: tuple[float, ...]
     anderson_projected_residual_ratio_history: tuple[float | None, ...]
+    singlet_hartree_tail_mitigation_enabled: bool
+    singlet_hartree_tail_mitigation_weight: float | None
+    singlet_hartree_tail_residual_ratio_trigger: float | None
+    singlet_hartree_tail_projected_ratio_trigger: float | None
+    singlet_hartree_tail_hartree_share_trigger: float | None
+    singlet_hartree_tail_mitigation_triggered_iterations: tuple[int, ...]
+    singlet_hartree_tail_hartree_share_history: tuple[float | None, ...]
+    singlet_hartree_tail_residual_ratio_history: tuple[float | None, ...]
+    singlet_hartree_tail_projected_ratio_history: tuple[float | None, ...]
     broyden_enabled: bool
     broyden_warmup_iterations: int
     broyden_history_length: int
@@ -804,6 +818,11 @@ def _monitor_grid_scf_parameter_summary(
     anderson_max_damping: float,
     anderson_acceptance_residual_ratio_threshold: float,
     anderson_collinearity_cosine_threshold: float,
+    singlet_hartree_tail_mitigation_enabled: bool,
+    singlet_hartree_tail_mitigation_weight: float,
+    singlet_hartree_tail_residual_ratio_trigger: float,
+    singlet_hartree_tail_projected_ratio_trigger: float,
+    singlet_hartree_tail_hartree_share_trigger: float,
     broyden_enabled: bool,
     broyden_warmup_iterations: int,
     broyden_history_length: int,
@@ -856,6 +875,21 @@ def _monitor_grid_scf_parameter_summary(
             anderson_collinearity_cosine_threshold
         ),
         anderson_residual_definition="density_fixed_point_residual=rho_out-rho_in",
+        singlet_hartree_tail_mitigation_enabled=bool(
+            singlet_hartree_tail_mitigation_enabled
+        ),
+        singlet_hartree_tail_mitigation_weight=float(
+            singlet_hartree_tail_mitigation_weight
+        ),
+        singlet_hartree_tail_residual_ratio_trigger=float(
+            singlet_hartree_tail_residual_ratio_trigger
+        ),
+        singlet_hartree_tail_projected_ratio_trigger=float(
+            singlet_hartree_tail_projected_ratio_trigger
+        ),
+        singlet_hartree_tail_hartree_share_trigger=float(
+            singlet_hartree_tail_hartree_share_trigger
+        ),
         broyden_enabled=bool(broyden_enabled),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),
@@ -1000,6 +1034,151 @@ def _weighted_spin_density_norm(
         grid_geometry=grid_geometry,
     )
     return float(np.sqrt(max(value, 0.0)))
+
+
+def _weighted_field_norm(
+    field: np.ndarray,
+    *,
+    grid_geometry: GridGeometryLike,
+) -> float:
+    value = float(integrate_field(field * field, grid_geometry=grid_geometry))
+    return float(np.sqrt(max(value, 0.0)))
+
+
+def _estimate_singlet_hartree_tail_channel_shares(
+    *,
+    input_context: FixedPotentialStaticLocalOperatorContext | None,
+    output_context: FixedPotentialStaticLocalOperatorContext | None,
+) -> tuple[float | None, float | None, float | None]:
+    if input_context is None or output_context is None:
+        return None, None, None
+    delta_hartree = np.asarray(
+        output_context.hartree_potential - input_context.hartree_potential,
+        dtype=np.float64,
+    )
+    delta_xc = np.asarray(
+        output_context.xc_potential - input_context.xc_potential,
+        dtype=np.float64,
+    )
+    delta_total = np.asarray(
+        output_context.effective_local_potential
+        - input_context.effective_local_potential,
+        dtype=np.float64,
+    )
+    delta_local_orbital = np.asarray(
+        delta_total - delta_hartree - delta_xc,
+        dtype=np.float64,
+    )
+    hartree_norm = _weighted_field_norm(
+        delta_hartree,
+        grid_geometry=input_context.grid_geometry,
+    )
+    xc_norm = _weighted_field_norm(
+        delta_xc,
+        grid_geometry=input_context.grid_geometry,
+    )
+    local_orbital_norm = _weighted_field_norm(
+        delta_local_orbital,
+        grid_geometry=input_context.grid_geometry,
+    )
+    total_channel_norm = hartree_norm + xc_norm + local_orbital_norm
+    if total_channel_norm <= 1.0e-16:
+        return None, None, None
+    return (
+        float(hartree_norm / total_channel_norm),
+        float(xc_norm / total_channel_norm),
+        float(local_orbital_norm / total_channel_norm),
+    )
+
+
+def _apply_singlet_hartree_tail_mitigation(
+    *,
+    occupations: SpinOccupations,
+    iteration: int,
+    history: list[ScfIterationRecord],
+    grid_geometry: GridGeometryLike,
+    rho_up_current: np.ndarray,
+    rho_down_current: np.ndarray,
+    rho_up_candidate: np.ndarray,
+    rho_down_candidate: np.ndarray,
+    current_density_residual: float,
+    projected_residual_ratio: float | None,
+    input_operator_context: FixedPotentialStaticLocalOperatorContext | None,
+    output_energy_context: FixedPotentialStaticLocalOperatorContext | None,
+    enabled: bool,
+    mitigation_weight: float,
+    residual_ratio_trigger: float,
+    projected_ratio_trigger: float,
+    hartree_share_trigger: float,
+) -> tuple[np.ndarray, np.ndarray, bool, float | None, float | None, float | None]:
+    if not enabled or not _is_h2_closed_shell_singlet(occupations):
+        return (
+            rho_up_candidate,
+            rho_down_candidate,
+            False,
+            None,
+            None,
+            None,
+        )
+    hartree_share, _, _ = _estimate_singlet_hartree_tail_channel_shares(
+        input_context=input_operator_context,
+        output_context=output_energy_context,
+    )
+    previous_residual_ratio = None
+    if history:
+        previous_residual = float(history[-1].density_residual)
+        if previous_residual > 1.0e-16:
+            previous_residual_ratio = float(current_density_residual / previous_residual)
+    hartree_dominated = (
+        hartree_share is not None
+        and np.isfinite(hartree_share)
+        and hartree_share >= hartree_share_trigger
+    )
+    residual_stalled = (
+        previous_residual_ratio is not None
+        and np.isfinite(previous_residual_ratio)
+        and previous_residual_ratio >= residual_ratio_trigger
+    )
+    projected_bad = (
+        projected_residual_ratio is not None
+        and np.isfinite(projected_residual_ratio)
+        and projected_residual_ratio >= projected_ratio_trigger
+    )
+    if (
+        not hartree_dominated
+        or projected_residual_ratio is None
+        or not residual_stalled
+        or not projected_bad
+    ):
+        return (
+            rho_up_candidate,
+            rho_down_candidate,
+            False,
+            hartree_share,
+            previous_residual_ratio,
+            projected_residual_ratio,
+        )
+    mitigated_rho_up = _renormalize_density(
+        np.asarray(rho_up_current + mitigation_weight * (rho_up_candidate - rho_up_current), dtype=np.float64),
+        occupations.n_alpha,
+        grid_geometry=grid_geometry,
+    )
+    mitigated_rho_down = _renormalize_density(
+        np.asarray(
+            rho_down_current + mitigation_weight * (rho_down_candidate - rho_down_current),
+            dtype=np.float64,
+        ),
+        occupations.n_beta,
+        grid_geometry=grid_geometry,
+    )
+    return (
+        mitigated_rho_up,
+        mitigated_rho_down,
+        True,
+        hartree_share,
+        previous_residual_ratio,
+        projected_residual_ratio,
+    )
 
 
 def _filter_monitor_grid_anderson_secants(
@@ -2078,6 +2257,11 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_max_damping: float = 0.75,
     anderson_acceptance_residual_ratio_threshold: float = 1.02,
     anderson_collinearity_cosine_threshold: float = 0.995,
+    enable_singlet_hartree_tail_mitigation: bool = False,
+    singlet_hartree_tail_mitigation_weight: float = 0.45,
+    singlet_hartree_tail_residual_ratio_trigger: float = 0.995,
+    singlet_hartree_tail_projected_ratio_trigger: float = 0.60,
+    singlet_hartree_tail_hartree_share_trigger: float = 0.80,
     enable_broyden: bool = False,
     broyden_warmup_iterations: int = 3,
     broyden_history_length: int = 4,
@@ -2142,6 +2326,22 @@ def run_h2_monitor_grid_scf_dry_run(
     if not (0.0 <= anderson_collinearity_cosine_threshold < 1.0):
         raise ValueError(
             "anderson_collinearity_cosine_threshold must satisfy 0 <= value < 1."
+        )
+    if not (0.0 < singlet_hartree_tail_mitigation_weight <= 1.0):
+        raise ValueError(
+            "singlet_hartree_tail_mitigation_weight must satisfy 0 < value <= 1."
+        )
+    if singlet_hartree_tail_residual_ratio_trigger < 0.0:
+        raise ValueError(
+            "singlet_hartree_tail_residual_ratio_trigger must be non-negative."
+        )
+    if singlet_hartree_tail_projected_ratio_trigger < 0.0:
+        raise ValueError(
+            "singlet_hartree_tail_projected_ratio_trigger must be non-negative."
+        )
+    if not (0.0 <= singlet_hartree_tail_hartree_share_trigger <= 1.0):
+        raise ValueError(
+            "singlet_hartree_tail_hartree_share_trigger must satisfy 0 <= value <= 1."
         )
     if broyden_warmup_iterations < 0:
         raise ValueError("broyden_warmup_iterations must be non-negative.")
@@ -2233,6 +2433,10 @@ def run_h2_monitor_grid_scf_dry_run(
     anderson_reset_iterations: list[int] = []
     anderson_effective_damping_history: list[float] = []
     anderson_projected_residual_ratio_history: list[float | None] = []
+    singlet_hartree_tail_mitigation_triggered_iterations: list[int] = []
+    singlet_hartree_tail_hartree_share_history: list[float | None] = []
+    singlet_hartree_tail_residual_ratio_history: list[float | None] = []
+    singlet_hartree_tail_projected_ratio_history: list[float | None] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -2594,6 +2798,7 @@ def run_h2_monitor_grid_scf_dry_run(
         density_update_wall_time += density_update_elapsed
 
         energy_evaluation_start = perf_counter()
+        energy_context: FixedPotentialStaticLocalOperatorContext | None = None
         if use_step_local_static_local_reuse:
             energy_spin_channel = (
                 "up"
@@ -2703,6 +2908,7 @@ def run_h2_monitor_grid_scf_dry_run(
             rho_up_out=rho_up_out,
             rho_down_out=rho_down_out,
         )
+        latest_anderson_projected_ratio: float | None = None
 
         rho_up_mixed = _renormalize_density(
             (1.0 - mixing) * rho_up + mixing * rho_up_out,
@@ -2826,6 +3032,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 anderson_projected_residual_ratio_history.append(
                     anderson_candidate.projected_residual_ratio
                 )
+                latest_anderson_projected_ratio = anderson_candidate.projected_residual_ratio
                 if (
                     anderson_candidate.accepted
                     and anderson_candidate.mixed_rho_up is not None
@@ -2879,6 +3086,50 @@ def run_h2_monitor_grid_scf_dry_run(
             anderson_history_sizes.append(0)
             anderson_filtered_history_sizes.append(0)
             broyden_history_sizes.append(0)
+
+        (
+            rho_up_mixed,
+            rho_down_mixed,
+            singlet_hartree_tail_triggered,
+            singlet_hartree_tail_hartree_share,
+            singlet_hartree_tail_residual_ratio,
+            singlet_hartree_tail_projected_ratio,
+        ) = _apply_singlet_hartree_tail_mitigation(
+            occupations=occupations,
+            iteration=iteration,
+            history=history,
+            grid_geometry=grid_geometry,
+            rho_up_current=rho_up,
+            rho_down_current=rho_down,
+            rho_up_candidate=rho_up_mixed,
+            rho_down_candidate=rho_down_mixed,
+            current_density_residual=float(density_residual),
+            projected_residual_ratio=latest_anderson_projected_ratio,
+            input_operator_context=up_operator_context,
+            output_energy_context=energy_context if use_step_local_static_local_reuse else None,
+            enabled=enable_singlet_hartree_tail_mitigation,
+            mitigation_weight=singlet_hartree_tail_mitigation_weight,
+            residual_ratio_trigger=singlet_hartree_tail_residual_ratio_trigger,
+            projected_ratio_trigger=singlet_hartree_tail_projected_ratio_trigger,
+            hartree_share_trigger=singlet_hartree_tail_hartree_share_trigger,
+        )
+        singlet_hartree_tail_hartree_share_history.append(
+            None
+            if singlet_hartree_tail_hartree_share is None
+            else float(singlet_hartree_tail_hartree_share)
+        )
+        singlet_hartree_tail_residual_ratio_history.append(
+            None
+            if singlet_hartree_tail_residual_ratio is None
+            else float(singlet_hartree_tail_residual_ratio)
+        )
+        singlet_hartree_tail_projected_ratio_history.append(
+            None
+            if singlet_hartree_tail_projected_ratio is None
+            else float(singlet_hartree_tail_projected_ratio)
+        )
+        if singlet_hartree_tail_triggered:
+            singlet_hartree_tail_mitigation_triggered_iterations.append(iteration)
 
         history.append(
             ScfIterationRecord(
@@ -3093,6 +3344,11 @@ def run_h2_monitor_grid_scf_dry_run(
             anderson_max_damping=anderson_max_damping,
             anderson_acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
             anderson_collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
+            singlet_hartree_tail_mitigation_enabled=enable_singlet_hartree_tail_mitigation,
+            singlet_hartree_tail_mitigation_weight=singlet_hartree_tail_mitigation_weight,
+            singlet_hartree_tail_residual_ratio_trigger=singlet_hartree_tail_residual_ratio_trigger,
+            singlet_hartree_tail_projected_ratio_trigger=singlet_hartree_tail_projected_ratio_trigger,
+            singlet_hartree_tail_hartree_share_trigger=singlet_hartree_tail_hartree_share_trigger,
             broyden_enabled=enable_broyden,
             broyden_warmup_iterations=broyden_warmup_iterations,
             broyden_history_length=broyden_history_length,
@@ -3146,6 +3402,36 @@ def run_h2_monitor_grid_scf_dry_run(
         anderson_projected_residual_ratio_history=tuple(
             None if value is None else float(value)
             for value in anderson_projected_residual_ratio_history
+        ),
+        singlet_hartree_tail_mitigation_enabled=bool(
+            enable_singlet_hartree_tail_mitigation
+        ),
+        singlet_hartree_tail_mitigation_weight=float(
+            singlet_hartree_tail_mitigation_weight
+        ),
+        singlet_hartree_tail_residual_ratio_trigger=float(
+            singlet_hartree_tail_residual_ratio_trigger
+        ),
+        singlet_hartree_tail_projected_ratio_trigger=float(
+            singlet_hartree_tail_projected_ratio_trigger
+        ),
+        singlet_hartree_tail_hartree_share_trigger=float(
+            singlet_hartree_tail_hartree_share_trigger
+        ),
+        singlet_hartree_tail_mitigation_triggered_iterations=tuple(
+            singlet_hartree_tail_mitigation_triggered_iterations
+        ),
+        singlet_hartree_tail_hartree_share_history=tuple(
+            None if value is None else float(value)
+            for value in singlet_hartree_tail_hartree_share_history
+        ),
+        singlet_hartree_tail_residual_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in singlet_hartree_tail_residual_ratio_history
+        ),
+        singlet_hartree_tail_projected_ratio_history=tuple(
+            None if value is None else float(value)
+            for value in singlet_hartree_tail_projected_ratio_history
         ),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
