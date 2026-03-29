@@ -2614,6 +2614,53 @@ class H2JaxTripletReintegrationSmokeRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxTripletMicroProfileStepBaseline:
+    """Recorded one step from the triplet end-to-end micro-profile audit."""
+
+    step_index: int
+    solver_backend: str
+    total_step_wall_time_seconds: float
+    eigensolver_wall_time_seconds: float
+    static_local_prepare_wall_time_seconds: float
+    hartree_solve_wall_time_seconds: float
+    energy_eval_wall_time_seconds: float
+    density_residual: float
+    energy_change_ha: float | None
+
+
+@dataclass(frozen=True)
+class H2JaxTripletEndToEndMicroProfileBaseline:
+    """Recorded triplet end-to-end micro-profile on the JAX mainline."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    solver_backend: str
+    completed_full_20_steps: bool
+    actual_iteration_count: int
+    converged: bool
+    final_total_energy_ha: float
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    final_energy_change_ha: float | None
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    dominant_timing_bucket: str
+    dominant_timing_bucket_fraction_of_total: float | None
+    eigensolver_fraction_of_total: float | None
+    step1: H2JaxTripletMicroProfileStepBaseline | None
+    step2: H2JaxTripletMicroProfileStepBaseline | None
+    last_step: H2JaxTripletMicroProfileStepBaseline | None
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2898,6 +2945,79 @@ H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE = H2JaxTripletReintegrationSmokeRegr
         "Triplet reintegration smoke baseline after reconnecting the JAX-native fixed-potential "
         "eigensolver to the frozen A-grid local-only mainline. This baseline records the failed "
         "controlled-time 20-step smoke together with the same-config one-step diagnostic evidence."
+    ),
+)
+
+
+H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProfileBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    solver_backend="jax",
+    completed_full_20_steps=False,
+    actual_iteration_count=18,
+    converged=True,
+    final_total_energy_ha=-1.221453262655,
+    final_lowest_eigenvalue_ha=-0.41693317459,
+    final_density_residual=0.004579907829439,
+    final_energy_change_ha=-1.3037071322941074e-05,
+    total_wall_time_seconds=3858.48,
+    average_iteration_wall_time_seconds=214.36,
+    dominant_timing_bucket="eigensolver",
+    dominant_timing_bucket_fraction_of_total=0.981,
+    eigensolver_fraction_of_total=0.981,
+    step1=H2JaxTripletMicroProfileStepBaseline(
+        step_index=1,
+        solver_backend="jax",
+        total_step_wall_time_seconds=389.689,
+        eigensolver_wall_time_seconds=385.782,
+        static_local_prepare_wall_time_seconds=3.83,
+        hartree_solve_wall_time_seconds=3.31,
+        energy_eval_wall_time_seconds=2.0,
+        density_residual=0.20788997196,
+        energy_change_ha=None,
+    ),
+    step2=H2JaxTripletMicroProfileStepBaseline(
+        step_index=2,
+        solver_backend="jax",
+        total_step_wall_time_seconds=240.897,
+        eigensolver_wall_time_seconds=236.383,
+        static_local_prepare_wall_time_seconds=4.406,
+        hartree_solve_wall_time_seconds=3.779,
+        energy_eval_wall_time_seconds=2.458,
+        density_residual=0.1690673203044,
+        energy_change_ha=0.00025203424105590955,
+    ),
+    last_step=H2JaxTripletMicroProfileStepBaseline(
+        step_index=18,
+        solver_backend="jax",
+        total_step_wall_time_seconds=191.098,
+        eigensolver_wall_time_seconds=187.535,
+        static_local_prepare_wall_time_seconds=3.486,
+        hartree_solve_wall_time_seconds=3.004,
+        energy_eval_wall_time_seconds=1.75,
+        density_residual=0.004579907829439,
+        energy_change_ha=-1.3037071322941074e-05,
+    ),
+    diagnosis=(
+        "This baseline freezes one single long-run triplet micro-profile after reintegrating the "
+        "JAX-native fixed-potential eigensolver into the frozen A-grid local-only mainline. The "
+        "route converges in 18 iterations and uses solver_backend='jax' throughout, so the "
+        "reintegrated path is numerically healthy. The performance regression is nevertheless very "
+        "clear: the dominant top-level bucket is the eigensolver itself at about 98.1% of total "
+        "wall time, while static-local preparation and Hartree solve remain small nested buckets of "
+        "only a few seconds per step."
+    ),
+    note=(
+        "Triplet end-to-end micro-profile baseline on the frozen JAX A-grid local-only mainline. "
+        "Only one route was run. The run converged early at iteration 18, so there is no step-20 "
+        "record; step1, step2, and the converged last step are frozen here as the main timing "
+        "anchors."
     ),
 )
 
@@ -3954,6 +4074,8 @@ __all__ = [
     "H2JaxScfHotpathRouteBaseline",
     "H2JaxTripletHartreeEnergyRegressionBaseline",
     "H2JaxTripletHartreeEnergyRouteBaseline",
+    "H2JaxTripletEndToEndMicroProfileBaseline",
+    "H2JaxTripletMicroProfileStepBaseline",
     "H2JaxTripletReintegrationSmokeRegressionBaseline",
     "H2JaxTripletReintegrationSmokeRouteBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
@@ -4010,6 +4132,7 @@ __all__ = [
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_JAX_SCF_HOTPATH_BASELINE",
     "H2_JAX_SINGLET_MAINLINE_BASELINE",
+    "H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE",
     "H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE",
     "H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",

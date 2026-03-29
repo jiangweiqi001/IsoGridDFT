@@ -429,10 +429,19 @@ def test_import_h2_jax_triplet_reintegration_smoke_audit_entrypoint() -> None:
     assert callable(run_h2_jax_triplet_reintegration_smoke_audit)
 
 
+def test_import_h2_jax_triplet_end_to_end_micro_profile_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_triplet_end_to_end_micro_profile_audit import (
+        run_h2_jax_triplet_end_to_end_micro_profile_audit,
+    )
+
+    assert callable(run_h2_jax_triplet_end_to_end_micro_profile_audit)
+
+
 def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_BASELINE
     from isogrid.audit.baselines import H2_JAX_EIGENSOLVER_HOTPATH_REUSE_BASELINE
     from isogrid.audit.baselines import H2_JAX_NATIVE_EIGENSOLVER_BASELINE
+    from isogrid.audit.baselines import H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE
     from isogrid.audit.baselines import H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE
 
     assert H2_JAX_EIGENSOLVER_HOTPATH_BASELINE.monitor_shape == (67, 67, 81)
@@ -443,6 +452,8 @@ def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k1_route.use_scipy_fallback is False
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k2_route.solver_backend == "jax"
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k2_route.converged is True
+    assert H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.solver_backend == "jax"
+    assert H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.dominant_timing_bucket == "eigensolver"
     assert H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE.triplet_mainline_route.solver_backend == "jax"
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.scipy_fallback_k1_route is not None
 

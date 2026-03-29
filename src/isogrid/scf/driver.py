@@ -93,6 +93,8 @@ class FixedPotentialSolveSummary:
 
     spin_channel: str
     target_orbitals: int
+    solver_backend: str
+    use_scipy_fallback: bool
     solver_method: str
     solver_note: str
     converged: bool
@@ -396,6 +398,10 @@ class H2StaticLocalScfDryRunResult:
     hartree_preconditioner_axis_reorder_wall_time_seconds_history: tuple[float, ...]
     hartree_preconditioner_tridiagonal_solve_wall_time_seconds_history: tuple[float, ...]
     hartree_preconditioner_other_overhead_wall_time_seconds_history: tuple[float, ...]
+    solver_backend_iteration_history: tuple[str, ...]
+    total_step_wall_time_seconds_history: tuple[float, ...]
+    static_local_prepare_iteration_wall_time_seconds: tuple[float, ...]
+    hartree_solve_iteration_wall_time_seconds: tuple[float, ...]
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -630,6 +636,8 @@ def _build_solve_summary(
     return FixedPotentialSolveSummary(
         spin_channel=spin_channel,
         target_orbitals=target_orbitals,
+        solver_backend=result.solver_backend,
+        use_scipy_fallback=bool(result.use_scipy_fallback),
         solver_method=result.solver_method,
         solver_note=result.solver_note,
         converged=result.converged,
@@ -2441,6 +2449,10 @@ def run_h2_monitor_grid_scf_dry_run(
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
     broyden_fallback_iterations: list[int] = []
+    iteration_solver_backends: list[str] = []
+    iteration_total_step_times: list[float] = []
+    iteration_static_local_prepare_times: list[float] = []
+    iteration_hartree_solve_times: list[float] = []
     iteration_eigensolver_times: list[float] = []
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
@@ -2586,6 +2598,7 @@ def run_h2_monitor_grid_scf_dry_run(
         up_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
         down_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
         iteration_static_local_prepare_elapsed = 0.0
+        iteration_hartree_solve_elapsed = 0.0
 
         eigensolver_start = perf_counter()
         if occupations.n_alpha > 0:
@@ -2614,6 +2627,9 @@ def run_h2_monitor_grid_scf_dry_run(
                 xc_resolve_wall_time += up_preparation_profile.xc_resolve_wall_time_seconds
                 iteration_static_local_prepare_elapsed += (
                     up_preparation_profile.total_wall_time_seconds
+                )
+                iteration_hartree_solve_elapsed += (
+                    up_preparation_profile.hartree_resolve_wall_time_seconds
                 )
                 hartree_solve_call_count += 1
                 _record_last_jax_hartree_solve_diagnostics(
@@ -2691,6 +2707,9 @@ def run_h2_monitor_grid_scf_dry_run(
                 iteration_static_local_prepare_elapsed += (
                     down_preparation_profile.total_wall_time_seconds
                 )
+                iteration_hartree_solve_elapsed += (
+                    down_preparation_profile.hartree_resolve_wall_time_seconds
+                )
                 hartree_solve_call_count += 1
                 _record_last_jax_hartree_solve_diagnostics(
                     enabled=(normalized_hartree_backend == "jax"),
@@ -2756,6 +2775,9 @@ def run_h2_monitor_grid_scf_dry_run(
                 )
                 iteration_static_local_prepare_elapsed += (
                     solve_result.static_local_preparation_profile.total_wall_time_seconds
+                )
+                iteration_hartree_solve_elapsed += (
+                    solve_result.static_local_preparation_profile.hartree_resolve_wall_time_seconds
                 )
                 hartree_solve_call_count += 1
         eigensolver_core_elapsed = max(
@@ -2829,6 +2851,12 @@ def run_h2_monitor_grid_scf_dry_run(
                 energy_preparation_profile.local_ionic_resolve_wall_time_seconds
             )
             xc_resolve_wall_time += energy_preparation_profile.xc_resolve_wall_time_seconds
+            iteration_static_local_prepare_elapsed += (
+                energy_preparation_profile.total_wall_time_seconds
+            )
+            iteration_hartree_solve_elapsed += (
+                energy_preparation_profile.hartree_resolve_wall_time_seconds
+            )
             hartree_solve_call_count += 1
             _record_last_jax_hartree_solve_diagnostics(
                 enabled=(normalized_hartree_backend == "jax"),
@@ -3173,6 +3201,31 @@ def run_h2_monitor_grid_scf_dry_run(
             else solve_down
         )
         final_energy = energy
+        bookkeeping_elapsed = perf_counter() - bookkeeping_start
+        step_total_elapsed = perf_counter() - iteration_start
+        step_solver_backend = "none"
+        step_backend_labels = [
+            solve_summary.solver_backend
+            for solve_summary in (history[-1].solve_up, history[-1].solve_down)
+            if solve_summary is not None and solve_summary.target_orbitals > 0
+        ]
+        if step_backend_labels:
+            unique_step_backend_labels = tuple(dict.fromkeys(step_backend_labels))
+            step_solver_backend = (
+                unique_step_backend_labels[0]
+                if len(unique_step_backend_labels) == 1
+                else "+".join(unique_step_backend_labels)
+            )
+        iteration_solver_backends.append(step_solver_backend)
+        iteration_total_step_times.append(float(step_total_elapsed))
+        iteration_static_local_prepare_times.append(
+            float(iteration_static_local_prepare_elapsed)
+        )
+        iteration_hartree_solve_times.append(float(iteration_hartree_solve_elapsed))
+        iteration_eigensolver_times.append(float(eigensolver_core_elapsed))
+        iteration_energy_evaluation_times.append(float(energy_evaluation_elapsed))
+        iteration_density_update_times.append(float(density_update_elapsed))
+        iteration_bookkeeping_times.append(float(bookkeeping_elapsed))
 
         if density_residual < density_tolerance and (
             energy_change is None or abs(energy_change) < energy_tolerance
@@ -3187,12 +3240,6 @@ def run_h2_monitor_grid_scf_dry_run(
         guess_up = orbitals_up
         guess_down = orbitals_down
         previous_energy_total = energy.total
-        bookkeeping_elapsed = perf_counter() - bookkeeping_start
-
-        iteration_eigensolver_times.append(float(eigensolver_core_elapsed))
-        iteration_energy_evaluation_times.append(float(energy_evaluation_elapsed))
-        iteration_density_update_times.append(float(density_update_elapsed))
-        iteration_bookkeeping_times.append(float(bookkeeping_elapsed))
 
     lowest_eigenvalue = None
     if final_eigenvalues_up.size:
@@ -3526,6 +3573,14 @@ def run_h2_monitor_grid_scf_dry_run(
         ),
         hartree_preconditioner_other_overhead_wall_time_seconds_history=tuple(
             float(value) for value in hartree_preconditioner_other_overhead_times
+        ),
+        solver_backend_iteration_history=tuple(iteration_solver_backends),
+        total_step_wall_time_seconds_history=tuple(iteration_total_step_times),
+        static_local_prepare_iteration_wall_time_seconds=tuple(
+            iteration_static_local_prepare_times
+        ),
+        hartree_solve_iteration_wall_time_seconds=tuple(
+            iteration_hartree_solve_times
         ),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
