@@ -2577,6 +2577,43 @@ class H2JaxTripletHartreeEnergyRegressionBaseline:
     note: str
 
 
+@dataclass(frozen=True)
+class H2JaxTripletReintegrationSmokeRouteBaseline:
+    """Recorded H2 triplet reintegration smoke result for the JAX mainline."""
+
+    path_label: str
+    solver_backend: str
+    timed_out: bool
+    smoke_timeout_seconds: float | None
+    converged: bool
+    iteration_count: int
+    final_total_energy_ha: float | None
+    final_lowest_eigenvalue_ha: float | None
+    final_density_residual: float | None
+    final_energy_change_ha: float | None
+    total_wall_time_seconds: float
+    average_iteration_wall_time_seconds: float | None
+    behavior_verdict: str
+    earliest_issue_sign: str | None
+
+
+@dataclass(frozen=True)
+class H2JaxTripletReintegrationSmokeRegressionBaseline:
+    """Recorded H2 triplet smoke baseline after JAX-native eigensolver reintegration."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    triplet_mainline_route: H2JaxTripletReintegrationSmokeRouteBaseline
+    diagnosis: str
+    note: str
+
+
 H2_JAX_KERNEL_CONSISTENCY_BASELINE = H2JaxKernelConsistencyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     runtime_summary="x64=True, disable_jit=False, platform=default",
@@ -2817,6 +2854,50 @@ H2_JAX_NATIVE_EIGENSOLVER_BASELINE = H2JaxNativeFixedPotentialEigensolverRegress
         "JAX-native fixed-potential eigensolver baseline for the current A-grid+patch+kinetic-trial-fix "
         "local-only route. SciPy is retained only as an explicit fallback/cross-check route and is no "
         "longer the intended production hot loop for the JAX monitor-grid path."
+    ),
+)
+
+
+H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE = H2JaxTripletReintegrationSmokeRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    triplet_mainline_route=H2JaxTripletReintegrationSmokeRouteBaseline(
+        path_label="jax-native-eigensolver-triplet-mainline",
+        solver_backend="jax",
+        timed_out=True,
+        smoke_timeout_seconds=1804.034,
+        converged=False,
+        iteration_count=0,
+        final_total_energy_ha=None,
+        final_lowest_eigenvalue_ha=None,
+        final_density_residual=None,
+        final_energy_change_ha=None,
+        total_wall_time_seconds=1804.034,
+        average_iteration_wall_time_seconds=None,
+        behavior_verdict="timed_out_before_completion",
+        earliest_issue_sign=(
+            "A same-config max_iterations=1 fallback diagnostic already took "
+            "307.444 s while still using solver_backend='jax'."
+        ),
+    ),
+    diagnosis=(
+        "The JAX-native eigensolver is correctly wired back into the triplet dry-run mainline, "
+        "but the full 20-step H2 triplet reintegration smoke did not finish within a 30-minute "
+        "time cap on the current CPU environment. A same-config one-step fallback diagnostic shows "
+        "the route is using solver_backend='jax' and already spends about 307.44 s on a single SCF "
+        "iteration, so the immediate reintegration risk looks more like a severe end-to-end performance "
+        "regression than a clean numerical blow-up."
+    ),
+    note=(
+        "Triplet reintegration smoke baseline after reconnecting the JAX-native fixed-potential "
+        "eigensolver to the frozen A-grid local-only mainline. This baseline records the failed "
+        "controlled-time 20-step smoke together with the same-config one-step diagnostic evidence."
     ),
 )
 
@@ -3873,6 +3954,8 @@ __all__ = [
     "H2JaxScfHotpathRouteBaseline",
     "H2JaxTripletHartreeEnergyRegressionBaseline",
     "H2JaxTripletHartreeEnergyRouteBaseline",
+    "H2JaxTripletReintegrationSmokeRegressionBaseline",
+    "H2JaxTripletReintegrationSmokeRouteBaseline",
     "H2JaxKernelConsistencyLocalHamiltonianBaseline",
     "H2JaxKernelConsistencyPoissonBaseline",
     "H2JaxKernelConsistencyReductionsBaseline",
@@ -3927,6 +4010,7 @@ __all__ = [
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_JAX_SCF_HOTPATH_BASELINE",
     "H2_JAX_SINGLET_MAINLINE_BASELINE",
+    "H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE",
     "H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE",
     "H2_K2_SUBSPACE_AUDIT_BASELINE",
     "H2_KINETIC_GREEN_IDENTITY_AUDIT_BASELINE",
