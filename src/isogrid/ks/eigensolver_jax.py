@@ -110,7 +110,13 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         q_weighted, _ = jnp.linalg.qr(weighted_columns, mode="reduced")
         return inverse_sqrt_weights[:, None] * q_weighted
 
-    def _stabilize_columns(columns):
+    def _weighted_qr_columns_with_transform(columns):
+        weighted_columns = sqrt_weights[:, None] * columns
+        q_weighted, r_matrix = jnp.linalg.qr(weighted_columns, mode="reduced")
+        transform = jnp.linalg.inv(r_matrix)
+        return inverse_sqrt_weights[:, None] * q_weighted, transform
+
+    def _stabilize_columns_with_transform(columns):
         gram = _weighted_overlap_columns(columns, columns)
         gram = 0.5 * (gram + jnp.conjugate(gram).T)
         eigenvalues, eigenvectors = jnp.linalg.eigh(gram)
@@ -126,11 +132,11 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             inverse_sqrt = (
                 local_vectors * (1.0 / jnp.sqrt(safe_eigenvalues))[None, :]
             ) @ jnp.conjugate(local_vectors).T
-            return local_columns @ inverse_sqrt
+            return local_columns @ inverse_sqrt, inverse_sqrt
 
         def _fallback(args):
             local_columns, _, _ = args
-            return _weighted_qr_columns(local_columns)
+            return _weighted_qr_columns_with_transform(local_columns)
 
         return jax.lax.cond(
             is_safe,
@@ -138,6 +144,10 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             _fallback,
             (columns, eigenvectors, eigenvalues),
         )
+
+    def _stabilize_columns(columns):
+        stabilized_columns, _transform = _stabilize_columns_with_transform(columns)
+        return stabilized_columns
 
     def _columns_to_block(columns):
         return reshape_orbital_columns_jax(columns, block_shape)
@@ -170,6 +180,25 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         basis_coefficients = trial_vectors[:basis_size, :basis_size]
         residual_coefficients = trial_vectors[basis_size:, :basis_size]
         return basis_columns @ basis_coefficients + residual_columns @ residual_coefficients
+
+    def _compress_basis_and_action_from_parts(
+        basis_columns,
+        basis_action_columns,
+        residual_columns,
+        residual_action_columns,
+        trial_vectors,
+    ):
+        basis_size = basis_columns.shape[1]
+        basis_coefficients = trial_vectors[:basis_size, :basis_size]
+        residual_coefficients = trial_vectors[basis_size:, :basis_size]
+        next_basis_columns = basis_columns @ basis_coefficients + residual_columns @ residual_coefficients
+        next_basis_action_columns = (
+            basis_action_columns @ basis_coefficients
+            + residual_action_columns @ residual_coefficients
+        )
+        stabilized_basis_columns, transform = _stabilize_columns_with_transform(next_basis_columns)
+        stabilized_basis_action_columns = next_basis_action_columns @ transform
+        return stabilized_basis_columns, stabilized_basis_action_columns
 
     def _block_until_ready_tree(value):
         leaves = jax.tree_util.tree_leaves(value)
@@ -261,28 +290,35 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         basis_size = int(basis_columns.shape[1])
 
         @jax.jit
-        def _compress_basis_jit_local(basis_columns, residual_columns, trial_vectors):
-            next_basis_columns = _compress_basis_from_parts(
+        def _compress_basis_jit_local(
+            basis_columns,
+            basis_action_columns,
+            residual_columns,
+            residual_action_columns,
+            trial_vectors,
+        ):
+            return _compress_basis_and_action_from_parts(
                 basis_columns,
+                basis_action_columns,
                 residual_columns,
+                residual_action_columns,
                 trial_vectors,
             )
-            return _stabilize_columns(next_basis_columns)
 
         orbital_columns = basis_columns[:, :k]
         residual_norms = np.full((k,), np.inf, dtype=np.float64)
         eigenvalues = np.zeros((k,), dtype=np.float64)
         projected_matrix = np.zeros((k, k), dtype=np.float64)
         loop_start = time.perf_counter()
+        action_columns = _timed_call(
+            "hamiltonian_apply",
+            _apply_block_columns_jit,
+            basis_columns,
+        )
         converged = False
         iteration_count_int = 0
 
         for iteration in range(max_iterations):
-            action_columns = _timed_call(
-                "hamiltonian_apply",
-                _apply_block_columns_jit,
-                basis_columns,
-            )
             projected_matrix_jax = _timed_call(
                 "projected_matrix_build",
                 _build_projected_matrix_jit,
@@ -344,11 +380,13 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 trial_projected_matrix,
             )
             del trial_eigenvalues
-            basis_columns = _timed_call(
+            basis_columns, action_columns = _timed_call(
                 "orthogonalization",
                 _compress_basis_jit_local,
                 basis_columns,
+                action_columns,
                 residual_columns,
+                residual_action_columns,
                 trial_vectors,
             )
 
@@ -380,6 +418,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
     def _run(initial_block):
         initial_columns = flatten_orbital_block_jax(initial_block)
         initial_basis = _weighted_qr_columns(initial_columns)
+        initial_action_columns = flatten_orbital_block_jax(block_apply(_columns_to_block(initial_basis)))
         residual_history = jnp.zeros((max_iterations, k), dtype=jnp.float64)
         ritz_value_history = jnp.zeros((max_iterations, k), dtype=jnp.float64)
         subspace_dimensions = jnp.zeros((max_iterations,), dtype=jnp.int32)
@@ -391,6 +430,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         state = (
             jnp.int32(0),
             initial_basis,
+            initial_action_columns,
             jnp.bool_(False),
             initial_eigenvalues,
             initial_residuals,
@@ -403,13 +443,14 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         )
 
         def _cond(loop_state):
-            iteration, _, converged, *_ = loop_state
+            iteration, _, _, converged, *_ = loop_state
             return jnp.logical_and(iteration < max_iterations, jnp.logical_not(converged))
 
         def _body(loop_state):
             (
                 iteration,
                 basis_columns,
+                action_columns,
                 _converged,
                 _last_eigenvalues,
                 _last_residuals,
@@ -421,9 +462,6 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 _last_projected_matrix,
             ) = loop_state
 
-            basis_block = _columns_to_block(basis_columns)
-            action_block = block_apply(basis_block)
-            action_columns = flatten_orbital_block_jax(action_block)
             projected_matrix = _weighted_overlap_columns(basis_columns, action_columns)
             projected_matrix = 0.5 * (projected_matrix + jnp.conjugate(projected_matrix).T)
             subspace_eigenvalues, subspace_vectors = jnp.linalg.eigh(projected_matrix)
@@ -458,17 +496,20 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             trial_eigenvalues, trial_vectors = jnp.linalg.eigh(trial_projected)
             trial_order = jnp.argsort(trial_eigenvalues)
             trial_vectors = trial_vectors[:, trial_order]
-            next_basis_columns = _compress_basis_from_parts(
+            next_basis_columns, next_action_columns = _compress_basis_and_action_from_parts(
                 basis_columns,
+                action_columns,
                 residual_columns,
+                residual_action_columns,
                 trial_vectors,
             )
-            next_basis_columns = _stabilize_columns(next_basis_columns)
             basis_columns = jax.lax.select(converged, basis_columns, next_basis_columns)
+            action_columns = jax.lax.select(converged, action_columns, next_action_columns)
 
             return (
                 iteration + jnp.int32(1),
                 basis_columns,
+                action_columns,
                 converged,
                 subspace_eigenvalues[:k],
                 residual_norms,
@@ -517,6 +558,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         (
             iteration_count,
             _basis_columns,
+            _basis_action_columns,
             converged,
             eigenvalues,
             residual_norms,

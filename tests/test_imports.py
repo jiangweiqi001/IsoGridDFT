@@ -456,7 +456,7 @@ def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     assert H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.dominant_timing_bucket == "eigensolver"
     assert (
         H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.eigensolver_internal_buckets.dominant_internal_bucket
-        == "hamiltonian_apply"
+        == "orthogonalization"
     )
     assert (
         H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.step1.eigensolver_hamiltonian_apply_wall_time_seconds
