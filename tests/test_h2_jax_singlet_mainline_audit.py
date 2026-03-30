@@ -4,6 +4,7 @@ from importlib import import_module
 
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletAcceptanceAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletFixedPointLocalDifficulty
+from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletHartreeTailGuardAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBehavior
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineParameterSummary
@@ -186,6 +187,7 @@ def _build_route(
 def test_h2_jax_singlet_mainline_audit_module_imports() -> None:
     module = import_module("isogrid.audit.h2_jax_singlet_mainline_audit")
 
+    assert hasattr(module, "run_h2_jax_singlet_hartree_tail_guard_audit")
     assert hasattr(module, "run_h2_jax_singlet_acceptance_audit")
     assert hasattr(module, "run_h2_jax_singlet_mainline_audit")
     assert hasattr(module, "print_h2_jax_singlet_mainline_summary")
@@ -240,3 +242,48 @@ def test_construct_h2_jax_singlet_acceptance_result() -> None:
     assert result.acceptance_route.mixer == "anderson"
     assert result.acceptance_route.converged is False
     assert result.acceptance_route.final_density_residual == 0.30
+
+
+def test_construct_h2_jax_singlet_hartree_tail_guard_result() -> None:
+    baseline_route = _build_route(
+        solver_variant="anderson-productionish",
+        mitigation_enabled=False,
+    )
+    guard_route = _build_route(
+        solver_variant="anderson-plus-hartree-tail-guard",
+        mitigation_enabled=False,
+    )
+    guard_route = H2JaxSingletMainlineRouteResult(
+        **{
+            **guard_route.__dict__,
+            "guard_name": "hartree_tail_guard",
+            "guard_enabled": True,
+            "guard_triggered": True,
+            "guard_trigger_count": 1,
+            "guard_triggered_iterations": (4,),
+            "guard_alpha": 0.45,
+            "guard_residual_ratio_trigger": 0.995,
+            "guard_projected_ratio_trigger": 0.60,
+            "guard_hartree_share_trigger": 0.80,
+            "guard_hartree_share_history": (0.82, 0.83),
+            "guard_residual_ratio_history": (1.01, 1.00),
+            "guard_projected_ratio_history": (0.62, 0.55),
+        }
+    )
+    result = H2JaxSingletHartreeTailGuardAuditResult(
+        path_label="jax-singlet-hartree-tail-guard",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        baseline_route=baseline_route,
+        guard_route=guard_route,
+        supplemental_guard_route=None,
+        diagnosis="guard smoke",
+        note="guard smoke",
+    )
+
+    assert result.guard_route.solver_backend == "jax"
+    assert result.guard_route.mixer == "anderson"
+    assert result.guard_route.guard_enabled is True
+    assert result.guard_route.guard_triggered is True
+    assert result.guard_route.guard_trigger_count == 1
+    assert result.guard_route.final_density_residual == 0.30

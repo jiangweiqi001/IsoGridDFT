@@ -489,11 +489,15 @@ def test_import_h2_jax_triplet_hartree_energy_audit_entrypoint() -> None:
 
 
 def test_import_h2_jax_singlet_mainline_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_singlet_mainline_audit import (
+        run_h2_jax_singlet_hartree_tail_guard_audit,
+    )
     from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_acceptance_audit
     from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_mainline_audit
 
     assert callable(run_h2_jax_singlet_mainline_audit)
     assert callable(run_h2_jax_singlet_acceptance_audit)
+    assert callable(run_h2_jax_singlet_hartree_tail_guard_audit)
 
 
 def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
@@ -533,8 +537,14 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
 
 def test_import_h2_jax_singlet_mainline_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_SINGLET_ACCEPTANCE_BASELINE
+    from isogrid.audit.baselines import H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE
     from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 
+    assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.baseline_route.solver_backend == "jax"
+    assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.guard_route.guard_enabled is True
+    assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.guard_route.guard_name == "hartree_tail_guard"
+    assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.guard_route.guard_triggered is True
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.solver_backend == "jax"
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.mixer == "anderson"
