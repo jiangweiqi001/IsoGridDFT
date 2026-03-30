@@ -2987,87 +2987,87 @@ H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProf
     final_lowest_eigenvalue_ha=-0.416833877359,
     final_density_residual=0.004554214365735,
     final_energy_change_ha=-1.3983502633152511e-05,
-    total_wall_time_seconds=4968.54,
-    average_iteration_wall_time_seconds=276.03,
+    total_wall_time_seconds=2427.236,
+    average_iteration_wall_time_seconds=134.846,
     dominant_timing_bucket="eigensolver",
-    dominant_timing_bucket_fraction_of_total=0.986,
-    eigensolver_fraction_of_total=0.986,
-    eigensolver_total_wall_time_seconds=4897.36,
+    dominant_timing_bucket_fraction_of_total=0.970,
+    eigensolver_fraction_of_total=0.970,
+    eigensolver_total_wall_time_seconds=2353.524,
     eigensolver_internal_buckets=H2JaxTripletEigensolverInternalBucketBaseline(
-        subspace_iteration_wall_time_seconds=4876.018,
-        orthogonalization_wall_time_seconds=1715.029,
-        residual_expansion_wall_time_seconds=1029.233,
-        rayleigh_ritz_wall_time_seconds=5.759,
-        hamiltonian_apply_wall_time_seconds=1763.959,
-        projected_matrix_build_wall_time_seconds=168.957,
-        dominant_internal_bucket="hamiltonian_apply",
+        subspace_iteration_wall_time_seconds=2331.698,
+        orthogonalization_wall_time_seconds=1008.928,
+        residual_expansion_wall_time_seconds=66.662,
+        rayleigh_ritz_wall_time_seconds=5.511,
+        hamiltonian_apply_wall_time_seconds=1006.444,
+        projected_matrix_build_wall_time_seconds=157.194,
+        dominant_internal_bucket="orthogonalization",
     ),
     step1=H2JaxTripletMicroProfileStepBaseline(
         step_index=1,
         solver_backend="jax",
-        total_step_wall_time_seconds=389.689,
-        eigensolver_wall_time_seconds=385.782,
-        static_local_prepare_wall_time_seconds=3.83,
-        hartree_solve_wall_time_seconds=3.31,
-        energy_eval_wall_time_seconds=2.0,
-        density_residual=0.20788997196,
+        total_step_wall_time_seconds=204.517,
+        eigensolver_wall_time_seconds=200.975,
+        static_local_prepare_wall_time_seconds=3.479,
+        hartree_solve_wall_time_seconds=3.01,
+        energy_eval_wall_time_seconds=1.806,
+        density_residual=0.2078899719601,
         energy_change_ha=None,
-        eigensolver_subspace_iteration_wall_time_seconds=421.82,
-        eigensolver_orthogonalization_wall_time_seconds=147.673,
-        eigensolver_residual_expansion_wall_time_seconds=89.304,
-        eigensolver_rayleigh_ritz_wall_time_seconds=0.398,
-        eigensolver_hamiltonian_apply_wall_time_seconds=152.835,
-        eigensolver_projected_matrix_build_wall_time_seconds=14.354,
+        eigensolver_subspace_iteration_wall_time_seconds=199.136,
+        eigensolver_orthogonalization_wall_time_seconds=86.701,
+        eigensolver_residual_expansion_wall_time_seconds=5.474,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.39,
+        eigensolver_hamiltonian_apply_wall_time_seconds=85.767,
+        eigensolver_projected_matrix_build_wall_time_seconds=12.944,
     ),
     step2=H2JaxTripletMicroProfileStepBaseline(
         step_index=2,
         solver_backend="jax",
-        total_step_wall_time_seconds=240.897,
-        eigensolver_wall_time_seconds=236.383,
-        static_local_prepare_wall_time_seconds=4.406,
-        hartree_solve_wall_time_seconds=3.779,
-        energy_eval_wall_time_seconds=2.458,
+        total_step_wall_time_seconds=126.462,
+        eigensolver_wall_time_seconds=122.654,
+        static_local_prepare_wall_time_seconds=3.731,
+        hartree_solve_wall_time_seconds=3.21,
+        energy_eval_wall_time_seconds=1.927,
         density_residual=0.1690673203044,
-        energy_change_ha=0.00025203424105590955,
-        eigensolver_subspace_iteration_wall_time_seconds=254.697,
-        eigensolver_orthogonalization_wall_time_seconds=89.615,
-        eigensolver_residual_expansion_wall_time_seconds=53.71,
-        eigensolver_rayleigh_ritz_wall_time_seconds=0.298,
-        eigensolver_hamiltonian_apply_wall_time_seconds=92.501,
-        eigensolver_projected_matrix_build_wall_time_seconds=8.798,
+        energy_change_ha=0.0002520342410572418,
+        eigensolver_subspace_iteration_wall_time_seconds=121.444,
+        eigensolver_orthogonalization_wall_time_seconds=52.661,
+        eigensolver_residual_expansion_wall_time_seconds=3.509,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.294,
+        eigensolver_hamiltonian_apply_wall_time_seconds=52.495,
+        eigensolver_projected_matrix_build_wall_time_seconds=8.148,
     ),
     last_step=H2JaxTripletMicroProfileStepBaseline(
         step_index=18,
         solver_backend="jax",
-        total_step_wall_time_seconds=191.098,
-        eigensolver_wall_time_seconds=187.535,
-        static_local_prepare_wall_time_seconds=3.486,
-        hartree_solve_wall_time_seconds=3.004,
-        energy_eval_wall_time_seconds=1.75,
-        density_residual=0.004554214365735,
-        energy_change_ha=-1.3983502633152511e-05,
-        eigensolver_subspace_iteration_wall_time_seconds=257.787,
-        eigensolver_orthogonalization_wall_time_seconds=90.544,
-        eigensolver_residual_expansion_wall_time_seconds=54.501,
-        eigensolver_rayleigh_ritz_wall_time_seconds=0.303,
-        eigensolver_hamiltonian_apply_wall_time_seconds=93.335,
-        eigensolver_projected_matrix_build_wall_time_seconds=8.886,
+        total_step_wall_time_seconds=128.098,
+        eigensolver_wall_time_seconds=124.296,
+        static_local_prepare_wall_time_seconds=3.724,
+        hartree_solve_wall_time_seconds=3.186,
+        energy_eval_wall_time_seconds=1.903,
+        density_residual=0.004554214365736,
+        energy_change_ha=-1.3983502630932065e-05,
+        eigensolver_subspace_iteration_wall_time_seconds=123.124,
+        eigensolver_orthogonalization_wall_time_seconds=53.264,
+        eigensolver_residual_expansion_wall_time_seconds=3.525,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.299,
+        eigensolver_hamiltonian_apply_wall_time_seconds=52.992,
+        eigensolver_projected_matrix_build_wall_time_seconds=8.403,
     ),
     diagnosis=(
-        "This baseline freezes one single long-run triplet micro-profile after reintegrating the "
-        "JAX-native fixed-potential eigensolver into the frozen A-grid local-only mainline and "
-        "then opening that eigensolver bucket from the inside. The route converges in 18 iterations "
-        "and uses solver_backend='jax' throughout, so the reintegrated path is numerically healthy. "
-        "The performance regression is nevertheless very clear: the dominant top-level bucket is the "
-        "eigensolver itself at about 98.1% of total wall time, and the in-loop split shows that the "
-        "dominant internal sub-bucket is Hamiltonian application, with orthogonalization second, "
-        "while Rayleigh-Ritz is negligible on this H2 triplet route."
+        "This baseline freezes one single post-optimization triplet micro-profile after the JAX-native "
+        "fixed-potential eigensolver hot path was tightened around Hamiltonian application reuse and "
+        "incremental residual orthogonalization. The route still converges in 18 iterations and uses "
+        "solver_backend='jax' throughout, so the optimized path remains numerically healthy. Relative "
+        "to the previous micro-profile anchor, total wall time and eigensolver wall time both drop by "
+        "about half. The dominant top-level bucket is still the eigensolver, but the internal split is "
+        "now nearly a tie between orthogonalization and Hamiltonian application, with Rayleigh-Ritz "
+        "still negligible."
     ),
     note=(
-        "Triplet end-to-end micro-profile baseline on the frozen JAX A-grid local-only mainline "
-        "with one in-loop eigensolver bucket split. Only one route was run. The run converged early "
-        "at iteration 18, so there is no step-20 record; step1, step2, and the converged last step "
-        "are frozen here as the main timing anchors."
+        "Triplet end-to-end micro-profile baseline on the frozen JAX A-grid local-only mainline after "
+        "one focused eigensolver hot-path optimization pass. Only one route was run. The run again "
+        "converged early at iteration 18, so there is no step-20 record; step1, step2, and the "
+        "converged last step are frozen here as the main timing anchors."
     ),
 )
 

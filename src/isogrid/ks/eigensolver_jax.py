@@ -121,6 +121,27 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         projection = _weighted_overlap_columns(against, columns)
         return columns - against @ projection
 
+    def _build_trial_projected_from_parts(
+        basis_projected,
+        basis_columns,
+        basis_action_columns,
+        residual_columns,
+        residual_action_columns,
+    ):
+        basis_residual = _weighted_overlap_columns(basis_columns, residual_action_columns)
+        residual_basis = _weighted_overlap_columns(residual_columns, basis_action_columns)
+        residual_residual = _weighted_overlap_columns(residual_columns, residual_action_columns)
+        top = jnp.concatenate([basis_projected, basis_residual], axis=1)
+        bottom = jnp.concatenate([residual_basis, residual_residual], axis=1)
+        trial_projected = jnp.concatenate([top, bottom], axis=0)
+        return 0.5 * (trial_projected + jnp.conjugate(trial_projected).T)
+
+    def _compress_basis_from_parts(basis_columns, residual_columns, trial_vectors):
+        basis_size = basis_columns.shape[1]
+        basis_coefficients = trial_vectors[:basis_size, :basis_size]
+        residual_coefficients = trial_vectors[basis_size:, :basis_size]
+        return basis_columns @ basis_coefficients + residual_columns @ residual_coefficients
+
     def _block_until_ready_tree(value):
         leaves = jax.tree_util.tree_leaves(value)
         for leaf in leaves:
@@ -178,10 +199,24 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         return _project_out_weighted(residual_columns, basis_columns)
 
     @jax.jit
-    def _build_trial_columns_jit(basis_columns, residual_columns):
-        residual_columns = _weighted_qr_columns(residual_columns)
-        trial_columns = jnp.concatenate([basis_columns, residual_columns], axis=1)
-        return _weighted_qr_columns(trial_columns)
+    def _normalize_residual_columns_jit(residual_columns):
+        return _weighted_qr_columns(residual_columns)
+
+    @jax.jit
+    def _build_trial_projected_from_parts_jit(
+        basis_projected,
+        basis_columns,
+        basis_action_columns,
+        residual_columns,
+        residual_action_columns,
+    ):
+        return _build_trial_projected_from_parts(
+            basis_projected,
+            basis_columns,
+            basis_action_columns,
+            residual_columns,
+            residual_action_columns,
+        )
 
     def _run_profiled(initial_block):
         initial_columns = flatten_orbital_block_jax(initial_block)
@@ -197,8 +232,12 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         basis_size = int(basis_columns.shape[1])
 
         @jax.jit
-        def _compress_basis_jit_local(trial_columns, trial_vectors):
-            next_basis_columns = trial_columns @ trial_vectors[:, :basis_size]
+        def _compress_basis_jit_local(basis_columns, residual_columns, trial_vectors):
+            next_basis_columns = _compress_basis_from_parts(
+                basis_columns,
+                residual_columns,
+                trial_vectors,
+            )
             return _weighted_qr_columns(next_basis_columns)
 
         orbital_columns = basis_columns[:, :k]
@@ -210,11 +249,6 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         iteration_count_int = 0
 
         for iteration in range(max_iterations):
-            basis_columns = _timed_call(
-                "orthogonalization",
-                _weighted_qr_columns_jit,
-                basis_columns,
-            )
             action_columns = _timed_call(
                 "hamiltonian_apply",
                 _apply_block_columns_jit,
@@ -256,22 +290,24 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 residual_columns,
                 basis_columns,
             )
-            trial_columns = _timed_call(
-                "residual_expansion",
-                _build_trial_columns_jit,
-                basis_columns,
+            residual_columns = _timed_call(
+                "orthogonalization",
+                _normalize_residual_columns_jit,
                 residual_columns,
             )
-            trial_action_columns = _timed_call(
+            residual_action_columns = _timed_call(
                 "hamiltonian_apply",
                 _apply_block_columns_jit,
-                trial_columns,
+                residual_columns,
             )
             trial_projected_matrix = _timed_call(
                 "projected_matrix_build",
-                _build_projected_matrix_jit,
-                trial_columns,
-                trial_action_columns,
+                _build_trial_projected_from_parts_jit,
+                projected_matrix_jax,
+                basis_columns,
+                action_columns,
+                residual_columns,
+                residual_action_columns,
             )
             trial_eigenvalues, trial_vectors = _timed_call(
                 "rayleigh_ritz",
@@ -282,7 +318,8 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             basis_columns = _timed_call(
                 "orthogonalization",
                 _compress_basis_jit_local,
-                trial_columns,
+                basis_columns,
+                residual_columns,
                 trial_vectors,
             )
 
@@ -355,7 +392,6 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 _last_projected_matrix,
             ) = loop_state
 
-            basis_columns = _weighted_qr_columns(basis_columns)
             basis_block = _columns_to_block(basis_columns)
             action_block = block_apply(basis_block)
             action_columns = flatten_orbital_block_jax(action_block)
@@ -378,19 +414,26 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
 
             residual_columns = _project_out_weighted(residual_columns, basis_columns)
             residual_columns = _weighted_qr_columns(residual_columns)
+            residual_action_block = block_apply(_columns_to_block(residual_columns))
+            residual_action_columns = flatten_orbital_block_jax(residual_action_block)
 
-            # Expand the working subspace with fresh residual directions, then
-            # compress it back to the fixed block size via a second Ritz solve.
-            trial_columns = jnp.concatenate([basis_columns, residual_columns], axis=1)
-            trial_columns = _weighted_qr_columns(trial_columns)
-            trial_block = _columns_to_block(trial_columns)
-            trial_action_columns = flatten_orbital_block_jax(block_apply(trial_block))
-            trial_projected = _weighted_overlap_columns(trial_columns, trial_action_columns)
-            trial_projected = 0.5 * (trial_projected + jnp.conjugate(trial_projected).T)
+            # Reuse H@B from the current Ritz step and only apply H to the new
+            # residual block before the Rayleigh-Ritz restart.
+            trial_projected = _build_trial_projected_from_parts(
+                projected_matrix,
+                basis_columns,
+                action_columns,
+                residual_columns,
+                residual_action_columns,
+            )
             trial_eigenvalues, trial_vectors = jnp.linalg.eigh(trial_projected)
             trial_order = jnp.argsort(trial_eigenvalues)
             trial_vectors = trial_vectors[:, trial_order]
-            next_basis_columns = trial_columns @ trial_vectors[:, : basis_columns.shape[1]]
+            next_basis_columns = _compress_basis_from_parts(
+                basis_columns,
+                residual_columns,
+                trial_vectors,
+            )
             next_basis_columns = _weighted_qr_columns(next_basis_columns)
             basis_columns = jax.lax.select(converged, basis_columns, next_basis_columns)
 
