@@ -454,6 +454,14 @@ def test_import_h2_jax_eigensolver_hotpath_baseline() -> None:
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.jax_native_k2_route.converged is True
     assert H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.solver_backend == "jax"
     assert H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.dominant_timing_bucket == "eigensolver"
+    assert (
+        H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.eigensolver_internal_buckets.dominant_internal_bucket
+        == "hamiltonian_apply"
+    )
+    assert (
+        H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.step1.eigensolver_hamiltonian_apply_wall_time_seconds
+        > H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE.step1.eigensolver_rayleigh_ritz_wall_time_seconds
+    )
     assert H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE.triplet_mainline_route.solver_backend == "jax"
     assert H2_JAX_NATIVE_EIGENSOLVER_BASELINE.scipy_fallback_k1_route is not None
 

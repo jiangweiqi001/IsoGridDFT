@@ -55,6 +55,25 @@ class H2JaxTripletMicroProfileStep:
     energy_eval_wall_time_seconds: float
     density_residual: float
     energy_change_ha: float | None
+    eigensolver_subspace_iteration_wall_time_seconds: float
+    eigensolver_orthogonalization_wall_time_seconds: float
+    eigensolver_residual_expansion_wall_time_seconds: float
+    eigensolver_rayleigh_ritz_wall_time_seconds: float
+    eigensolver_hamiltonian_apply_wall_time_seconds: float
+    eigensolver_projected_matrix_build_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
+class H2JaxTripletEigensolverInternalBucketSummary:
+    """Aggregate in-loop eigensolver bucket summary."""
+
+    subspace_iteration_wall_time_seconds: float
+    orthogonalization_wall_time_seconds: float
+    residual_expansion_wall_time_seconds: float
+    rayleigh_ritz_wall_time_seconds: float
+    hamiltonian_apply_wall_time_seconds: float
+    projected_matrix_build_wall_time_seconds: float
+    dominant_internal_bucket: str
 
 
 @dataclass(frozen=True)
@@ -78,6 +97,8 @@ class H2JaxTripletEndToEndMicroProfileResult:
     dominant_timing_bucket: str
     dominant_timing_bucket_fraction_of_total: float | None
     eigensolver_fraction_of_total: float | None
+    eigensolver_total_wall_time_seconds: float
+    eigensolver_internal_buckets: H2JaxTripletEigensolverInternalBucketSummary
     step_profiles: tuple[H2JaxTripletMicroProfileStep, ...]
     parameter_summary: H2JaxTripletMicroProfileParameterSummary
     final_energy_components: SinglePointEnergyComponents
@@ -158,6 +179,24 @@ def _build_step_profiles(
                 energy_change_ha=(
                     None if record.energy_change is None else float(record.energy_change)
                 ),
+                eigensolver_subspace_iteration_wall_time_seconds=(
+                    result.eigensolver_subspace_iteration_iteration_wall_time_seconds[index]
+                ),
+                eigensolver_orthogonalization_wall_time_seconds=(
+                    result.eigensolver_orthogonalization_iteration_wall_time_seconds[index]
+                ),
+                eigensolver_residual_expansion_wall_time_seconds=(
+                    result.eigensolver_residual_expansion_iteration_wall_time_seconds[index]
+                ),
+                eigensolver_rayleigh_ritz_wall_time_seconds=(
+                    result.eigensolver_rayleigh_ritz_iteration_wall_time_seconds[index]
+                ),
+                eigensolver_hamiltonian_apply_wall_time_seconds=(
+                    result.eigensolver_hamiltonian_apply_iteration_wall_time_seconds[index]
+                ),
+                eigensolver_projected_matrix_build_wall_time_seconds=(
+                    result.eigensolver_projected_matrix_build_iteration_wall_time_seconds[index]
+                ),
             )
         )
     return tuple(profiles)
@@ -184,10 +223,47 @@ def _lowest_eigenvalue(result: H2StaticLocalScfDryRunResult) -> float | None:
     return None if result.lowest_eigenvalue is None else float(result.lowest_eigenvalue)
 
 
+def _build_eigensolver_internal_bucket_summary(
+    result: H2StaticLocalScfDryRunResult,
+) -> H2JaxTripletEigensolverInternalBucketSummary:
+    bucket_values = {
+        "orthogonalization": float(result.eigensolver_orthogonalization_wall_time_seconds),
+        "residual_expansion": float(result.eigensolver_residual_expansion_wall_time_seconds),
+        "rayleigh_ritz": float(result.eigensolver_rayleigh_ritz_wall_time_seconds),
+        "hamiltonian_apply": float(result.eigensolver_hamiltonian_apply_wall_time_seconds),
+        "projected_matrix_build": float(
+            result.eigensolver_projected_matrix_build_wall_time_seconds
+        ),
+    }
+    dominant_internal_bucket = max(bucket_values, key=bucket_values.__getitem__)
+    return H2JaxTripletEigensolverInternalBucketSummary(
+        subspace_iteration_wall_time_seconds=float(
+            result.eigensolver_subspace_iteration_wall_time_seconds
+        ),
+        orthogonalization_wall_time_seconds=float(
+            result.eigensolver_orthogonalization_wall_time_seconds
+        ),
+        residual_expansion_wall_time_seconds=float(
+            result.eigensolver_residual_expansion_wall_time_seconds
+        ),
+        rayleigh_ritz_wall_time_seconds=float(
+            result.eigensolver_rayleigh_ritz_wall_time_seconds
+        ),
+        hamiltonian_apply_wall_time_seconds=float(
+            result.eigensolver_hamiltonian_apply_wall_time_seconds
+        ),
+        projected_matrix_build_wall_time_seconds=float(
+            result.eigensolver_projected_matrix_build_wall_time_seconds
+        ),
+        dominant_internal_bucket=dominant_internal_bucket,
+    )
+
+
 def _build_result(
     result: H2StaticLocalScfDryRunResult,
 ) -> H2JaxTripletEndToEndMicroProfileResult:
     dominant_bucket, dominant_fraction, eigensolver_fraction = _dominant_timing_bucket(result)
+    internal_buckets = _build_eigensolver_internal_bucket_summary(result)
     final_energy_change = None
     if result.history and result.history[-1].energy_change is not None:
         final_energy_change = float(result.history[-1].energy_change)
@@ -212,6 +288,8 @@ def _build_result(
         dominant_timing_bucket=dominant_bucket,
         dominant_timing_bucket_fraction_of_total=dominant_fraction,
         eigensolver_fraction_of_total=eigensolver_fraction,
+        eigensolver_total_wall_time_seconds=float(result.eigensolver_wall_time_seconds),
+        eigensolver_internal_buckets=internal_buckets,
         step_profiles=_build_step_profiles(result),
         parameter_summary=_build_parameter_summary(result),
         final_energy_components=result.energy,
@@ -239,6 +317,7 @@ def run_h2_jax_triplet_end_to_end_micro_profile_audit(
         jax_hartree_cg_preconditioner="none",
         use_jax_block_kernels=True,
         use_step_local_static_local_reuse=True,
+        profile_eigensolver_internals=True,
     )
     return _build_result(result)
 
@@ -289,6 +368,19 @@ def print_h2_jax_triplet_end_to_end_micro_profile_summary(
             "  eigensolver fraction of total: "
             f"{result.eigensolver_fraction_of_total:.3f}"
         )
+    print(
+        "  eigensolver internal dominant bucket: "
+        f"{result.eigensolver_internal_buckets.dominant_internal_bucket}"
+    )
+    print(
+        "  eigensolver internal totals [s]: "
+        f"subspace={result.eigensolver_internal_buckets.subspace_iteration_wall_time_seconds:.3f}, "
+        f"orth={result.eigensolver_internal_buckets.orthogonalization_wall_time_seconds:.3f}, "
+        f"residual={result.eigensolver_internal_buckets.residual_expansion_wall_time_seconds:.3f}, "
+        f"rr={result.eigensolver_internal_buckets.rayleigh_ritz_wall_time_seconds:.3f}, "
+        f"ham={result.eigensolver_internal_buckets.hamiltonian_apply_wall_time_seconds:.3f}, "
+        f"proj={result.eigensolver_internal_buckets.projected_matrix_build_wall_time_seconds:.3f}"
+    )
     for step in result.step_profiles:
         print(
             f"step={step.step_index} backend={step.solver_backend} "
@@ -298,7 +390,13 @@ def print_h2_jax_triplet_end_to_end_micro_profile_summary(
             f"hartree={step.hartree_solve_wall_time_seconds:.3f}s "
             f"energy={step.energy_eval_wall_time_seconds:.3f}s "
             f"residual={step.density_residual:.12e} "
-            f"dE={step.energy_change_ha if step.energy_change_ha is not None else 'n/a'}"
+            f"dE={step.energy_change_ha if step.energy_change_ha is not None else 'n/a'} "
+            f"eig_subspace={step.eigensolver_subspace_iteration_wall_time_seconds:.3f}s "
+            f"eig_orth={step.eigensolver_orthogonalization_wall_time_seconds:.3f}s "
+            f"eig_residual={step.eigensolver_residual_expansion_wall_time_seconds:.3f}s "
+            f"eig_rr={step.eigensolver_rayleigh_ritz_wall_time_seconds:.3f}s "
+            f"eig_ham={step.eigensolver_hamiltonian_apply_wall_time_seconds:.3f}s "
+            f"eig_proj={step.eigensolver_projected_matrix_build_wall_time_seconds:.3f}s"
         )
 
 

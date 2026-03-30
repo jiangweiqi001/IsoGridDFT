@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import time
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -51,6 +52,9 @@ _VALID_SPIN_CHANNELS = {"up", "down"}
 _VALID_STATIC_LOCAL_KINETIC_VERSIONS = {"production", "trial_fix"}
 _VALID_FIXED_POTENTIAL_SOLVER_BACKENDS = {"auto", "jax", "scipy_fallback"}
 GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
+
+if TYPE_CHECKING:
+    from isogrid.ks.eigensolver_jax import JaxFixedPotentialInternalProfile
 
 
 @dataclass(frozen=True)
@@ -141,6 +145,7 @@ class FixedPotentialEigensolverResult:
     use_jax_block_kernels: bool = False
     use_jax_cached_kernels: bool = False
     wall_time_seconds: float | None = None
+    jax_internal_profile: JaxFixedPotentialInternalProfile | None = None
 
 
 def _normalize_spin_channel(spin_channel: str) -> str:
@@ -1193,6 +1198,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
     solver_backend: str = "auto",
+    profile_jax_internals: bool = False,
 ) -> FixedPotentialEigensolverResult:
     """Solve the lowest few frozen-potential orbitals of the static local chain.
 
@@ -1251,6 +1257,7 @@ def solve_fixed_potential_static_local_eigenproblem(
             tolerance=tolerance,
             initial_subspace_size=initial_subspace_size,
             ncv=ncv,
+            profile_internals=profile_jax_internals,
         )
     else:
         result = _solve_weighted_fixed_potential_problem_scipy_fallback(
@@ -1291,4 +1298,5 @@ def solve_fixed_potential_static_local_eigenproblem(
         ),
         use_jax_cached_kernels=bool(normalized_solver_backend == "jax"),
         wall_time_seconds=result.wall_time_seconds,
+        jax_internal_profile=result.internal_profile,
     )

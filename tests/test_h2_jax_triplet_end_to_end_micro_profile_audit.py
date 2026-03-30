@@ -1,4 +1,7 @@
 from isogrid.audit.h2_jax_triplet_end_to_end_micro_profile_audit import (
+    H2JaxTripletEigensolverInternalBucketSummary,
+)
+from isogrid.audit.h2_jax_triplet_end_to_end_micro_profile_audit import (
     H2JaxTripletEndToEndMicroProfileResult,
 )
 from isogrid.audit.h2_jax_triplet_end_to_end_micro_profile_audit import (
@@ -40,7 +43,23 @@ def test_triplet_end_to_end_micro_profile_result_fields() -> None:
                 energy_eval_wall_time_seconds=0.5,
                 density_residual=0.2,
                 energy_change_ha=None,
+                eigensolver_subspace_iteration_wall_time_seconds=4.4,
+                eigensolver_orthogonalization_wall_time_seconds=1.5,
+                eigensolver_residual_expansion_wall_time_seconds=0.9,
+                eigensolver_rayleigh_ritz_wall_time_seconds=0.1,
+                eigensolver_hamiltonian_apply_wall_time_seconds=1.6,
+                eigensolver_projected_matrix_build_wall_time_seconds=0.2,
             ),
+        ),
+        eigensolver_total_wall_time_seconds=9.0,
+        eigensolver_internal_buckets=H2JaxTripletEigensolverInternalBucketSummary(
+            subspace_iteration_wall_time_seconds=8.8,
+            orthogonalization_wall_time_seconds=3.0,
+            residual_expansion_wall_time_seconds=1.8,
+            rayleigh_ritz_wall_time_seconds=0.2,
+            hamiltonian_apply_wall_time_seconds=3.2,
+            projected_matrix_build_wall_time_seconds=0.4,
+            dominant_internal_bucket="hamiltonian_apply",
         ),
         parameter_summary=H2JaxTripletMicroProfileParameterSummary(
             grid_shape=(67, 67, 81),
@@ -78,3 +97,4 @@ def test_triplet_end_to_end_micro_profile_result_fields() -> None:
     assert result.final_density_residual == 0.1
     assert result.dominant_timing_bucket == "eigensolver"
     assert result.step_profiles[0].hartree_solve_wall_time_seconds == 0.5
+    assert result.eigensolver_internal_buckets.dominant_internal_bucket == "hamiltonian_apply"

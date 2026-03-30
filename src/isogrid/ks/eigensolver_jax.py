@@ -35,6 +35,19 @@ class JaxFixedPotentialSubspaceIterationResult:
     initial_guess_orbitals: np.ndarray
     final_basis_orbitals: np.ndarray
     wall_time_seconds: float
+    internal_profile: JaxFixedPotentialInternalProfile | None = None
+
+
+@dataclass(frozen=True)
+class JaxFixedPotentialInternalProfile:
+    """Very small in-loop timing profile for the JAX-native eigensolver."""
+
+    subspace_iteration_wall_time_seconds: float
+    orthogonalization_wall_time_seconds: float
+    residual_expansion_wall_time_seconds: float
+    rayleigh_ritz_wall_time_seconds: float
+    hamiltonian_apply_wall_time_seconds: float
+    projected_matrix_build_wall_time_seconds: float
 
 
 def solve_fixed_potential_static_local_eigenproblem_jax(
@@ -46,6 +59,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
     tolerance: float,
     initial_subspace_size: int | None,
     ncv: int | None,
+    profile_internals: bool = False,
 ) -> JaxFixedPotentialSubspaceIterationResult:
     """Solve the local-only fixed-potential problem with a JAX-native block iteration."""
 
@@ -106,6 +120,195 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
     def _project_out_weighted(columns, against):
         projection = _weighted_overlap_columns(against, columns)
         return columns - against @ projection
+
+    def _block_until_ready_tree(value):
+        leaves = jax.tree_util.tree_leaves(value)
+        for leaf in leaves:
+            if hasattr(leaf, "block_until_ready"):
+                leaf.block_until_ready()
+        return value
+
+    def _timed_call(bucket: str, fn, *args):
+        start = time.perf_counter()
+        value = fn(*args)
+        _block_until_ready_tree(value)
+        elapsed = time.perf_counter() - start
+        profile_totals[bucket] += elapsed
+        return value
+
+    @jax.jit
+    def _weighted_qr_columns_jit(columns):
+        return _weighted_qr_columns(columns)
+
+    @jax.jit
+    def _apply_block_columns_jit(columns):
+        block = _columns_to_block(columns)
+        return flatten_orbital_block_jax(block_apply(block))
+
+    @jax.jit
+    def _build_projected_matrix_jit(columns, action_columns):
+        projected_matrix = _weighted_overlap_columns(columns, action_columns)
+        return 0.5 * (projected_matrix + jnp.conjugate(projected_matrix).T)
+
+    @jax.jit
+    def _rayleigh_ritz_jit(projected_matrix):
+        subspace_eigenvalues, subspace_vectors = jnp.linalg.eigh(projected_matrix)
+        order = jnp.argsort(subspace_eigenvalues)
+        return subspace_eigenvalues[order], subspace_vectors[:, order]
+
+    @jax.jit
+    def _compute_residual_data_jit(
+        basis_columns,
+        action_columns,
+        subspace_eigenvalues,
+        subspace_vectors,
+    ):
+        coeffs = subspace_vectors[:, :k]
+        orbital_columns = basis_columns @ coeffs
+        orbital_action_columns = action_columns @ coeffs
+        residual_columns = (
+            orbital_action_columns
+            - orbital_columns * subspace_eigenvalues[None, :k]
+        )
+        residual_norms = _weighted_column_norms(residual_columns)
+        return orbital_columns, residual_columns, residual_norms
+
+    @jax.jit
+    def _project_residual_columns_jit(residual_columns, basis_columns):
+        return _project_out_weighted(residual_columns, basis_columns)
+
+    @jax.jit
+    def _build_trial_columns_jit(basis_columns, residual_columns):
+        residual_columns = _weighted_qr_columns(residual_columns)
+        trial_columns = jnp.concatenate([basis_columns, residual_columns], axis=1)
+        return _weighted_qr_columns(trial_columns)
+
+    def _run_profiled(initial_block):
+        initial_columns = flatten_orbital_block_jax(initial_block)
+        _block_until_ready_tree(initial_columns)
+        basis_columns = _timed_call(
+            "orthogonalization",
+            _weighted_qr_columns_jit,
+            initial_columns,
+        )
+        residual_history = np.zeros((max_iterations, k), dtype=np.float64)
+        ritz_value_history = np.zeros((max_iterations, k), dtype=np.float64)
+        subspace_dimensions = np.zeros((max_iterations,), dtype=np.int32)
+        basis_size = int(basis_columns.shape[1])
+
+        @jax.jit
+        def _compress_basis_jit_local(trial_columns, trial_vectors):
+            next_basis_columns = trial_columns @ trial_vectors[:, :basis_size]
+            return _weighted_qr_columns(next_basis_columns)
+
+        orbital_columns = basis_columns[:, :k]
+        residual_norms = np.full((k,), np.inf, dtype=np.float64)
+        eigenvalues = np.zeros((k,), dtype=np.float64)
+        projected_matrix = np.zeros((k, k), dtype=np.float64)
+        loop_start = time.perf_counter()
+        converged = False
+        iteration_count_int = 0
+
+        for iteration in range(max_iterations):
+            basis_columns = _timed_call(
+                "orthogonalization",
+                _weighted_qr_columns_jit,
+                basis_columns,
+            )
+            action_columns = _timed_call(
+                "hamiltonian_apply",
+                _apply_block_columns_jit,
+                basis_columns,
+            )
+            projected_matrix_jax = _timed_call(
+                "projected_matrix_build",
+                _build_projected_matrix_jit,
+                basis_columns,
+                action_columns,
+            )
+            subspace_eigenvalues, subspace_vectors = _timed_call(
+                "rayleigh_ritz",
+                _rayleigh_ritz_jit,
+                projected_matrix_jax,
+            )
+            orbital_columns, residual_columns, residual_norms_jax = _timed_call(
+                "residual_expansion",
+                _compute_residual_data_jit,
+                basis_columns,
+                action_columns,
+                subspace_eigenvalues[:k],
+                subspace_vectors[:, :k],
+            )
+            residual_norms = np.asarray(residual_norms_jax, dtype=np.float64)
+            eigenvalues = np.asarray(subspace_eigenvalues[:k], dtype=np.float64)
+            residual_history[iteration] = residual_norms
+            ritz_value_history[iteration] = eigenvalues
+            subspace_dimensions[iteration] = basis_size
+            projected_matrix = np.asarray(projected_matrix_jax[:k, :k], dtype=np.float64)
+            iteration_count_int = iteration + 1
+            if float(np.max(residual_norms)) <= tolerance:
+                converged = True
+                break
+
+            residual_columns = _timed_call(
+                "residual_expansion",
+                _project_residual_columns_jit,
+                residual_columns,
+                basis_columns,
+            )
+            trial_columns = _timed_call(
+                "residual_expansion",
+                _build_trial_columns_jit,
+                basis_columns,
+                residual_columns,
+            )
+            trial_action_columns = _timed_call(
+                "hamiltonian_apply",
+                _apply_block_columns_jit,
+                trial_columns,
+            )
+            trial_projected_matrix = _timed_call(
+                "projected_matrix_build",
+                _build_projected_matrix_jit,
+                trial_columns,
+                trial_action_columns,
+            )
+            trial_eigenvalues, trial_vectors = _timed_call(
+                "rayleigh_ritz",
+                _rayleigh_ritz_jit,
+                trial_projected_matrix,
+            )
+            del trial_eigenvalues
+            basis_columns = _timed_call(
+                "orthogonalization",
+                _compress_basis_jit_local,
+                trial_columns,
+                trial_vectors,
+            )
+
+        subspace_iteration_wall_time_seconds = time.perf_counter() - loop_start
+        return (
+            iteration_count_int,
+            converged,
+            eigenvalues,
+            residual_norms,
+            residual_history[:iteration_count_int],
+            ritz_value_history[:iteration_count_int],
+            tuple(int(value) for value in subspace_dimensions[:iteration_count_int]),
+            np.asarray(_columns_to_block(orbital_columns), dtype=np.float64),
+            np.asarray(_columns_to_block(basis_columns), dtype=np.float64),
+            projected_matrix,
+            JaxFixedPotentialInternalProfile(
+                subspace_iteration_wall_time_seconds=float(subspace_iteration_wall_time_seconds),
+                orthogonalization_wall_time_seconds=float(profile_totals["orthogonalization"]),
+                residual_expansion_wall_time_seconds=float(profile_totals["residual_expansion"]),
+                rayleigh_ritz_wall_time_seconds=float(profile_totals["rayleigh_ritz"]),
+                hamiltonian_apply_wall_time_seconds=float(profile_totals["hamiltonian_apply"]),
+                projected_matrix_build_wall_time_seconds=float(
+                    profile_totals["projected_matrix_build"]
+                ),
+            ),
+        )
 
     @jax.jit
     def _run(initial_block):
@@ -207,32 +410,74 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
 
         return jax.lax.while_loop(_cond, _body, state)
 
+    profile_totals = {
+        "orthogonalization": 0.0,
+        "residual_expansion": 0.0,
+        "rayleigh_ritz": 0.0,
+        "hamiltonian_apply": 0.0,
+        "projected_matrix_build": 0.0,
+    }
     solve_start = time.perf_counter()
-    final_state = _run(jnp.asarray(initial_guess, dtype=jnp.float64))
+    internal_profile = None
+    if profile_internals:
+        (
+            iteration_count_int,
+            converged,
+            eigenvalues,
+            residual_norms,
+            residual_history_np,
+            ritz_value_history_np,
+            subspace_dimensions_tuple,
+            orbitals,
+            final_basis_orbitals,
+            ritz_matrix_np,
+            internal_profile,
+        ) = _run_profiled(jnp.asarray(initial_guess, dtype=jnp.float64))
+        weighted_overlap = np.asarray(
+            _weighted_overlap_columns(
+                flatten_orbital_block_jax(jnp.asarray(orbitals, dtype=jnp.float64)),
+                flatten_orbital_block_jax(jnp.asarray(orbitals, dtype=jnp.float64)),
+            ),
+            dtype=np.float64,
+        )
+    else:
+        final_state = _run(jnp.asarray(initial_guess, dtype=jnp.float64))
+        (
+            iteration_count,
+            _basis_columns,
+            converged,
+            eigenvalues,
+            residual_norms,
+            residual_history,
+            ritz_value_history,
+            subspace_dimensions,
+            orbital_columns,
+            final_basis_columns,
+            ritz_matrix,
+        ) = final_state
+        jax.block_until_ready(eigenvalues)
+
+        iteration_count_int = int(iteration_count)
+        orbitals = np.asarray(_columns_to_block(orbital_columns), dtype=np.float64)
+        final_basis_orbitals = np.asarray(_columns_to_block(final_basis_columns), dtype=np.float64)
+        weighted_overlap = np.asarray(
+            _weighted_overlap_columns(orbital_columns, orbital_columns),
+            dtype=np.float64,
+        )
+        residual_history_np = np.asarray(
+            residual_history[:iteration_count_int],
+            dtype=np.float64,
+        )
+        ritz_value_history_np = np.asarray(
+            ritz_value_history[:iteration_count_int],
+            dtype=np.float64,
+        )
+        subspace_dimensions_tuple = tuple(
+            int(value) for value in np.asarray(subspace_dimensions[:iteration_count_int], dtype=np.int32)
+        )
+        ritz_matrix_np = np.asarray(ritz_matrix, dtype=np.float64)
     wall_time_seconds = time.perf_counter() - solve_start
 
-    (
-        iteration_count,
-        _basis_columns,
-        converged,
-        eigenvalues,
-        residual_norms,
-        residual_history,
-        ritz_value_history,
-        subspace_dimensions,
-        orbital_columns,
-        final_basis_columns,
-        ritz_matrix,
-    ) = final_state
-    jax.block_until_ready(eigenvalues)
-
-    iteration_count_int = int(iteration_count)
-    orbitals = np.asarray(_columns_to_block(orbital_columns), dtype=np.float64)
-    final_basis_orbitals = np.asarray(_columns_to_block(final_basis_columns), dtype=np.float64)
-    weighted_overlap = np.asarray(
-        _weighted_overlap_columns(orbital_columns, orbital_columns),
-        dtype=np.float64,
-    )
     max_orthogonality_error = float(
         np.max(np.abs(weighted_overlap - np.eye(k, dtype=np.float64)))
     )
@@ -255,19 +500,19 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         weighted_overlap=weighted_overlap,
         max_orthogonality_error=max_orthogonality_error,
         residual_norms=np.asarray(residual_norms, dtype=np.float64),
-        residual_history=np.asarray(residual_history[:iteration_count_int], dtype=np.float64),
-        ritz_value_history=np.asarray(ritz_value_history[:iteration_count_int], dtype=np.float64),
-        subspace_dimensions=tuple(
-            int(value) for value in np.asarray(subspace_dimensions[:iteration_count_int], dtype=np.int32)
-        ),
-        ritz_matrix=np.asarray(ritz_matrix, dtype=np.float64),
+        residual_history=residual_history_np,
+        ritz_value_history=ritz_value_history_np,
+        subspace_dimensions=subspace_dimensions_tuple,
+        ritz_matrix=ritz_matrix_np,
         initial_guess_orbitals=np.asarray(initial_guess, dtype=np.float64),
         final_basis_orbitals=final_basis_orbitals,
         wall_time_seconds=float(wall_time_seconds),
+        internal_profile=internal_profile,
     )
 
 
 __all__ = [
+    "JaxFixedPotentialInternalProfile",
     "JaxFixedPotentialSubspaceIterationResult",
     "solve_fixed_potential_static_local_eigenproblem_jax",
 ]

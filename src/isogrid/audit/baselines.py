@@ -2627,6 +2627,25 @@ class H2JaxTripletMicroProfileStepBaseline:
     energy_eval_wall_time_seconds: float
     density_residual: float
     energy_change_ha: float | None
+    eigensolver_subspace_iteration_wall_time_seconds: float
+    eigensolver_orthogonalization_wall_time_seconds: float
+    eigensolver_residual_expansion_wall_time_seconds: float
+    eigensolver_rayleigh_ritz_wall_time_seconds: float
+    eigensolver_hamiltonian_apply_wall_time_seconds: float
+    eigensolver_projected_matrix_build_wall_time_seconds: float
+
+
+@dataclass(frozen=True)
+class H2JaxTripletEigensolverInternalBucketBaseline:
+    """Recorded aggregate in-loop eigensolver bucket summary."""
+
+    subspace_iteration_wall_time_seconds: float
+    orthogonalization_wall_time_seconds: float
+    residual_expansion_wall_time_seconds: float
+    rayleigh_ritz_wall_time_seconds: float
+    hamiltonian_apply_wall_time_seconds: float
+    projected_matrix_build_wall_time_seconds: float
+    dominant_internal_bucket: str
 
 
 @dataclass(frozen=True)
@@ -2654,6 +2673,8 @@ class H2JaxTripletEndToEndMicroProfileBaseline:
     dominant_timing_bucket: str
     dominant_timing_bucket_fraction_of_total: float | None
     eigensolver_fraction_of_total: float | None
+    eigensolver_total_wall_time_seconds: float
+    eigensolver_internal_buckets: H2JaxTripletEigensolverInternalBucketBaseline
     step1: H2JaxTripletMicroProfileStepBaseline | None
     step2: H2JaxTripletMicroProfileStepBaseline | None
     last_step: H2JaxTripletMicroProfileStepBaseline | None
@@ -2962,15 +2983,25 @@ H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProf
     completed_full_20_steps=False,
     actual_iteration_count=18,
     converged=True,
-    final_total_energy_ha=-1.221453262655,
-    final_lowest_eigenvalue_ha=-0.41693317459,
-    final_density_residual=0.004579907829439,
-    final_energy_change_ha=-1.3037071322941074e-05,
-    total_wall_time_seconds=3858.48,
-    average_iteration_wall_time_seconds=214.36,
+    final_total_energy_ha=-1.221451481023,
+    final_lowest_eigenvalue_ha=-0.416833877359,
+    final_density_residual=0.004554214365735,
+    final_energy_change_ha=-1.3983502633152511e-05,
+    total_wall_time_seconds=4968.54,
+    average_iteration_wall_time_seconds=276.03,
     dominant_timing_bucket="eigensolver",
-    dominant_timing_bucket_fraction_of_total=0.981,
-    eigensolver_fraction_of_total=0.981,
+    dominant_timing_bucket_fraction_of_total=0.986,
+    eigensolver_fraction_of_total=0.986,
+    eigensolver_total_wall_time_seconds=4897.36,
+    eigensolver_internal_buckets=H2JaxTripletEigensolverInternalBucketBaseline(
+        subspace_iteration_wall_time_seconds=4876.018,
+        orthogonalization_wall_time_seconds=1715.029,
+        residual_expansion_wall_time_seconds=1029.233,
+        rayleigh_ritz_wall_time_seconds=5.759,
+        hamiltonian_apply_wall_time_seconds=1763.959,
+        projected_matrix_build_wall_time_seconds=168.957,
+        dominant_internal_bucket="hamiltonian_apply",
+    ),
     step1=H2JaxTripletMicroProfileStepBaseline(
         step_index=1,
         solver_backend="jax",
@@ -2981,6 +3012,12 @@ H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProf
         energy_eval_wall_time_seconds=2.0,
         density_residual=0.20788997196,
         energy_change_ha=None,
+        eigensolver_subspace_iteration_wall_time_seconds=421.82,
+        eigensolver_orthogonalization_wall_time_seconds=147.673,
+        eigensolver_residual_expansion_wall_time_seconds=89.304,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.398,
+        eigensolver_hamiltonian_apply_wall_time_seconds=152.835,
+        eigensolver_projected_matrix_build_wall_time_seconds=14.354,
     ),
     step2=H2JaxTripletMicroProfileStepBaseline(
         step_index=2,
@@ -2992,6 +3029,12 @@ H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProf
         energy_eval_wall_time_seconds=2.458,
         density_residual=0.1690673203044,
         energy_change_ha=0.00025203424105590955,
+        eigensolver_subspace_iteration_wall_time_seconds=254.697,
+        eigensolver_orthogonalization_wall_time_seconds=89.615,
+        eigensolver_residual_expansion_wall_time_seconds=53.71,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.298,
+        eigensolver_hamiltonian_apply_wall_time_seconds=92.501,
+        eigensolver_projected_matrix_build_wall_time_seconds=8.798,
     ),
     last_step=H2JaxTripletMicroProfileStepBaseline(
         step_index=18,
@@ -3001,23 +3044,30 @@ H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE = H2JaxTripletEndToEndMicroProf
         static_local_prepare_wall_time_seconds=3.486,
         hartree_solve_wall_time_seconds=3.004,
         energy_eval_wall_time_seconds=1.75,
-        density_residual=0.004579907829439,
-        energy_change_ha=-1.3037071322941074e-05,
+        density_residual=0.004554214365735,
+        energy_change_ha=-1.3983502633152511e-05,
+        eigensolver_subspace_iteration_wall_time_seconds=257.787,
+        eigensolver_orthogonalization_wall_time_seconds=90.544,
+        eigensolver_residual_expansion_wall_time_seconds=54.501,
+        eigensolver_rayleigh_ritz_wall_time_seconds=0.303,
+        eigensolver_hamiltonian_apply_wall_time_seconds=93.335,
+        eigensolver_projected_matrix_build_wall_time_seconds=8.886,
     ),
     diagnosis=(
         "This baseline freezes one single long-run triplet micro-profile after reintegrating the "
-        "JAX-native fixed-potential eigensolver into the frozen A-grid local-only mainline. The "
-        "route converges in 18 iterations and uses solver_backend='jax' throughout, so the "
-        "reintegrated path is numerically healthy. The performance regression is nevertheless very "
-        "clear: the dominant top-level bucket is the eigensolver itself at about 98.1% of total "
-        "wall time, while static-local preparation and Hartree solve remain small nested buckets of "
-        "only a few seconds per step."
+        "JAX-native fixed-potential eigensolver into the frozen A-grid local-only mainline and "
+        "then opening that eigensolver bucket from the inside. The route converges in 18 iterations "
+        "and uses solver_backend='jax' throughout, so the reintegrated path is numerically healthy. "
+        "The performance regression is nevertheless very clear: the dominant top-level bucket is the "
+        "eigensolver itself at about 98.1% of total wall time, and the in-loop split shows that the "
+        "dominant internal sub-bucket is Hamiltonian application, with orthogonalization second, "
+        "while Rayleigh-Ritz is negligible on this H2 triplet route."
     ),
     note=(
-        "Triplet end-to-end micro-profile baseline on the frozen JAX A-grid local-only mainline. "
-        "Only one route was run. The run converged early at iteration 18, so there is no step-20 "
-        "record; step1, step2, and the converged last step are frozen here as the main timing "
-        "anchors."
+        "Triplet end-to-end micro-profile baseline on the frozen JAX A-grid local-only mainline "
+        "with one in-loop eigensolver bucket split. Only one route was run. The run converged early "
+        "at iteration 18, so there is no step-20 record; step1, step2, and the converged last step "
+        "are frozen here as the main timing anchors."
     ),
 )
 

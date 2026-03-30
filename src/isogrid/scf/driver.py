@@ -398,10 +398,22 @@ class H2StaticLocalScfDryRunResult:
     hartree_preconditioner_axis_reorder_wall_time_seconds_history: tuple[float, ...]
     hartree_preconditioner_tridiagonal_solve_wall_time_seconds_history: tuple[float, ...]
     hartree_preconditioner_other_overhead_wall_time_seconds_history: tuple[float, ...]
+    eigensolver_subspace_iteration_wall_time_seconds: float
+    eigensolver_orthogonalization_wall_time_seconds: float
+    eigensolver_residual_expansion_wall_time_seconds: float
+    eigensolver_rayleigh_ritz_wall_time_seconds: float
+    eigensolver_hamiltonian_apply_wall_time_seconds: float
+    eigensolver_projected_matrix_build_wall_time_seconds: float
     solver_backend_iteration_history: tuple[str, ...]
     total_step_wall_time_seconds_history: tuple[float, ...]
     static_local_prepare_iteration_wall_time_seconds: tuple[float, ...]
     hartree_solve_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_subspace_iteration_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_orthogonalization_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_residual_expansion_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_rayleigh_ritz_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_hamiltonian_apply_iteration_wall_time_seconds: tuple[float, ...]
+    eigensolver_projected_matrix_build_iteration_wall_time_seconds: tuple[float, ...]
     eigensolver_iteration_wall_time_seconds: tuple[float, ...]
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
@@ -2275,6 +2287,7 @@ def run_h2_monitor_grid_scf_dry_run(
     broyden_history_length: int = 4,
     broyden_regularization: float = 1.0e-8,
     broyden_damping: float = 0.5,
+    profile_eigensolver_internals: bool = False,
 ) -> H2StaticLocalScfDryRunResult:
     """Run the first monitor-grid H2 SCF dry-run on the local static chain."""
 
@@ -2453,6 +2466,12 @@ def run_h2_monitor_grid_scf_dry_run(
     iteration_total_step_times: list[float] = []
     iteration_static_local_prepare_times: list[float] = []
     iteration_hartree_solve_times: list[float] = []
+    iteration_eigensolver_subspace_iteration_times: list[float] = []
+    iteration_eigensolver_orthogonalization_times: list[float] = []
+    iteration_eigensolver_residual_expansion_times: list[float] = []
+    iteration_eigensolver_rayleigh_ritz_times: list[float] = []
+    iteration_eigensolver_hamiltonian_apply_times: list[float] = []
+    iteration_eigensolver_projected_matrix_build_times: list[float] = []
     iteration_eigensolver_times: list[float] = []
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
@@ -2673,6 +2692,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                 jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                profile_jax_internals=profile_eigensolver_internals,
             )
             orbitals_up = solve_up.orbitals
         else:
@@ -2752,6 +2772,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                 jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                profile_jax_internals=profile_eigensolver_internals,
             )
             orbitals_down = solve_down.orbitals
         else:
@@ -3209,6 +3230,33 @@ def run_h2_monitor_grid_scf_dry_run(
             for solve_summary in (history[-1].solve_up, history[-1].solve_down)
             if solve_summary is not None and solve_summary.target_orbitals > 0
         ]
+        step_eigensolver_subspace_iteration_elapsed = 0.0
+        step_eigensolver_orthogonalization_elapsed = 0.0
+        step_eigensolver_residual_expansion_elapsed = 0.0
+        step_eigensolver_rayleigh_ritz_elapsed = 0.0
+        step_eigensolver_hamiltonian_apply_elapsed = 0.0
+        step_eigensolver_projected_matrix_build_elapsed = 0.0
+        for solve_result in (solve_up, solve_down):
+            if solve_result is None or solve_result.jax_internal_profile is None:
+                continue
+            step_eigensolver_subspace_iteration_elapsed += (
+                solve_result.jax_internal_profile.subspace_iteration_wall_time_seconds
+            )
+            step_eigensolver_orthogonalization_elapsed += (
+                solve_result.jax_internal_profile.orthogonalization_wall_time_seconds
+            )
+            step_eigensolver_residual_expansion_elapsed += (
+                solve_result.jax_internal_profile.residual_expansion_wall_time_seconds
+            )
+            step_eigensolver_rayleigh_ritz_elapsed += (
+                solve_result.jax_internal_profile.rayleigh_ritz_wall_time_seconds
+            )
+            step_eigensolver_hamiltonian_apply_elapsed += (
+                solve_result.jax_internal_profile.hamiltonian_apply_wall_time_seconds
+            )
+            step_eigensolver_projected_matrix_build_elapsed += (
+                solve_result.jax_internal_profile.projected_matrix_build_wall_time_seconds
+            )
         if step_backend_labels:
             unique_step_backend_labels = tuple(dict.fromkeys(step_backend_labels))
             step_solver_backend = (
@@ -3222,6 +3270,24 @@ def run_h2_monitor_grid_scf_dry_run(
             float(iteration_static_local_prepare_elapsed)
         )
         iteration_hartree_solve_times.append(float(iteration_hartree_solve_elapsed))
+        iteration_eigensolver_subspace_iteration_times.append(
+            float(step_eigensolver_subspace_iteration_elapsed)
+        )
+        iteration_eigensolver_orthogonalization_times.append(
+            float(step_eigensolver_orthogonalization_elapsed)
+        )
+        iteration_eigensolver_residual_expansion_times.append(
+            float(step_eigensolver_residual_expansion_elapsed)
+        )
+        iteration_eigensolver_rayleigh_ritz_times.append(
+            float(step_eigensolver_rayleigh_ritz_elapsed)
+        )
+        iteration_eigensolver_hamiltonian_apply_times.append(
+            float(step_eigensolver_hamiltonian_apply_elapsed)
+        )
+        iteration_eigensolver_projected_matrix_build_times.append(
+            float(step_eigensolver_projected_matrix_build_elapsed)
+        )
         iteration_eigensolver_times.append(float(eigensolver_core_elapsed))
         iteration_energy_evaluation_times.append(float(energy_evaluation_elapsed))
         iteration_density_update_times.append(float(density_update_elapsed))
@@ -3348,6 +3414,24 @@ def run_h2_monitor_grid_scf_dry_run(
         None
         if not hartree_preconditioner_other_overhead_times
         else float(np.mean(hartree_preconditioner_other_overhead_times))
+    )
+    eigensolver_subspace_iteration_wall_time_seconds = float(
+        sum(iteration_eigensolver_subspace_iteration_times)
+    )
+    eigensolver_orthogonalization_wall_time_seconds = float(
+        sum(iteration_eigensolver_orthogonalization_times)
+    )
+    eigensolver_residual_expansion_wall_time_seconds = float(
+        sum(iteration_eigensolver_residual_expansion_times)
+    )
+    eigensolver_rayleigh_ritz_wall_time_seconds = float(
+        sum(iteration_eigensolver_rayleigh_ritz_times)
+    )
+    eigensolver_hamiltonian_apply_wall_time_seconds = float(
+        sum(iteration_eigensolver_hamiltonian_apply_times)
+    )
+    eigensolver_projected_matrix_build_wall_time_seconds = float(
+        sum(iteration_eigensolver_projected_matrix_build_times)
     )
     bookkeeping_wall_time_seconds = float(
         total_wall_time_seconds
@@ -3574,6 +3658,24 @@ def run_h2_monitor_grid_scf_dry_run(
         hartree_preconditioner_other_overhead_wall_time_seconds_history=tuple(
             float(value) for value in hartree_preconditioner_other_overhead_times
         ),
+        eigensolver_subspace_iteration_wall_time_seconds=(
+            eigensolver_subspace_iteration_wall_time_seconds
+        ),
+        eigensolver_orthogonalization_wall_time_seconds=(
+            eigensolver_orthogonalization_wall_time_seconds
+        ),
+        eigensolver_residual_expansion_wall_time_seconds=(
+            eigensolver_residual_expansion_wall_time_seconds
+        ),
+        eigensolver_rayleigh_ritz_wall_time_seconds=(
+            eigensolver_rayleigh_ritz_wall_time_seconds
+        ),
+        eigensolver_hamiltonian_apply_wall_time_seconds=(
+            eigensolver_hamiltonian_apply_wall_time_seconds
+        ),
+        eigensolver_projected_matrix_build_wall_time_seconds=(
+            eigensolver_projected_matrix_build_wall_time_seconds
+        ),
         solver_backend_iteration_history=tuple(iteration_solver_backends),
         total_step_wall_time_seconds_history=tuple(iteration_total_step_times),
         static_local_prepare_iteration_wall_time_seconds=tuple(
@@ -3581,6 +3683,24 @@ def run_h2_monitor_grid_scf_dry_run(
         ),
         hartree_solve_iteration_wall_time_seconds=tuple(
             iteration_hartree_solve_times
+        ),
+        eigensolver_subspace_iteration_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_subspace_iteration_times
+        ),
+        eigensolver_orthogonalization_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_orthogonalization_times
+        ),
+        eigensolver_residual_expansion_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_residual_expansion_times
+        ),
+        eigensolver_rayleigh_ritz_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_rayleigh_ritz_times
+        ),
+        eigensolver_hamiltonian_apply_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_hamiltonian_apply_times
+        ),
+        eigensolver_projected_matrix_build_iteration_wall_time_seconds=tuple(
+            iteration_eigensolver_projected_matrix_build_times
         ),
         eigensolver_iteration_wall_time_seconds=tuple(iteration_eigensolver_times),
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
