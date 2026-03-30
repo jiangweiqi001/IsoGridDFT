@@ -212,6 +212,9 @@ class H2ScfDryRunParameterSummary:
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
     hartree_tail_guard_hartree_share_trigger: float | None = None
+    hartree_tail_guard_hold_steps: int | None = None
+    hartree_tail_guard_exit_residual_ratio: float | None = None
+    hartree_tail_guard_exit_stable_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -430,7 +433,14 @@ class H2StaticLocalScfDryRunResult:
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
     hartree_tail_guard_hartree_share_trigger: float | None = None
+    hartree_tail_guard_hold_steps: int | None = None
+    hartree_tail_guard_exit_residual_ratio: float | None = None
+    hartree_tail_guard_exit_stable_steps: int | None = None
     hartree_tail_guard_triggered_iterations: tuple[int, ...] = ()
+    hartree_tail_guard_entry_iterations: tuple[int, ...] = ()
+    hartree_tail_guard_exit_iterations: tuple[int, ...] = ()
+    hartree_tail_guard_hold_lengths: tuple[int, ...] = ()
+    hartree_tail_guard_active_iteration_history: tuple[bool, ...] = ()
     hartree_tail_guard_hartree_share_history: tuple[float | None, ...] = ()
     hartree_tail_guard_residual_ratio_history: tuple[float | None, ...] = ()
     hartree_tail_guard_projected_ratio_history: tuple[float | None, ...] = ()
@@ -873,6 +883,9 @@ def _monitor_grid_scf_parameter_summary(
     hartree_tail_guard_residual_ratio_trigger: float,
     hartree_tail_guard_projected_ratio_trigger: float,
     hartree_tail_guard_hartree_share_trigger: float,
+    hartree_tail_guard_hold_steps: int,
+    hartree_tail_guard_exit_residual_ratio: float,
+    hartree_tail_guard_exit_stable_steps: int,
     broyden_enabled: bool,
     broyden_warmup_iterations: int,
     broyden_history_length: int,
@@ -951,6 +964,13 @@ def _monitor_grid_scf_parameter_summary(
         ),
         hartree_tail_guard_hartree_share_trigger=float(
             hartree_tail_guard_hartree_share_trigger
+        ),
+        hartree_tail_guard_hold_steps=int(hartree_tail_guard_hold_steps),
+        hartree_tail_guard_exit_residual_ratio=float(
+            hartree_tail_guard_exit_residual_ratio
+        ),
+        hartree_tail_guard_exit_stable_steps=int(
+            hartree_tail_guard_exit_stable_steps
         ),
         broyden_enabled=bool(broyden_enabled),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
@@ -1287,23 +1307,15 @@ def _apply_hartree_tail_guard(
         and np.isfinite(projected_residual_ratio)
         and projected_residual_ratio >= projected_ratio_trigger
     )
-    if not (hartree_dominated and residual_stalled and projected_bad):
-        return (
-            None,
-            False,
-            hartree_share,
-            previous_residual_ratio,
-            projected_residual_ratio,
-        )
-
     lagged_hartree_potential = np.asarray(
         (1.0 - guard_alpha) * input_operator_context.hartree_potential
         + guard_alpha * output_energy_context.hartree_potential,
         dtype=np.float64,
     )
+    triggered = bool(hartree_dominated and residual_stalled and projected_bad)
     return (
         lagged_hartree_potential,
-        True,
+        triggered,
         hartree_share,
         previous_residual_ratio,
         projected_residual_ratio,
@@ -2397,6 +2409,9 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_tail_guard_residual_ratio_trigger: float = 0.995,
     hartree_tail_guard_projected_ratio_trigger: float = 0.60,
     hartree_tail_guard_hartree_share_trigger: float = 0.80,
+    hartree_tail_guard_hold_steps: int = 1,
+    hartree_tail_guard_exit_residual_ratio: float = 0.995,
+    hartree_tail_guard_exit_stable_steps: int = 1,
     enable_broyden: bool = False,
     broyden_warmup_iterations: int = 3,
     broyden_history_length: int = 4,
@@ -2492,6 +2507,16 @@ def run_h2_monitor_grid_scf_dry_run(
     if not (0.0 <= hartree_tail_guard_hartree_share_trigger <= 1.0):
         raise ValueError(
             "hartree_tail_guard_hartree_share_trigger must satisfy 0 <= value <= 1."
+        )
+    if hartree_tail_guard_hold_steps <= 0:
+        raise ValueError("hartree_tail_guard_hold_steps must be positive.")
+    if hartree_tail_guard_exit_residual_ratio < 0.0:
+        raise ValueError(
+            "hartree_tail_guard_exit_residual_ratio must be non-negative."
+        )
+    if hartree_tail_guard_exit_stable_steps <= 0:
+        raise ValueError(
+            "hartree_tail_guard_exit_stable_steps must be positive."
         )
     if enable_singlet_hartree_tail_mitigation and enable_hartree_tail_guard:
         raise ValueError(
@@ -2593,7 +2618,14 @@ def run_h2_monitor_grid_scf_dry_run(
     singlet_hartree_tail_residual_ratio_history: list[float | None] = []
     singlet_hartree_tail_projected_ratio_history: list[float | None] = []
     active_hartree_tail_guard_potential: np.ndarray | None = None
+    hartree_tail_guard_active_remaining_steps = 0
+    hartree_tail_guard_recovered_stable_steps = 0
+    hartree_tail_guard_current_hold_length = 0
     hartree_tail_guard_triggered_iterations: list[int] = []
+    hartree_tail_guard_entry_iterations: list[int] = []
+    hartree_tail_guard_exit_iterations: list[int] = []
+    hartree_tail_guard_hold_lengths: list[int] = []
+    hartree_tail_guard_active_iteration_history: list[bool] = []
     hartree_tail_guard_hartree_share_history: list[float | None] = []
     hartree_tail_guard_residual_ratio_history: list[float | None] = []
     hartree_tail_guard_projected_ratio_history: list[float | None] = []
@@ -3324,8 +3356,11 @@ def run_h2_monitor_grid_scf_dry_run(
         if singlet_hartree_tail_triggered:
             singlet_hartree_tail_mitigation_triggered_iterations.append(iteration)
 
+        hartree_tail_guard_active_for_iteration = (
+            active_hartree_tail_guard_potential is not None
+        )
         (
-            active_hartree_tail_guard_potential,
+            hartree_tail_guard_lagged_candidate_potential,
             hartree_tail_guard_triggered,
             hartree_tail_guard_hartree_share,
             hartree_tail_guard_residual_ratio,
@@ -3343,6 +3378,78 @@ def run_h2_monitor_grid_scf_dry_run(
             projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
             hartree_share_trigger=hartree_tail_guard_hartree_share_trigger,
         )
+        hartree_tail_guard_active_iteration_history.append(
+            bool(hartree_tail_guard_active_for_iteration)
+        )
+        if enable_hartree_tail_guard:
+            if hartree_tail_guard_active_for_iteration:
+                hartree_tail_guard_current_hold_length += 1
+                if hartree_tail_guard_triggered:
+                    hartree_tail_guard_active_remaining_steps = max(
+                        int(hartree_tail_guard_hold_steps),
+                        int(hartree_tail_guard_active_remaining_steps),
+                    )
+                    hartree_tail_guard_recovered_stable_steps = 0
+                recovered_residual = (
+                    hartree_tail_guard_residual_ratio is not None
+                    and np.isfinite(hartree_tail_guard_residual_ratio)
+                    and (
+                        hartree_tail_guard_residual_ratio
+                        < hartree_tail_guard_exit_residual_ratio
+                    )
+                )
+                recovered_projected = (
+                    hartree_tail_guard_projected_ratio is None
+                    or (
+                        np.isfinite(hartree_tail_guard_projected_ratio)
+                        and (
+                            hartree_tail_guard_projected_ratio
+                            < hartree_tail_guard_projected_ratio_trigger
+                        )
+                    )
+                )
+                if recovered_residual and recovered_projected:
+                    hartree_tail_guard_recovered_stable_steps += 1
+                else:
+                    hartree_tail_guard_recovered_stable_steps = 0
+
+                next_hartree_tail_guard_potential = (
+                    active_hartree_tail_guard_potential
+                    if hartree_tail_guard_lagged_candidate_potential is None
+                    else hartree_tail_guard_lagged_candidate_potential
+                )
+                hartree_tail_guard_active_remaining_steps -= 1
+                guard_recovered = (
+                    hartree_tail_guard_recovered_stable_steps
+                    >= hartree_tail_guard_exit_stable_steps
+                )
+                guard_window_exhausted = hartree_tail_guard_active_remaining_steps <= 0
+                if guard_recovered or guard_window_exhausted:
+                    hartree_tail_guard_exit_iterations.append(iteration)
+                    hartree_tail_guard_hold_lengths.append(
+                        int(hartree_tail_guard_current_hold_length)
+                    )
+                    active_hartree_tail_guard_potential = None
+                    hartree_tail_guard_active_remaining_steps = 0
+                    hartree_tail_guard_recovered_stable_steps = 0
+                    hartree_tail_guard_current_hold_length = 0
+                else:
+                    active_hartree_tail_guard_potential = (
+                        next_hartree_tail_guard_potential
+                    )
+            elif hartree_tail_guard_triggered:
+                active_hartree_tail_guard_potential = (
+                    hartree_tail_guard_lagged_candidate_potential
+                )
+                hartree_tail_guard_triggered_iterations.append(iteration)
+                hartree_tail_guard_entry_iterations.append(iteration)
+                hartree_tail_guard_active_remaining_steps = int(
+                    hartree_tail_guard_hold_steps
+                )
+                hartree_tail_guard_recovered_stable_steps = 0
+                hartree_tail_guard_current_hold_length = 0
+            else:
+                active_hartree_tail_guard_potential = None
         hartree_tail_guard_hartree_share_history.append(
             None
             if hartree_tail_guard_hartree_share is None
@@ -3358,9 +3465,6 @@ def run_h2_monitor_grid_scf_dry_run(
             if hartree_tail_guard_projected_ratio is None
             else float(hartree_tail_guard_projected_ratio)
         )
-        if hartree_tail_guard_triggered:
-            hartree_tail_guard_triggered_iterations.append(iteration)
-
         history.append(
             ScfIterationRecord(
                 iteration=iteration,
@@ -3524,6 +3628,16 @@ def run_h2_monitor_grid_scf_dry_run(
     average_hartree_cg_iterations = (
         None if not hartree_cg_iterations else float(np.mean(hartree_cg_iterations))
     )
+    if (
+        enable_hartree_tail_guard
+        and hartree_tail_guard_current_hold_length > 0
+        and len(hartree_tail_guard_exit_iterations)
+        < len(hartree_tail_guard_entry_iterations)
+    ):
+        hartree_tail_guard_exit_iterations.append(len(history))
+        hartree_tail_guard_hold_lengths.append(
+            int(hartree_tail_guard_current_hold_length)
+        )
     first_hartree_cg_iterations = (
         None if not hartree_cg_iterations else int(hartree_cg_iterations[0])
     )
@@ -3667,6 +3781,9 @@ def run_h2_monitor_grid_scf_dry_run(
             hartree_tail_guard_residual_ratio_trigger=hartree_tail_guard_residual_ratio_trigger,
             hartree_tail_guard_projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
             hartree_tail_guard_hartree_share_trigger=hartree_tail_guard_hartree_share_trigger,
+            hartree_tail_guard_hold_steps=hartree_tail_guard_hold_steps,
+            hartree_tail_guard_exit_residual_ratio=hartree_tail_guard_exit_residual_ratio,
+            hartree_tail_guard_exit_stable_steps=hartree_tail_guard_exit_stable_steps,
             broyden_enabled=enable_broyden,
             broyden_warmup_iterations=broyden_warmup_iterations,
             broyden_history_length=broyden_history_length,
@@ -3773,8 +3890,33 @@ def run_h2_monitor_grid_scf_dry_run(
             if not enable_hartree_tail_guard
             else float(hartree_tail_guard_hartree_share_trigger)
         ),
+        hartree_tail_guard_hold_steps=(
+            None
+            if not enable_hartree_tail_guard
+            else int(hartree_tail_guard_hold_steps)
+        ),
+        hartree_tail_guard_exit_residual_ratio=(
+            None
+            if not enable_hartree_tail_guard
+            else float(hartree_tail_guard_exit_residual_ratio)
+        ),
+        hartree_tail_guard_exit_stable_steps=(
+            None
+            if not enable_hartree_tail_guard
+            else int(hartree_tail_guard_exit_stable_steps)
+        ),
         hartree_tail_guard_triggered_iterations=tuple(
             hartree_tail_guard_triggered_iterations
+        ),
+        hartree_tail_guard_entry_iterations=tuple(
+            hartree_tail_guard_entry_iterations
+        ),
+        hartree_tail_guard_exit_iterations=tuple(
+            hartree_tail_guard_exit_iterations
+        ),
+        hartree_tail_guard_hold_lengths=tuple(hartree_tail_guard_hold_lengths),
+        hartree_tail_guard_active_iteration_history=tuple(
+            bool(value) for value in hartree_tail_guard_active_iteration_history
         ),
         hartree_tail_guard_hartree_share_history=tuple(
             None if value is None else float(value)

@@ -287,3 +287,53 @@ def test_construct_h2_jax_singlet_hartree_tail_guard_result() -> None:
     assert result.guard_route.guard_triggered is True
     assert result.guard_route.guard_trigger_count == 1
     assert result.guard_route.final_density_residual == 0.30
+
+
+def test_construct_h2_jax_singlet_hartree_tail_guard_v2_result() -> None:
+    baseline_route = _build_route(
+        solver_variant="anderson-productionish",
+        mitigation_enabled=False,
+    )
+    guard_route = _build_route(
+        solver_variant="anderson-plus-hartree-tail-guard-v2",
+        mitigation_enabled=False,
+    )
+    guard_route = H2JaxSingletMainlineRouteResult(
+        **{
+            **guard_route.__dict__,
+            "guard_name": "hartree_tail_guard_v2",
+            "guard_enabled": True,
+            "guard_triggered": True,
+            "guard_trigger_count": 1,
+            "guard_triggered_iterations": (4,),
+            "guard_hold_steps": 3,
+            "guard_exit_residual_ratio": 0.995,
+            "guard_exit_stable_steps": 2,
+            "guard_entry_iterations": (4,),
+            "guard_exit_iterations": (7,),
+            "guard_hold_lengths": (3,),
+            "guard_active_iteration_history": (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+                True,
+            ),
+            "guard_alpha": 0.45,
+            "guard_residual_ratio_trigger": 0.995,
+            "guard_projected_ratio_trigger": 0.60,
+            "guard_hartree_share_trigger": 0.80,
+            "guard_hartree_share_history": (0.82, 0.83),
+            "guard_residual_ratio_history": (1.01, 0.99),
+            "guard_projected_ratio_history": (0.62, 0.55),
+        }
+    )
+
+    assert guard_route.solver_backend == "jax"
+    assert guard_route.guard_name == "hartree_tail_guard_v2"
+    assert guard_route.guard_enabled is True
+    assert guard_route.guard_hold_steps == 3
+    assert guard_route.guard_hold_lengths == (3,)
+    assert guard_route.final_density_residual == 0.30

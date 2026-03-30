@@ -15,6 +15,7 @@ against one clear reference point.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 
 
 @dataclass(frozen=True)
@@ -2475,6 +2476,13 @@ class H2JaxSingletMainlineRouteBaseline:
     guard_residual_ratio_trigger: float | None = None
     guard_projected_ratio_trigger: float | None = None
     guard_hartree_share_trigger: float | None = None
+    guard_hold_steps: int | None = None
+    guard_exit_residual_ratio: float | None = None
+    guard_exit_stable_steps: int | None = None
+    guard_entry_iterations: tuple[int, ...] = ()
+    guard_exit_iterations: tuple[int, ...] = ()
+    guard_hold_lengths: tuple[int, ...] = ()
+    guard_active_iteration_history: tuple[bool, ...] = ()
     guard_hartree_share_history: tuple[float | None, ...] = ()
     guard_residual_ratio_history: tuple[float | None, ...] = ()
     guard_projected_ratio_history: tuple[float | None, ...] = ()
@@ -4386,6 +4394,154 @@ H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE = H2JaxSingletHartreeTailGuardRegress
 )
 
 
+H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE = replace(
+    H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE,
+    baseline_route=replace(
+        H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route,
+        total_wall_time_seconds=377.476303,
+        average_iteration_wall_time_seconds=18.873815,
+        eigensolver_wall_time_seconds=291.238377,
+        static_local_prepare_wall_time_seconds=83.390179,
+        hartree_solve_wall_time_seconds=71.728817,
+        energy_evaluation_wall_time_seconds=40.647611,
+    ),
+    guard_route=replace(
+        H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.guard_route,
+        path_label="jax-singlet-mainline-anderson-plus-hartree-tail-guard-v2",
+        solver_variant="anderson-plus-hartree-tail-guard-v2",
+        final_total_energy_ha=-0.18778034335794158,
+        final_lowest_eigenvalue_ha=-0.375269916233,
+        final_density_residual=0.300643018234763,
+        final_energy_change_ha=-0.012435210263993635,
+        total_wall_time_seconds=346.313762,
+        average_iteration_wall_time_seconds=17.315688,
+        even_odd_energy_gap_ha=0.006492958152943817,
+        even_odd_residual_gap=0.0005590465837111425,
+        tail_energy_history_ha=(
+            -0.192926605653724,
+            -0.17992583455512923,
+            -0.18742910478374986,
+            -0.17534513309394795,
+            -0.18778034335794158,
+        ),
+        tail_density_residual_history=(
+            0.3016230418764277,
+            0.2990470770321873,
+            0.30255045818561793,
+            0.30034654039733405,
+            0.300643018234763,
+        ),
+        tail_energy_change_history_ha=(
+            -0.0034161993661024903,
+            0.013000771098594766,
+            -0.007503270228620629,
+            0.012083971689801909,
+            -0.012435210263993635,
+        ),
+        tail_residual_ratios=(
+            0.9914596549778988,
+            1.011715149294215,
+            0.9927155364381178,
+            1.0009871192024944,
+        ),
+        average_tail_residual_ratio=0.9992193649781815,
+        tail_residual_ratio_std=0.008089846500976347,
+        fixed_point_average_tail_residual_ratio=0.9992193649781815,
+        fixed_point_tail_residual_ratio_std=0.008089846500976347,
+        fixed_point_maximum_tail_residual_ratio=1.011715149294215,
+        fixed_point_plateau_window_length=4,
+        fixed_point_tail_residual_amplitude=0.003503381153430629,
+        fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
+        fixed_point_secant_subspace_condition_proxy=6498799.311141349,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9999956797569336,
+        fixed_point_diagnosis=(
+            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
+            "which is consistent with a locally near-noncontractive singlet fixed-point map; recent secant "
+            "directions are nearly collinear, so the mixer subspace is also becoming low-rank"
+        ),
+        anderson_used_iterations=(3, 4, 6, 7, 8, 9, 11, 12, 14, 15, 16, 17, 18, 19, 20),
+        anderson_reset_iterations=(2, 5, 10, 13),
+        anderson_filtered_history_sizes=(1, 1, 2, 2, 1, 2, 2, 2, 3, 1, 2, 2, 1, 2, 2, 2, 2, 2, 2, 2),
+        anderson_effective_damping_history=(
+            0.55, 0.45, 0.45, 0.55, 0.55, 0.75, 0.55, 0.55,
+            0.45, 0.55, 0.45, 0.45, 0.45, 0.45, 0.45,
+        ),
+        anderson_projected_residual_ratio_history=(
+            0.6201945892391927,
+            0.6447726045137265,
+            0.5582149829197871,
+            0.46253373012249815,
+            0.512849543630334,
+            0.3870708134683893,
+            0.5125606639527923,
+            0.49664626544023577,
+            0.5633001979119459,
+            0.4651203350143019,
+            0.5581545310725865,
+            0.5554717829133621,
+            0.5548086400865337,
+            0.5539157364791198,
+            0.5546019891762347,
+        ),
+        eigensolver_wall_time_seconds=271.331252,
+        static_local_prepare_wall_time_seconds=72.534186,
+        hartree_solve_wall_time_seconds=61.776169,
+        energy_evaluation_wall_time_seconds=38.255477,
+        guard_name="hartree_tail_guard_v2",
+        guard_trigger_count=1,
+        guard_triggered_iterations=(4,),
+        guard_alpha=0.45,
+        guard_residual_ratio_trigger=0.995,
+        guard_projected_ratio_trigger=0.60,
+        guard_hartree_share_trigger=0.80,
+        guard_hold_steps=3,
+        guard_exit_residual_ratio=0.995,
+        guard_exit_stable_steps=2,
+        guard_entry_iterations=(4,),
+        guard_exit_iterations=(7,),
+        guard_hold_lengths=(3,),
+        guard_active_iteration_history=(
+            False, False, False, False, True, True, True, False, False, False,
+            False, False, False, False, False, False, False, False, False, False,
+        ),
+        guard_hartree_share_history=(
+            0.7901847171455306, 0.8124330928407228, 0.8188925591909766, 0.8184148779344327,
+            0.8732543296282304, 0.8535668412469659, 0.8665453020500616, 0.8274134995472141,
+            0.8154496562391156, 0.824302183016388, 0.8199158248493413, 0.8200356309495178,
+            0.8233272646954094, 0.8240069685094017, 0.820600089068934, 0.8233939392669333,
+            0.8213445553392956, 0.8230430246004241, 0.8214189185402035, 0.8226773453061107,
+        ),
+        guard_residual_ratio_history=(
+            None, 1.127381525200555, 0.9195459777201572, 1.0151339321775432, 1.1916700108586238,
+            0.9991529944928643, 0.9420667287368285, 0.9159536188936996, 0.895691297150799,
+            1.0648546676343948, 0.9800743072329376, 0.978682414052247, 1.0602308233951638,
+            0.995434920082298, 0.9718617067117452, 1.0225492362365862, 0.9914596549778988,
+            1.011715149294215, 0.9927155364381178, 1.0009871192024944,
+        ),
+        guard_projected_ratio_history=(
+            None, None, 0.6201945892391927, 0.6447726045137265, None, 0.5582149829197871,
+            0.46253373012249815, 0.512849543630334, 0.3870708134683893, None, 0.5125606639527923,
+            0.49664626544023577, None, 0.5633001979119459, 0.4651203350143019, 0.5581545310725865,
+            0.5554717829133621, 0.5548086400865337, 0.5539157364791198, 0.5546019891762347,
+        ),
+    ),
+    supplemental_guard_route=None,
+    diagnosis=(
+        "Hartree-tail guard 2.0 keeps the same experimental/default-off/pattern-triggered direction, but the "
+        "20-step H2 singlet route still does not clearly beat the plain anderson-productionish baseline. The guard "
+        "now enters once and holds for three steps, which makes the intervention more structured and more auditable, "
+        "yet the final residual is still effectively on the same plateau scale. That supports keeping guard 2.0 as an "
+        "experimental opt-in stabilizer, not as a default mainline strategy."
+    ),
+    note=(
+        "Two-route singlet Hartree-tail guard 2.0 baseline on the latest frozen JAX A-grid local-only mainline. "
+        "The baseline route is plain anderson-productionish; the only prototype route adds an experimental, "
+        "default-off, singlet-only, pattern-triggered Hartree-tail guard with a short held stabilization window. "
+        "No 30-step supplement is recorded because the 20-step guard 2.0 route does not clearly beat the baseline."
+    ),
+)
+
+
 H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     monitor_shape=(67, 67, 81),
@@ -4683,6 +4839,7 @@ __all__ = [
     "H2_JAX_SCF_HOTPATH_BASELINE",
     "H2_JAX_SINGLET_ACCEPTANCE_BASELINE",
     "H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE",
+    "H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE",
     "H2_JAX_SINGLET_MAINLINE_BASELINE",
     "H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE",
     "H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE",

@@ -46,6 +46,14 @@ _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_ALPHA = 0.45
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_RESIDUAL_RATIO_TRIGGER = 0.995
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_PROJECTED_RATIO_TRIGGER = 0.60
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_HARTREE_SHARE_TRIGGER = 0.80
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_NAME = "hartree_tail_guard_v2"
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_ALPHA = 0.45
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HOLD_STEPS = 3
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_RESIDUAL_RATIO_TRIGGER = 0.995
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_PROJECTED_RATIO_TRIGGER = 0.60
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HARTREE_SHARE_TRIGGER = 0.80
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_RESIDUAL_RATIO = 0.995
+_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_STABLE_STEPS = 2
 _SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT = 0.70
 _SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER = 1.00
 _SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER = 0.60
@@ -189,6 +197,9 @@ class H2JaxSingletMainlineParameterSummary:
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
     hartree_tail_guard_hartree_share_trigger: float | None = None
+    hartree_tail_guard_hold_steps: int | None = None
+    hartree_tail_guard_exit_residual_ratio: float | None = None
+    hartree_tail_guard_exit_stable_steps: int | None = None
 
 
 @dataclass(frozen=True)
@@ -258,6 +269,13 @@ class H2JaxSingletMainlineRouteResult:
     guard_residual_ratio_trigger: float | None = None
     guard_projected_ratio_trigger: float | None = None
     guard_hartree_share_trigger: float | None = None
+    guard_hold_steps: int | None = None
+    guard_exit_residual_ratio: float | None = None
+    guard_exit_stable_steps: int | None = None
+    guard_entry_iterations: tuple[int, ...] = ()
+    guard_exit_iterations: tuple[int, ...] = ()
+    guard_hold_lengths: tuple[int, ...] = ()
+    guard_active_iteration_history: tuple[bool, ...] = ()
     guard_hartree_share_history: tuple[float | None, ...] = ()
     guard_residual_ratio_history: tuple[float | None, ...] = ()
     guard_projected_ratio_history: tuple[float | None, ...] = ()
@@ -300,6 +318,20 @@ class H2JaxSingletHartreeTailGuardAuditResult:
     baseline_route: H2JaxSingletMainlineRouteResult
     guard_route: H2JaxSingletMainlineRouteResult
     supplemental_guard_route: H2JaxSingletMainlineRouteResult | None
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class H2JaxSingletHartreeTailGuardV2AuditResult:
+    """Two-route experimental Hartree-tail guard 2.0 audit on the latest JAX singlet mainline."""
+
+    path_label: str
+    spin_state_label: str
+    path_type: str
+    baseline_route: H2JaxSingletMainlineRouteResult
+    guard_v2_route: H2JaxSingletMainlineRouteResult
+    supplemental_guard_v2_route: H2JaxSingletMainlineRouteResult | None
     diagnosis: str
     note: str
 
@@ -910,6 +942,13 @@ def _build_parameter_summary(
         hartree_tail_guard_hartree_share_trigger=(
             parameters.hartree_tail_guard_hartree_share_trigger
         ),
+        hartree_tail_guard_hold_steps=parameters.hartree_tail_guard_hold_steps,
+        hartree_tail_guard_exit_residual_ratio=(
+            parameters.hartree_tail_guard_exit_residual_ratio
+        ),
+        hartree_tail_guard_exit_stable_steps=(
+            parameters.hartree_tail_guard_exit_stable_steps
+        ),
     )
 
 
@@ -1088,6 +1127,33 @@ def _build_route_result(
             if not result.hartree_tail_guard_enabled
             else float(result.hartree_tail_guard_hartree_share_trigger)
         ),
+        guard_hold_steps=(
+            None
+            if not result.hartree_tail_guard_enabled
+            else int(result.hartree_tail_guard_hold_steps)
+        ),
+        guard_exit_residual_ratio=(
+            None
+            if not result.hartree_tail_guard_enabled
+            else float(result.hartree_tail_guard_exit_residual_ratio)
+        ),
+        guard_exit_stable_steps=(
+            None
+            if not result.hartree_tail_guard_enabled
+            else int(result.hartree_tail_guard_exit_stable_steps)
+        ),
+        guard_entry_iterations=tuple(
+            int(value) for value in result.hartree_tail_guard_entry_iterations
+        ),
+        guard_exit_iterations=tuple(
+            int(value) for value in result.hartree_tail_guard_exit_iterations
+        ),
+        guard_hold_lengths=tuple(
+            int(value) for value in result.hartree_tail_guard_hold_lengths
+        ),
+        guard_active_iteration_history=tuple(
+            bool(value) for value in result.hartree_tail_guard_active_iteration_history
+        ),
         guard_hartree_share_history=tuple(
             None if value is None else float(value)
             for value in result.hartree_tail_guard_hartree_share_history
@@ -1137,6 +1203,9 @@ def _run_route(
     hartree_tail_guard_residual_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_RESIDUAL_RATIO_TRIGGER,
     hartree_tail_guard_projected_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_PROJECTED_RATIO_TRIGGER,
     hartree_tail_guard_hartree_share_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_HARTREE_SHARE_TRIGGER,
+    hartree_tail_guard_hold_steps: int = 1,
+    hartree_tail_guard_exit_residual_ratio: float = 0.995,
+    hartree_tail_guard_exit_stable_steps: int = 1,
 ) -> H2JaxSingletMainlineRouteResult:
     result = run_h2_monitor_grid_scf_dry_run(
         "singlet",
@@ -1182,6 +1251,9 @@ def _run_route(
         hartree_tail_guard_residual_ratio_trigger=hartree_tail_guard_residual_ratio_trigger,
         hartree_tail_guard_projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
         hartree_tail_guard_hartree_share_trigger=hartree_tail_guard_hartree_share_trigger,
+        hartree_tail_guard_hold_steps=hartree_tail_guard_hold_steps,
+        hartree_tail_guard_exit_residual_ratio=hartree_tail_guard_exit_residual_ratio,
+        hartree_tail_guard_exit_stable_steps=hartree_tail_guard_exit_stable_steps,
     )
     formal_mixer_history_length = None
     formal_mixer_regularization = None
@@ -1554,6 +1626,43 @@ def _build_guard_diagnosis(
     )
 
 
+def _build_guard_v2_diagnosis(
+    *,
+    baseline: H2JaxSingletMainlineRouteResult,
+    guard_v2: H2JaxSingletMainlineRouteResult,
+    supplemental: H2JaxSingletMainlineRouteResult | None,
+) -> str:
+    if guard_v2.converged:
+        return (
+            "The experimental Hartree-tail guard 2.0 converges the 20-step singlet route. "
+            "That would mean a short held Hartree-tail stabilization window is enough to pull the tail back into contraction."
+        )
+    if guard_v2.final_density_residual is None or baseline.final_density_residual is None:
+        return "The guard 2.0 route did not produce enough diagnostics to support a sharper judgment."
+    delta_residual = guard_v2.final_density_residual - baseline.final_density_residual
+    if delta_residual <= -5.0e-3:
+        return (
+            "Hartree-tail guard 2.0 materially improves the 20-step singlet residual relative to the plain "
+            "anderson-productionish baseline. That supports keeping it as an experimental/default-off/pattern-triggered "
+            "stabilizer in the mainline codebase, although it still should not become a default strategy."
+        )
+    if delta_residual < -1.0e-3:
+        return (
+            "Hartree-tail guard 2.0 improves the singlet tail modestly and more convincingly than the one-step guard, "
+            "but the route still does not cross the acceptance line. That supports the Hartree-tail direction while "
+            "also showing the remaining fixed-point difficulty is deeper than a light structural guard."
+        )
+    if supplemental is None:
+        return (
+            "Hartree-tail guard 2.0 does not clearly beat the baseline inside the 20-step window, so no 30-step view "
+            "was justified. That keeps the main diagnosis on the singlet fixed-point / Hartree-tail map itself."
+        )
+    return (
+        "Hartree-tail guard 2.0 only becomes mildly interesting once the window is extended, which is still not enough "
+        "to justify promoting it beyond an experimental opt-in hook."
+    )
+
+
 def run_h2_jax_singlet_hartree_tail_guard_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletHartreeTailGuardAuditResult:
@@ -1648,6 +1757,112 @@ def run_h2_jax_singlet_hartree_tail_guard_audit(
             "opt-in Hartree-tail guard that only lags the next-step Hartree potential when the current closed-shell "
             "singlet tail looks both near-noncontractive and Hartree dominated. This is a structural update rule, not "
             "a physics or mixer-family change."
+        ),
+    )
+
+
+def run_h2_jax_singlet_hartree_tail_guard_v2_audit(
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+) -> H2JaxSingletHartreeTailGuardV2AuditResult:
+    """Run the narrow singlet baseline-vs-guard-2.0 audit on the latest JAX mainline."""
+
+    baseline_route = _run_route(
+        case=case,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-productionish",
+        enable_anderson=True,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+    )
+    guard_v2_route = _run_route(
+        case=case,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-plus-hartree-tail-guard-v2",
+        enable_anderson=True,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+        enable_hartree_tail_guard=True,
+        hartree_tail_guard_name=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_NAME,
+        hartree_tail_guard_alpha=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_ALPHA,
+        hartree_tail_guard_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_RESIDUAL_RATIO_TRIGGER,
+        hartree_tail_guard_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_PROJECTED_RATIO_TRIGGER,
+        hartree_tail_guard_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HARTREE_SHARE_TRIGGER,
+        hartree_tail_guard_hold_steps=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HOLD_STEPS,
+        hartree_tail_guard_exit_residual_ratio=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_RESIDUAL_RATIO,
+        hartree_tail_guard_exit_stable_steps=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_STABLE_STEPS,
+    )
+    supplemental_guard_v2_route: H2JaxSingletMainlineRouteResult | None = None
+    if _route_clearly_beats_baseline(
+        baseline_route,
+        guard_v2_route,
+    ) and _route_is_close_enough_for_longer_view(guard_v2_route):
+        supplemental_guard_v2_route = _run_route(
+            case=case,
+            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
+            mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+            mixer="anderson",
+            solver_variant="anderson-plus-hartree-tail-guard-v2-long30",
+            enable_anderson=True,
+            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+            enable_hartree_tail_guard=True,
+            hartree_tail_guard_name=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_NAME,
+            hartree_tail_guard_alpha=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_ALPHA,
+            hartree_tail_guard_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_RESIDUAL_RATIO_TRIGGER,
+            hartree_tail_guard_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_PROJECTED_RATIO_TRIGGER,
+            hartree_tail_guard_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HARTREE_SHARE_TRIGGER,
+            hartree_tail_guard_hold_steps=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HOLD_STEPS,
+            hartree_tail_guard_exit_residual_ratio=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_RESIDUAL_RATIO,
+            hartree_tail_guard_exit_stable_steps=_SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_STABLE_STEPS,
+        )
+    return H2JaxSingletHartreeTailGuardV2AuditResult(
+        path_label="jax-singlet-hartree-tail-guard-v2",
+        spin_state_label="singlet",
+        path_type=baseline_route.path_type,
+        baseline_route=baseline_route,
+        guard_v2_route=guard_v2_route,
+        supplemental_guard_v2_route=supplemental_guard_v2_route,
+        diagnosis=_build_guard_v2_diagnosis(
+            baseline=baseline_route,
+            guard_v2=guard_v2_route,
+            supplemental=supplemental_guard_v2_route,
+        ),
+        note=(
+            "Experimental/default-off/pattern-triggered Hartree-tail guard 2.0 audit on the frozen JAX singlet mainline. "
+            "Only two 20-step routes are compared here: baseline anderson-productionish, and the same route with a "
+            "guard-active window that keeps a lagged Hartree update alive for a few steps once a Hartree-dominated "
+            "near-noncontractive singlet tail pattern is detected. This is a structural update rule, not a physics or mixer-family change."
         ),
     )
     supplemental_route: H2JaxSingletMainlineRouteResult | None = None
@@ -1778,12 +1993,19 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
             f"residual_ratio_trigger={route.guard_residual_ratio_trigger}, "
             f"projected_ratio_trigger={route.guard_projected_ratio_trigger}, "
             f"hartree_share_trigger={route.guard_hartree_share_trigger}, "
+            f"hold_steps={route.guard_hold_steps}, "
+            f"exit_residual_ratio={route.guard_exit_residual_ratio}, "
+            f"exit_stable_steps={route.guard_exit_stable_steps}, "
             f"triggered={route.guard_triggered}, "
             f"trigger_count={route.guard_trigger_count}, "
             f"triggered_iterations={route.guard_triggered_iterations}"
         )
         print(
             "  guard trigger histories: "
+            f"entries={route.guard_entry_iterations}, "
+            f"exits={route.guard_exit_iterations}, "
+            f"hold_lengths={route.guard_hold_lengths}, "
+            f"active_history={route.guard_active_iteration_history}, "
             f"hartree_share={route.guard_hartree_share_history}, "
             f"residual_ratio={route.guard_residual_ratio_history}, "
             f"projected_ratio={route.guard_projected_ratio_history}"
@@ -1873,9 +2095,23 @@ def print_h2_jax_singlet_hartree_tail_guard_summary(
         _print_route(result.supplemental_guard_route)
 
 
+def print_h2_jax_singlet_hartree_tail_guard_v2_summary(
+    result: H2JaxSingletHartreeTailGuardV2AuditResult,
+) -> None:
+    """Print the compact experimental Hartree-tail guard 2.0 summary."""
+
+    print("IsoGridDFT H2 singlet experimental Hartree-tail guard 2.0 audit")
+    print(f"note: {result.note}")
+    print(f"diagnosis: {result.diagnosis}")
+    _print_route(result.baseline_route)
+    _print_route(result.guard_v2_route)
+    if result.supplemental_guard_v2_route is not None:
+        _print_route(result.supplemental_guard_v2_route)
+
+
 def main() -> int:
-    result = run_h2_jax_singlet_hartree_tail_guard_audit()
-    print_h2_jax_singlet_hartree_tail_guard_summary(result)
+    result = run_h2_jax_singlet_hartree_tail_guard_v2_audit()
+    print_h2_jax_singlet_hartree_tail_guard_v2_summary(result)
     return 0
 
 
