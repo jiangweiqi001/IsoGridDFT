@@ -110,6 +110,35 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
         q_weighted, _ = jnp.linalg.qr(weighted_columns, mode="reduced")
         return inverse_sqrt_weights[:, None] * q_weighted
 
+    def _stabilize_columns(columns):
+        gram = _weighted_overlap_columns(columns, columns)
+        gram = 0.5 * (gram + jnp.conjugate(gram).T)
+        eigenvalues, eigenvectors = jnp.linalg.eigh(gram)
+        min_eigenvalue = jnp.min(eigenvalues)
+        is_safe = jnp.logical_and(
+            jnp.all(jnp.isfinite(eigenvalues)),
+            min_eigenvalue > 1.0e-10,
+        )
+
+        def _whiten(args):
+            local_columns, local_vectors, local_values = args
+            safe_eigenvalues = jnp.clip(local_values, 1.0e-14, None)
+            inverse_sqrt = (
+                local_vectors * (1.0 / jnp.sqrt(safe_eigenvalues))[None, :]
+            ) @ jnp.conjugate(local_vectors).T
+            return local_columns @ inverse_sqrt
+
+        def _fallback(args):
+            local_columns, _, _ = args
+            return _weighted_qr_columns(local_columns)
+
+        return jax.lax.cond(
+            is_safe,
+            _whiten,
+            _fallback,
+            (columns, eigenvectors, eigenvalues),
+        )
+
     def _columns_to_block(columns):
         return reshape_orbital_columns_jax(columns, block_shape)
 
@@ -200,7 +229,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
 
     @jax.jit
     def _normalize_residual_columns_jit(residual_columns):
-        return _weighted_qr_columns(residual_columns)
+        return _stabilize_columns(residual_columns)
 
     @jax.jit
     def _build_trial_projected_from_parts_jit(
@@ -238,7 +267,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 residual_columns,
                 trial_vectors,
             )
-            return _weighted_qr_columns(next_basis_columns)
+            return _stabilize_columns(next_basis_columns)
 
         orbital_columns = basis_columns[:, :k]
         residual_norms = np.full((k,), np.inf, dtype=np.float64)
@@ -413,7 +442,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
             subspace_dimensions = subspace_dimensions.at[iteration].set(basis_columns.shape[1])
 
             residual_columns = _project_out_weighted(residual_columns, basis_columns)
-            residual_columns = _weighted_qr_columns(residual_columns)
+            residual_columns = _stabilize_columns(residual_columns)
             residual_action_block = block_apply(_columns_to_block(residual_columns))
             residual_action_columns = flatten_orbital_block_jax(residual_action_block)
 
@@ -434,7 +463,7 @@ def solve_fixed_potential_static_local_eigenproblem_jax(
                 residual_columns,
                 trial_vectors,
             )
-            next_basis_columns = _weighted_qr_columns(next_basis_columns)
+            next_basis_columns = _stabilize_columns(next_basis_columns)
             basis_columns = jax.lax.select(converged, basis_columns, next_basis_columns)
 
             return (
