@@ -2,6 +2,7 @@
 
 from importlib import import_module
 
+from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletAcceptanceAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletFixedPointLocalDifficulty
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBehavior
@@ -20,6 +21,7 @@ def _build_route(
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
         spin_state_label="singlet",
+        solver_backend="jax",
         path_type="monitor_a_grid_plus_patch",
         kinetic_version="trial_fix",
         includes_nonlocal=False,
@@ -184,6 +186,7 @@ def _build_route(
 def test_h2_jax_singlet_mainline_audit_module_imports() -> None:
     module = import_module("isogrid.audit.h2_jax_singlet_mainline_audit")
 
+    assert hasattr(module, "run_h2_jax_singlet_acceptance_audit")
     assert hasattr(module, "run_h2_jax_singlet_mainline_audit")
     assert hasattr(module, "print_h2_jax_singlet_mainline_summary")
 
@@ -216,3 +219,24 @@ def test_construct_h2_jax_singlet_mainline_result() -> None:
         result.hartree_tail_mitigation_route.response_channel_difficulty.primary_difficulty_channel
         == "hartree"
     )
+
+
+def test_construct_h2_jax_singlet_acceptance_result() -> None:
+    route = _build_route(
+        solver_variant="anderson-productionish",
+        mitigation_enabled=False,
+    )
+    result = H2JaxSingletAcceptanceAuditResult(
+        path_label="jax-singlet-acceptance-mainline",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        acceptance_route=route,
+        supplemental_route=None,
+        diagnosis="acceptance smoke",
+        note="single-route acceptance smoke",
+    )
+
+    assert result.acceptance_route.solver_backend == "jax"
+    assert result.acceptance_route.mixer == "anderson"
+    assert result.acceptance_route.converged is False
+    assert result.acceptance_route.final_density_residual == 0.30

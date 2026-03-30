@@ -489,9 +489,11 @@ def test_import_h2_jax_triplet_hartree_energy_audit_entrypoint() -> None:
 
 
 def test_import_h2_jax_singlet_mainline_audit_entrypoint() -> None:
+    from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_acceptance_audit
     from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_mainline_audit
 
     assert callable(run_h2_jax_singlet_mainline_audit)
+    assert callable(run_h2_jax_singlet_acceptance_audit)
 
 
 def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
@@ -530,8 +532,14 @@ def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
 
 
 def test_import_h2_jax_singlet_mainline_baseline() -> None:
+    from isogrid.audit.baselines import H2_JAX_SINGLET_ACCEPTANCE_BASELINE
     from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 
+    assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.monitor_shape == (67, 67, 81)
+    assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.solver_backend == "jax"
+    assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.mixer == "anderson"
+    assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.converged is False
+    assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.supplemental_route is None
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.mixer == "anderson"
     assert (

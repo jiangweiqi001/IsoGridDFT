@@ -2465,6 +2465,7 @@ class H2JaxSingletMainlineRouteBaseline:
     singlet_hartree_tail_residual_ratio_history: tuple[float | None, ...] = ()
     singlet_hartree_tail_projected_ratio_history: tuple[float | None, ...] = ()
     response_channel_difficulty: H2JaxSingletResponseChannelDifficultyBaseline | None = None
+    solver_backend: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -2488,6 +2489,24 @@ class H2JaxSingletMainlineRegressionBaseline:
     note: str
     hartree_tail_mitigation_route: H2JaxSingletMainlineRouteBaseline | None = None
     supplemental_hartree_tail_mitigation_route: H2JaxSingletMainlineRouteBaseline | None = None
+
+
+@dataclass(frozen=True)
+class H2JaxSingletAcceptanceRegressionBaseline:
+    """Recorded single-route H2 singlet acceptance result on the latest JAX mainline."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    acceptance_route: H2JaxSingletMainlineRouteBaseline
+    supplemental_route: H2JaxSingletMainlineRouteBaseline | None
+    diagnosis: str
+    note: str
 
 
 @dataclass(frozen=True)
@@ -3888,6 +3907,157 @@ H2_JAX_SINGLET_MAINLINE_BASELINE = H2JaxSingletMainlineRegressionBaseline(
 )
 
 
+H2_JAX_SINGLET_ACCEPTANCE_BASELINE = H2JaxSingletAcceptanceRegressionBaseline(
+    benchmark_name="h2_r1p4_bohr",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    acceptance_route=H2JaxSingletMainlineRouteBaseline(
+        path_label="jax-singlet-mainline-anderson-productionish",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        kinetic_version="trial_fix",
+        max_iterations=20,
+        mixing=0.10,
+        mixer="anderson",
+        solver_variant="anderson-productionish",
+        anderson_history_length=6,
+        anderson_regularization=1.0e-8,
+        anderson_damping=0.55,
+        anderson_step_clip_factor=1.0,
+        anderson_reset_on_growth=True,
+        anderson_reset_growth_factor=1.05,
+        anderson_adaptive_damping_enabled=True,
+        anderson_min_damping=0.35,
+        anderson_max_damping=0.75,
+        anderson_acceptance_residual_ratio_threshold=1.02,
+        anderson_collinearity_cosine_threshold=0.995,
+        hartree_backend="jax",
+        cg_impl="jax_loop",
+        cg_preconditioner="none",
+        line_preconditioner_impl="baseline",
+        use_jax_hartree_cached_operator=True,
+        use_jax_block_kernels=True,
+        use_step_local_static_local_reuse=True,
+        converged=False,
+        iteration_count=20,
+        final_total_energy_ha=-0.1875186282516289,
+        final_lowest_eigenvalue_ha=-0.377303972799,
+        final_density_residual=0.2998898154817254,
+        final_energy_change_ha=-0.009121595338455801,
+        total_wall_time_seconds=328.703711,
+        average_iteration_wall_time_seconds=16.435186,
+        behavior_verdict="plateau_or_stall",
+        detected_two_cycle=False,
+        even_odd_energy_gap_ha=0.008231972166202084,
+        even_odd_residual_gap=7.633601063694595e-05,
+        tail_energy_history_ha=(
+            -0.19463860981224046,
+            -0.18186254829513093,
+            -0.19049138385140807,
+            -0.1783970329131731,
+            -0.1875186282516289,
+        ),
+        tail_density_residual_history=(
+            0.2984631341557454,
+            0.2991701950058407,
+            0.299306516840322,
+            0.29981775047484804,
+            0.2998898154817254,
+        ),
+        tail_energy_change_history_ha=(
+            -0.007682301387268886,
+            0.012776061517109527,
+            -0.008628835556277137,
+            0.012094350938234966,
+            -0.009121595338455801,
+        ),
+        tail_residual_ratios=(
+            1.0023690056465278,
+            1.0004556664960513,
+            1.0017080604856954,
+            1.0002403627095569,
+        ),
+        average_tail_residual_ratio=1.001193273834458,
+        tail_residual_ratio_std=0.0008802634247537454,
+        entered_plateau=True,
+        fixed_point_tail_window_length=5,
+        fixed_point_average_tail_residual_ratio=1.001193273834458,
+        fixed_point_tail_residual_ratio_std=0.0008802634247537454,
+        fixed_point_maximum_tail_residual_ratio=1.0023690056465278,
+        fixed_point_entered_plateau=True,
+        fixed_point_plateau_window_length=4,
+        fixed_point_tail_residual_amplitude=0.001426681325980006,
+        fixed_point_weak_cycle_indicator=False,
+        fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
+        fixed_point_secant_subspace_condition_proxy=101838211.56529388,
+        fixed_point_secant_collinearity_max_abs_cosine=0.9999984412961948,
+        fixed_point_diagnosis=(
+            "tail residual ratios sit very close to unity and the residual norm enters a narrow plateau, "
+            "which is consistent with a locally near-noncontractive singlet fixed-point map; recent secant "
+            "directions are nearly collinear, so the mixer subspace is also becoming low-rank; the secant "
+            "Gram proxy is very ill-conditioned"
+        ),
+        diis_used_iterations=(),
+        diis_fallback_iterations=(),
+        anderson_used_iterations=(3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20),
+        anderson_fallback_iterations=(),
+        anderson_rejected_iterations=(),
+        anderson_reset_iterations=(2,),
+        anderson_filtered_history_sizes=(1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2),
+        anderson_effective_damping_history=(
+            0.55, 0.45, 0.55, 0.45, 0.45, 0.45, 0.55, 0.45, 0.45,
+            0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45, 0.45,
+        ),
+        anderson_projected_residual_ratio_history=(
+            0.6201945892391927,
+            0.6447726045137265,
+            0.5539842888036185,
+            0.6114649519135021,
+            0.5945484377192903,
+            0.5981971403726608,
+            0.5062930063505366,
+            0.5837862759282021,
+            0.5794125230348659,
+            0.5720824366454762,
+            0.5671883799381814,
+            0.5643027380835305,
+            0.5619296408170366,
+            0.5591647784689512,
+            0.557785661257797,
+            0.5562649535030586,
+            0.5553139759716003,
+            0.5542786567822735,
+        ),
+        eigensolver_wall_time_seconds=250.115261,
+        static_local_prepare_wall_time_seconds=76.128363,
+        hartree_solve_wall_time_seconds=65.886333,
+        energy_evaluation_wall_time_seconds=36.213837,
+        density_update_wall_time_seconds=None,
+        bookkeeping_wall_time_seconds=None,
+        solver_backend="jax",
+    ),
+    supplemental_route=None,
+    diagnosis=(
+        "This single-route acceptance rerun uses the latest frozen JAX mainline with the current "
+        "anderson-productionish mixer and the JAX-native eigensolver formal path. The route still does not "
+        "converge inside 20 steps, and its final density residual is effectively unchanged versus the older "
+        "anderson-productionish baseline. That strongly supports the view that the dominant remaining blocker "
+        "is the singlet fixed-point / Hartree-tail map itself, not missing JAX infrastructure maturity."
+    ),
+    note=(
+        "Single-route H2 singlet acceptance baseline on the frozen JAX A-grid local-only mainline. "
+        "Only the current anderson-productionish route is rerun here; no linear/DIIS/Broyden/extra "
+        "Anderson variants are revisited, and no 30-step supplement is recorded because the 20-step "
+        "route is not close enough to justify a longer acceptance view."
+    ),
+)
+
+
 H2_JAX_TRIPLET_HARTREE_ENERGY_BASELINE = H2JaxTripletHartreeEnergyRegressionBaseline(
     benchmark_name="h2_r1p4_bohr",
     monitor_shape=(67, 67, 81),
@@ -4117,6 +4287,7 @@ __all__ = [
     "H2JaxNativeFixedPotentialEigensolverRegressionBaseline",
     "H2JaxEigensolverHotpathReuseRegressionBaseline",
     "H2JaxEigensolverHotpathRegressionBaseline",
+    "H2JaxSingletAcceptanceRegressionBaseline",
     "H2JaxSingletMainlineRegressionBaseline",
     "H2JaxSingletMainlineRouteBaseline",
     "H2JaxSingletResponseChannelDifficultyBaseline",
@@ -4181,6 +4352,7 @@ __all__ = [
     "H2_JAX_NATIVE_EIGENSOLVER_BASELINE",
     "H2_JAX_KERNEL_CONSISTENCY_BASELINE",
     "H2_JAX_SCF_HOTPATH_BASELINE",
+    "H2_JAX_SINGLET_ACCEPTANCE_BASELINE",
     "H2_JAX_SINGLET_MAINLINE_BASELINE",
     "H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE",
     "H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE",

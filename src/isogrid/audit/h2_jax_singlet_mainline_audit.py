@@ -186,6 +186,7 @@ class H2JaxSingletMainlineRouteResult:
 
     path_label: str
     spin_state_label: str
+    solver_backend: str
     path_type: str
     kinetic_version: str
     includes_nonlocal: bool
@@ -249,6 +250,19 @@ class H2JaxSingletMainlineAuditResult:
     anderson_productionish_route: H2JaxSingletMainlineRouteResult
     hartree_tail_mitigation_route: H2JaxSingletMainlineRouteResult
     supplemental_hartree_tail_mitigation_route: H2JaxSingletMainlineRouteResult | None
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class H2JaxSingletAcceptanceAuditResult:
+    """Single-route H2 singlet acceptance result on the latest frozen JAX mainline."""
+
+    path_label: str
+    spin_state_label: str
+    path_type: str
+    acceptance_route: H2JaxSingletMainlineRouteResult
+    supplemental_route: H2JaxSingletMainlineRouteResult | None
     diagnosis: str
     note: str
 
@@ -884,6 +898,11 @@ def _build_route_result(
     return H2JaxSingletMainlineRouteResult(
         path_label=f"jax-singlet-mainline-{solver_variant}",
         spin_state_label=result.spin_state_label,
+        solver_backend=(
+            result.solver_backend_iteration_history[-1]
+            if result.solver_backend_iteration_history
+            else "unknown"
+        ),
         path_type=result.path_type,
         kinetic_version=result.kinetic_version,
         includes_nonlocal=result.includes_nonlocal,
@@ -1201,6 +1220,76 @@ def _build_diagnosis(
     )
 
 
+def _route_is_close_enough_for_longer_view(
+    route: H2JaxSingletMainlineRouteResult,
+) -> bool:
+    if route.converged or route.final_density_residual is None:
+        return False
+    if route.final_energy_change_ha is None:
+        return False
+    return (
+        route.final_density_residual <= 1.0e-2
+        and abs(route.final_energy_change_ha) <= 1.0e-4
+        and route.behavior.verdict not in {"diverging", "weak_two_cycle"}
+    )
+
+
+def _build_acceptance_diagnosis(
+    current_route: H2JaxSingletMainlineRouteResult,
+    *,
+    previous_baseline: H2JaxSingletMainlineRouteBaseline,
+    supplemental_route: H2JaxSingletMainlineRouteResult | None,
+) -> str:
+    current_residual = current_route.final_density_residual
+    previous_residual = previous_baseline.final_density_residual
+
+    if current_route.converged:
+        return (
+            "On the latest JAX mainline, H2 singlet now converges inside the 20-step acceptance window. "
+            "That means part of the earlier failure budget really was still tied to immature infrastructure, "
+            "not just to the singlet fixed-point map itself."
+        )
+
+    if current_residual is None or previous_residual is None:
+        return (
+            "The refreshed single-route acceptance run did not produce enough residual data for a sharper comparison "
+            "against the older singlet mainline baseline."
+        )
+
+    residual_delta = current_residual - previous_residual
+    if residual_delta <= -2.0e-2:
+        diagnosis = (
+            "The latest JAX mainline singlet route is materially better than the older frozen baseline, "
+            "but it still does not pass in 20 steps. That supports the view that infrastructure maturity mattered, "
+            "yet the remaining blocker is still the singlet fixed-point / Hartree-tail difficulty."
+        )
+    elif residual_delta <= -5.0e-3:
+        diagnosis = (
+            "The latest JAX mainline singlet route improves on the older baseline only modestly. "
+            "That suggests some of the earlier pain did come from immature infrastructure, but the dominant blocker "
+            "still looks like the singlet fixed-point / Hartree-tail structure."
+        )
+    elif residual_delta < 5.0e-3:
+        diagnosis = (
+            "The latest JAX mainline singlet route is effectively unchanged versus the older baseline. "
+            "That strongly supports the view that the main remaining blocker is the singlet fixed-point / Hartree-tail "
+            "map itself, not missing JAX infrastructure maturity."
+        )
+    else:
+        diagnosis = (
+            "The latest JAX mainline singlet route is slightly worse than the older baseline, so the current "
+            "acceptance rerun does not support blaming the remaining failure on old infrastructure. "
+            "The singlet fixed-point / Hartree-tail difficulty still looks primary."
+        )
+
+    if supplemental_route is not None:
+        diagnosis += (
+            " A 30-step supplemental view was added because the 20-step route looked close, but even that longer view "
+            "still did not decisively convert the run into an acceptance pass."
+        )
+    return diagnosis
+
+
 def run_h2_jax_singlet_mainline_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletMainlineAuditResult:
@@ -1301,11 +1390,77 @@ def run_h2_jax_singlet_mainline_audit(
     )
 
 
+def run_h2_jax_singlet_acceptance_audit(
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+) -> H2JaxSingletAcceptanceAuditResult:
+    """Run the single-route H2 singlet acceptance test on the latest JAX mainline."""
+
+    acceptance_route = _run_route(
+        case=case,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-productionish",
+        enable_anderson=True,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+    )
+    supplemental_route: H2JaxSingletMainlineRouteResult | None = None
+    if _route_is_close_enough_for_longer_view(acceptance_route):
+        supplemental_route = _run_route(
+            case=case,
+            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
+            mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+            mixer="anderson",
+            solver_variant="anderson-productionish-long30",
+            enable_anderson=True,
+            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+        )
+    return H2JaxSingletAcceptanceAuditResult(
+        path_label="jax-singlet-acceptance-mainline",
+        spin_state_label="singlet",
+        path_type=acceptance_route.path_type,
+        acceptance_route=acceptance_route,
+        supplemental_route=supplemental_route,
+        diagnosis=_build_acceptance_diagnosis(
+            acceptance_route,
+            previous_baseline=H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route,
+            supplemental_route=supplemental_route,
+        ),
+        note=(
+            "Single-route H2 singlet acceptance test on the latest frozen JAX A-grid local-only mainline. "
+            "The route uses the current anderson-productionish mixer with the JAX-native eigensolver formal path. "
+            "No linear/DIIS/Broyden/extra Anderson variants are rerun here; the only optional supplement is a 30-step "
+            "view if the 20-step route looks genuinely close to convergence."
+        ),
+    )
+
+
 def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
     print(f"route: {route.solver_variant}")
     print(
         f"  mixer={route.mixer}, mixing={route.mixing:.2f}, max_iterations={route.max_iterations}"
     )
+    print(f"  solver backend: {route.solver_backend}")
     print(f"  converged: {route.converged}")
     print(f"  iterations: {route.iteration_count}")
     print(f"  final total energy [Ha]: {route.final_total_energy_ha:.12f}")
@@ -1431,6 +1586,23 @@ def print_h2_jax_singlet_mainline_summary(result: H2JaxSingletMainlineAuditResul
     _print_route(result.hartree_tail_mitigation_route)
     if result.supplemental_hartree_tail_mitigation_route is not None:
         _print_route(result.supplemental_hartree_tail_mitigation_route)
+
+
+def print_h2_jax_singlet_acceptance_summary(
+    result: H2JaxSingletAcceptanceAuditResult,
+) -> None:
+    """Print the compact H2 singlet acceptance summary."""
+
+    print("IsoGridDFT H2 singlet acceptance test")
+    print(f"note: {result.note}")
+    print(
+        "previous anderson-productionish baseline residual: "
+        f"{H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route.final_density_residual}"
+    )
+    print(f"diagnosis: {result.diagnosis}")
+    _print_route(result.acceptance_route)
+    if result.supplemental_route is not None:
+        _print_route(result.supplemental_route)
 
 
 def main() -> int:

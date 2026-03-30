@@ -67,7 +67,7 @@ That optimized JAX hot path is now also threaded into the A-grid H2 SCF dry-run 
 
 The current triplet-only JAX Hartree follow-up is now even narrower: the stronger line preconditioner already shows that reducing Hartree iteration count is possible, so the present focus is on the engineering cost of `line` preconditioner apply itself, especially tridiagonal solves and axis-reordering overhead, before any broader solver redesign is considered.
 
-In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically. The immediate focus is no longer broad mixer experimentation, but a targeted Hartree-tail structural mitigation prototype on top of the best current productionish Anderson route, because the latest tail audit points to a Hartree-dominated near-noncontractive singlet tail under the frozen JAX Hartree mainline. Nonlocal still remains absent from that path.
+In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically. The immediate focus is now a single-route acceptance rerun on top of the latest JAX mainline using the current productionish Anderson mixer, because the key open question is no longer which toy mixer variant to try next but whether H2 singlet can pass at all once the surrounding JAX eigensolver and hot-path infrastructure are substantially cleaner. Nonlocal still remains absent from that path.
 
 What is present today:
 
