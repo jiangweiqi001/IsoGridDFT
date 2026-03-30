@@ -54,6 +54,15 @@ _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_PROJECTED_RATIO_TRIGGER = 0.60
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_HARTREE_SHARE_TRIGGER = 0.80
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_RESIDUAL_RATIO = 0.995
 _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_V2_EXIT_STABLE_STEPS = 2
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_NAME = "hartree_tail_freeze_guard"
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_STRATEGY = "frozen_potential"
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_ALPHA = 0.45
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HOLD_STEPS = 2
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_RESIDUAL_RATIO_TRIGGER = 0.995
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_PROJECTED_RATIO_TRIGGER = 0.60
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HARTREE_SHARE_TRIGGER = 0.80
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_RESIDUAL_RATIO = 0.995
+_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_STABLE_STEPS = 2
 _SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT = 0.70
 _SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER = 1.00
 _SINGLET_MAINLINE_HARTREE_TAIL_PROJECTED_RATIO_TRIGGER = 0.60
@@ -193,6 +202,7 @@ class H2JaxSingletMainlineParameterSummary:
     singlet_hartree_tail_hartree_share_trigger: float | None
     hartree_tail_guard_enabled: bool = False
     hartree_tail_guard_name: str | None = None
+    hartree_tail_guard_strategy: str | None = None
     hartree_tail_guard_alpha: float | None = None
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
@@ -261,6 +271,7 @@ class H2JaxSingletMainlineRouteResult:
     note: str
     response_channel_difficulty: H2JaxSingletResponseChannelDifficulty | None = None
     guard_name: str | None = None
+    guard_strategy: str | None = None
     guard_enabled: bool = False
     guard_triggered: bool = False
     guard_trigger_count: int = 0
@@ -332,6 +343,20 @@ class H2JaxSingletHartreeTailGuardV2AuditResult:
     baseline_route: H2JaxSingletMainlineRouteResult
     guard_v2_route: H2JaxSingletMainlineRouteResult
     supplemental_guard_v2_route: H2JaxSingletMainlineRouteResult | None
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class H2JaxSingletStructuralStabilizerAuditResult:
+    """Two-route structural stabilizer audit on the latest JAX singlet mainline."""
+
+    path_label: str
+    spin_state_label: str
+    path_type: str
+    baseline_route: H2JaxSingletMainlineRouteResult
+    stabilizer_route: H2JaxSingletMainlineRouteResult
+    supplemental_stabilizer_route: H2JaxSingletMainlineRouteResult | None
     diagnosis: str
     note: str
 
@@ -932,6 +957,7 @@ def _build_parameter_summary(
         ),
         hartree_tail_guard_enabled=parameters.hartree_tail_guard_enabled,
         hartree_tail_guard_name=parameters.hartree_tail_guard_name,
+        hartree_tail_guard_strategy=parameters.hartree_tail_guard_strategy,
         hartree_tail_guard_alpha=parameters.hartree_tail_guard_alpha,
         hartree_tail_guard_residual_ratio_trigger=(
             parameters.hartree_tail_guard_residual_ratio_trigger
@@ -1103,6 +1129,7 @@ def _build_route_result(
         ),
         response_channel_difficulty=response_channel_difficulty,
         guard_name=result.hartree_tail_guard_name,
+        guard_strategy=result.hartree_tail_guard_strategy,
         guard_enabled=bool(result.hartree_tail_guard_enabled),
         guard_triggered=bool(result.hartree_tail_guard_triggered_iterations),
         guard_trigger_count=len(result.hartree_tail_guard_triggered_iterations),
@@ -1199,6 +1226,7 @@ def _run_route(
     singlet_hartree_tail_hartree_share_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_HARTREE_SHARE_TRIGGER,
     enable_hartree_tail_guard: bool = False,
     hartree_tail_guard_name: str = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_NAME,
+    hartree_tail_guard_strategy: str = "lagged_potential",
     hartree_tail_guard_alpha: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_ALPHA,
     hartree_tail_guard_residual_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_RESIDUAL_RATIO_TRIGGER,
     hartree_tail_guard_projected_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_GUARD_PROJECTED_RATIO_TRIGGER,
@@ -1247,6 +1275,7 @@ def _run_route(
         singlet_hartree_tail_hartree_share_trigger=singlet_hartree_tail_hartree_share_trigger,
         enable_hartree_tail_guard=enable_hartree_tail_guard,
         hartree_tail_guard_name=hartree_tail_guard_name,
+        hartree_tail_guard_strategy=hartree_tail_guard_strategy,
         hartree_tail_guard_alpha=hartree_tail_guard_alpha,
         hartree_tail_guard_residual_ratio_trigger=hartree_tail_guard_residual_ratio_trigger,
         hartree_tail_guard_projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
@@ -1663,6 +1692,43 @@ def _build_guard_v2_diagnosis(
     )
 
 
+def _build_structural_stabilizer_diagnosis(
+    *,
+    baseline: H2JaxSingletMainlineRouteResult,
+    stabilizer: H2JaxSingletMainlineRouteResult,
+    supplemental: H2JaxSingletMainlineRouteResult | None,
+) -> str:
+    if stabilizer.converged:
+        return (
+            "The selected structural stabilizer converges the 20-step singlet route. "
+            "That means the next-step structural intervention is strong enough to pull the Hartree-dominated tail back into contraction."
+        )
+    if stabilizer.final_density_residual is None or baseline.final_density_residual is None:
+        return "The structural stabilizer route did not produce enough diagnostics for a sharper judgment."
+    delta_residual = stabilizer.final_density_residual - baseline.final_density_residual
+    if delta_residual <= -5.0e-3:
+        return (
+            "The selected structural stabilizer materially improves the 20-step singlet residual relative to the plain "
+            "anderson-productionish baseline. That supports keeping it in the mainline codebase as an experimental, "
+            "default-off, pattern-triggered stabilizer, while still not promoting it to a default strategy."
+        )
+    if delta_residual < -1.0e-3:
+        return (
+            "The selected structural stabilizer improves the singlet tail modestly, but not enough to change the pass/fail "
+            "judgment. That supports the structural direction while reinforcing that the remaining singlet fixed-point / "
+            "Hartree-tail difficulty is deeper than a single light intervention."
+        )
+    if supplemental is None:
+        return (
+            "The selected structural stabilizer does not clearly beat the baseline inside the 20-step window, so no 30-step "
+            "view was justified. That keeps the main diagnosis on the singlet fixed-point / Hartree-tail map itself."
+        )
+    return (
+        "The selected structural stabilizer only becomes mildly interesting once the window is extended, which is still not "
+        "enough to justify promoting it beyond an experimental opt-in hook."
+    )
+
+
 def run_h2_jax_singlet_hartree_tail_guard_audit(
     case: BenchmarkCase = H2_BENCHMARK_CASE,
 ) -> H2JaxSingletHartreeTailGuardAuditResult:
@@ -1865,6 +1931,114 @@ def run_h2_jax_singlet_hartree_tail_guard_v2_audit(
             "near-noncontractive singlet tail pattern is detected. This is a structural update rule, not a physics or mixer-family change."
         ),
     )
+
+
+def run_h2_jax_singlet_structural_stabilizer_audit(
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+) -> H2JaxSingletStructuralStabilizerAuditResult:
+    """Run the narrow singlet baseline-vs-structural-stabilizer audit on the latest JAX mainline."""
+
+    baseline_route = _run_route(
+        case=case,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-productionish",
+        enable_anderson=True,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+    )
+    stabilizer_route = _run_route(
+        case=case,
+        max_iterations=_SINGLET_MAINLINE_MAX_ITERATIONS,
+        mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+        mixer="anderson",
+        solver_variant="anderson-plus-hartree-tail-freeze-guard",
+        enable_anderson=True,
+        anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+        anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+        anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+        anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+        anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+        anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+        anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+        anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+        anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+        anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+        anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+        enable_hartree_tail_guard=True,
+        hartree_tail_guard_name=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_NAME,
+        hartree_tail_guard_strategy=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_STRATEGY,
+        hartree_tail_guard_alpha=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_ALPHA,
+        hartree_tail_guard_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_RESIDUAL_RATIO_TRIGGER,
+        hartree_tail_guard_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_PROJECTED_RATIO_TRIGGER,
+        hartree_tail_guard_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HARTREE_SHARE_TRIGGER,
+        hartree_tail_guard_hold_steps=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HOLD_STEPS,
+        hartree_tail_guard_exit_residual_ratio=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_RESIDUAL_RATIO,
+        hartree_tail_guard_exit_stable_steps=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_STABLE_STEPS,
+    )
+    supplemental_stabilizer_route: H2JaxSingletMainlineRouteResult | None = None
+    if _route_clearly_beats_baseline(
+        baseline_route,
+        stabilizer_route,
+    ) and _route_is_close_enough_for_longer_view(stabilizer_route):
+        supplemental_stabilizer_route = _run_route(
+            case=case,
+            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
+            mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+            mixer="anderson",
+            solver_variant="anderson-plus-hartree-tail-freeze-guard-long30",
+            enable_anderson=True,
+            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+            enable_hartree_tail_guard=True,
+            hartree_tail_guard_name=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_NAME,
+            hartree_tail_guard_strategy=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_STRATEGY,
+            hartree_tail_guard_alpha=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_ALPHA,
+            hartree_tail_guard_residual_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_RESIDUAL_RATIO_TRIGGER,
+            hartree_tail_guard_projected_ratio_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_PROJECTED_RATIO_TRIGGER,
+            hartree_tail_guard_hartree_share_trigger=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HARTREE_SHARE_TRIGGER,
+            hartree_tail_guard_hold_steps=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_HOLD_STEPS,
+            hartree_tail_guard_exit_residual_ratio=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_RESIDUAL_RATIO,
+            hartree_tail_guard_exit_stable_steps=_SINGLET_MAINLINE_HARTREE_TAIL_FREEZE_GUARD_EXIT_STABLE_STEPS,
+        )
+    return H2JaxSingletStructuralStabilizerAuditResult(
+        path_label="jax-singlet-structural-stabilizer",
+        spin_state_label="singlet",
+        path_type=baseline_route.path_type,
+        baseline_route=baseline_route,
+        stabilizer_route=stabilizer_route,
+        supplemental_stabilizer_route=supplemental_stabilizer_route,
+        diagnosis=_build_structural_stabilizer_diagnosis(
+            baseline=baseline_route,
+            stabilizer=stabilizer_route,
+            supplemental=supplemental_stabilizer_route,
+        ),
+        note=(
+            "Two-route singlet structural stabilizer audit on the latest frozen JAX A-grid local-only mainline. "
+            "The baseline route is plain anderson-productionish; the only prototype route adds an experimental, "
+            "default-off, singlet-only, pattern-triggered Hartree-tail freeze guard. This is a guarded Hartree-channel "
+            "freeze / partial-freeze structural update, not a physics or mixer-family change."
+        ),
+    )
     supplemental_route: H2JaxSingletMainlineRouteResult | None = None
     if _route_is_close_enough_for_longer_view(acceptance_route):
         supplemental_route = _run_route(
@@ -1989,6 +2163,7 @@ def _print_route(route: H2JaxSingletMainlineRouteResult) -> None:
         print(
             "  experimental guard: "
             f"name={route.guard_name}, "
+            f"strategy={route.guard_strategy}, "
             f"alpha={route.guard_alpha}, "
             f"residual_ratio_trigger={route.guard_residual_ratio_trigger}, "
             f"projected_ratio_trigger={route.guard_projected_ratio_trigger}, "
@@ -2109,9 +2284,23 @@ def print_h2_jax_singlet_hartree_tail_guard_v2_summary(
         _print_route(result.supplemental_guard_v2_route)
 
 
+def print_h2_jax_singlet_structural_stabilizer_summary(
+    result: H2JaxSingletStructuralStabilizerAuditResult,
+) -> None:
+    """Print the compact experimental singlet structural stabilizer summary."""
+
+    print("IsoGridDFT H2 singlet structural stabilizer audit")
+    print(f"note: {result.note}")
+    print(f"diagnosis: {result.diagnosis}")
+    _print_route(result.baseline_route)
+    _print_route(result.stabilizer_route)
+    if result.supplemental_stabilizer_route is not None:
+        _print_route(result.supplemental_stabilizer_route)
+
+
 def main() -> int:
-    result = run_h2_jax_singlet_hartree_tail_guard_v2_audit()
-    print_h2_jax_singlet_hartree_tail_guard_v2_summary(result)
+    result = run_h2_jax_singlet_structural_stabilizer_audit()
+    print_h2_jax_singlet_structural_stabilizer_summary(result)
     return 0
 
 

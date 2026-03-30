@@ -208,6 +208,7 @@ class H2ScfDryRunParameterSummary:
     broyden_residual_definition: str
     hartree_tail_guard_enabled: bool = False
     hartree_tail_guard_name: str | None = None
+    hartree_tail_guard_strategy: str | None = None
     hartree_tail_guard_alpha: float | None = None
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
@@ -429,6 +430,7 @@ class H2StaticLocalScfDryRunResult:
     bookkeeping_iteration_wall_time_seconds: tuple[float, ...]
     hartree_tail_guard_enabled: bool = False
     hartree_tail_guard_name: str | None = None
+    hartree_tail_guard_strategy: str | None = None
     hartree_tail_guard_alpha: float | None = None
     hartree_tail_guard_residual_ratio_trigger: float | None = None
     hartree_tail_guard_projected_ratio_trigger: float | None = None
@@ -879,6 +881,7 @@ def _monitor_grid_scf_parameter_summary(
     singlet_hartree_tail_hartree_share_trigger: float,
     hartree_tail_guard_enabled: bool,
     hartree_tail_guard_name: str,
+    hartree_tail_guard_strategy: str,
     hartree_tail_guard_alpha: float,
     hartree_tail_guard_residual_ratio_trigger: float,
     hartree_tail_guard_projected_ratio_trigger: float,
@@ -955,6 +958,7 @@ def _monitor_grid_scf_parameter_summary(
         ),
         hartree_tail_guard_enabled=bool(hartree_tail_guard_enabled),
         hartree_tail_guard_name=str(hartree_tail_guard_name),
+        hartree_tail_guard_strategy=str(hartree_tail_guard_strategy),
         hartree_tail_guard_alpha=float(hartree_tail_guard_alpha),
         hartree_tail_guard_residual_ratio_trigger=float(
             hartree_tail_guard_residual_ratio_trigger
@@ -1272,6 +1276,7 @@ def _apply_hartree_tail_guard(
     input_operator_context: FixedPotentialStaticLocalOperatorContext | None,
     output_energy_context: FixedPotentialStaticLocalOperatorContext | None,
     enabled: bool,
+    guard_strategy: str,
     guard_alpha: float,
     residual_ratio_trigger: float,
     projected_ratio_trigger: float,
@@ -1307,14 +1312,25 @@ def _apply_hartree_tail_guard(
         and np.isfinite(projected_residual_ratio)
         and projected_residual_ratio >= projected_ratio_trigger
     )
-    lagged_hartree_potential = np.asarray(
-        (1.0 - guard_alpha) * input_operator_context.hartree_potential
-        + guard_alpha * output_energy_context.hartree_potential,
-        dtype=np.float64,
-    )
+    if guard_strategy == "lagged_potential":
+        guarded_hartree_potential = np.asarray(
+            (1.0 - guard_alpha) * input_operator_context.hartree_potential
+            + guard_alpha * output_energy_context.hartree_potential,
+            dtype=np.float64,
+        )
+    elif guard_strategy == "frozen_potential":
+        guarded_hartree_potential = np.asarray(
+            input_operator_context.hartree_potential,
+            dtype=np.float64,
+        )
+    else:
+        raise ValueError(
+            "hartree_tail_guard_strategy must be `lagged_potential` or "
+            f"`frozen_potential`; received `{guard_strategy}`."
+        )
     triggered = bool(hartree_dominated and residual_stalled and projected_bad)
     return (
-        lagged_hartree_potential,
+        guarded_hartree_potential,
         triggered,
         hartree_share,
         previous_residual_ratio,
@@ -2405,6 +2421,7 @@ def run_h2_monitor_grid_scf_dry_run(
     singlet_hartree_tail_hartree_share_trigger: float = 0.80,
     enable_hartree_tail_guard: bool = False,
     hartree_tail_guard_name: str = "hartree_tail_guard",
+    hartree_tail_guard_strategy: str = "lagged_potential",
     hartree_tail_guard_alpha: float = 0.45,
     hartree_tail_guard_residual_ratio_trigger: float = 0.995,
     hartree_tail_guard_projected_ratio_trigger: float = 0.60,
@@ -2484,6 +2501,17 @@ def run_h2_monitor_grid_scf_dry_run(
         )
     if not (0.0 < hartree_tail_guard_alpha <= 1.0):
         raise ValueError("hartree_tail_guard_alpha must satisfy 0 < value <= 1.")
+    normalized_hartree_tail_guard_strategy = (
+        hartree_tail_guard_strategy.strip().lower()
+    )
+    if normalized_hartree_tail_guard_strategy not in {
+        "lagged_potential",
+        "frozen_potential",
+    }:
+        raise ValueError(
+            "hartree_tail_guard_strategy must be `lagged_potential` or "
+            f"`frozen_potential`; received `{hartree_tail_guard_strategy}`."
+        )
     if singlet_hartree_tail_residual_ratio_trigger < 0.0:
         raise ValueError(
             "singlet_hartree_tail_residual_ratio_trigger must be non-negative."
@@ -3373,6 +3401,7 @@ def run_h2_monitor_grid_scf_dry_run(
             input_operator_context=up_operator_context,
             output_energy_context=energy_context if use_step_local_static_local_reuse else None,
             enabled=enable_hartree_tail_guard,
+            guard_strategy=normalized_hartree_tail_guard_strategy,
             guard_alpha=hartree_tail_guard_alpha,
             residual_ratio_trigger=hartree_tail_guard_residual_ratio_trigger,
             projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
@@ -3777,6 +3806,7 @@ def run_h2_monitor_grid_scf_dry_run(
             singlet_hartree_tail_hartree_share_trigger=singlet_hartree_tail_hartree_share_trigger,
             hartree_tail_guard_enabled=enable_hartree_tail_guard,
             hartree_tail_guard_name=hartree_tail_guard_name,
+            hartree_tail_guard_strategy=normalized_hartree_tail_guard_strategy,
             hartree_tail_guard_alpha=hartree_tail_guard_alpha,
             hartree_tail_guard_residual_ratio_trigger=hartree_tail_guard_residual_ratio_trigger,
             hartree_tail_guard_projected_ratio_trigger=hartree_tail_guard_projected_ratio_trigger,
@@ -3871,6 +3901,11 @@ def run_h2_monitor_grid_scf_dry_run(
         hartree_tail_guard_enabled=bool(enable_hartree_tail_guard),
         hartree_tail_guard_name=(
             None if not enable_hartree_tail_guard else str(hartree_tail_guard_name)
+        ),
+        hartree_tail_guard_strategy=(
+            None
+            if not enable_hartree_tail_guard
+            else str(normalized_hartree_tail_guard_strategy)
         ),
         hartree_tail_guard_alpha=(
             None if not enable_hartree_tail_guard else float(hartree_tail_guard_alpha)

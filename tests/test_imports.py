@@ -495,6 +495,9 @@ def test_import_h2_jax_singlet_mainline_audit_entrypoint() -> None:
     from isogrid.audit.h2_jax_singlet_mainline_audit import (
         run_h2_jax_singlet_hartree_tail_guard_v2_audit,
     )
+    from isogrid.audit.h2_jax_singlet_mainline_audit import (
+        run_h2_jax_singlet_structural_stabilizer_audit,
+    )
     from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_acceptance_audit
     from isogrid.audit.h2_jax_singlet_mainline_audit import run_h2_jax_singlet_mainline_audit
 
@@ -502,6 +505,7 @@ def test_import_h2_jax_singlet_mainline_audit_entrypoint() -> None:
     assert callable(run_h2_jax_singlet_acceptance_audit)
     assert callable(run_h2_jax_singlet_hartree_tail_guard_audit)
     assert callable(run_h2_jax_singlet_hartree_tail_guard_v2_audit)
+    assert callable(run_h2_jax_singlet_structural_stabilizer_audit)
 
 
 def test_import_h2_jax_triplet_hartree_energy_baseline() -> None:
@@ -543,6 +547,7 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     from isogrid.audit.baselines import H2_JAX_SINGLET_ACCEPTANCE_BASELINE
     from isogrid.audit.baselines import H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE
     from isogrid.audit.baselines import H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE
+    from isogrid.audit.baselines import H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE
     from isogrid.audit.baselines import H2_JAX_SINGLET_MAINLINE_BASELINE
 
     assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE.monitor_shape == (67, 67, 81)
@@ -554,6 +559,15 @@ def test_import_h2_jax_singlet_mainline_baseline() -> None:
     assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE.guard_route.guard_enabled is True
     assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE.guard_route.guard_name == "hartree_tail_guard_v2"
     assert H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE.guard_route.guard_hold_steps == 3
+    assert H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE.stabilizer_route.guard_enabled is True
+    assert (
+        H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE.stabilizer_route.guard_name
+        == "hartree_tail_freeze_guard"
+    )
+    assert (
+        H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE.stabilizer_route.guard_strategy
+        == "frozen_potential"
+    )
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.monitor_shape == (67, 67, 81)
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.solver_backend == "jax"
     assert H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route.mixer == "anderson"

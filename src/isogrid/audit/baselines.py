@@ -2468,6 +2468,7 @@ class H2JaxSingletMainlineRouteBaseline:
     response_channel_difficulty: H2JaxSingletResponseChannelDifficultyBaseline | None = None
     solver_backend: str = "unknown"
     guard_name: str | None = None
+    guard_strategy: str | None = None
     guard_enabled: bool = False
     guard_triggered: bool = False
     guard_trigger_count: int = 0
@@ -2544,6 +2545,25 @@ class H2JaxSingletHartreeTailGuardRegressionBaseline:
     baseline_route: H2JaxSingletMainlineRouteBaseline
     guard_route: H2JaxSingletMainlineRouteBaseline
     supplemental_guard_route: H2JaxSingletMainlineRouteBaseline | None
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class H2JaxSingletStructuralStabilizerRegressionBaseline:
+    """Recorded experimental structural stabilizer audit on the latest JAX singlet mainline."""
+
+    benchmark_name: str
+    monitor_shape: tuple[int, int, int]
+    box_half_extents_bohr: tuple[float, float, float]
+    patch_radius_scale: float
+    patch_grid_shape: tuple[int, int, int]
+    correction_strength: float
+    interpolation_neighbors: int
+    kinetic_version: str
+    baseline_route: H2JaxSingletMainlineRouteBaseline
+    stabilizer_route: H2JaxSingletMainlineRouteBaseline
+    supplemental_stabilizer_route: H2JaxSingletMainlineRouteBaseline | None
     diagnosis: str
     note: str
 
@@ -4348,6 +4368,7 @@ H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE = H2JaxSingletHartreeTailGuardRegress
         bookkeeping_wall_time_seconds=None,
         solver_backend="jax",
         guard_name="hartree_tail_guard",
+        guard_strategy="lagged_potential",
         guard_enabled=True,
         guard_triggered=True,
         guard_trigger_count=1,
@@ -4488,6 +4509,7 @@ H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE = replace(
         hartree_solve_wall_time_seconds=61.776169,
         energy_evaluation_wall_time_seconds=38.255477,
         guard_name="hartree_tail_guard_v2",
+        guard_strategy="lagged_potential",
         guard_trigger_count=1,
         guard_triggered_iterations=(4,),
         guard_alpha=0.45,
@@ -4538,6 +4560,164 @@ H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE = replace(
         "The baseline route is plain anderson-productionish; the only prototype route adds an experimental, "
         "default-off, singlet-only, pattern-triggered Hartree-tail guard with a short held stabilization window. "
         "No 30-step supplement is recorded because the 20-step guard 2.0 route does not clearly beat the baseline."
+    ),
+)
+
+
+H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE = H2JaxSingletStructuralStabilizerRegressionBaseline(
+    benchmark_name="H2 singlet structural mitigation next-step baseline",
+    monitor_shape=(67, 67, 81),
+    box_half_extents_bohr=(8.0, 8.0, 10.0),
+    patch_radius_scale=0.75,
+    patch_grid_shape=(25, 25, 25),
+    correction_strength=1.30,
+    interpolation_neighbors=8,
+    kinetic_version="trial_fix",
+    baseline_route=replace(
+        H2_JAX_SINGLET_ACCEPTANCE_BASELINE.acceptance_route,
+        total_wall_time_seconds=348.042744,
+        average_iteration_wall_time_seconds=17.402137,
+        eigensolver_wall_time_seconds=266.724335,
+        static_local_prepare_wall_time_seconds=78.766936,
+        hartree_solve_wall_time_seconds=68.128765,
+        energy_evaluation_wall_time_seconds=37.246465,
+    ),
+    stabilizer_route=replace(
+        H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE.guard_route,
+        path_label="jax-singlet-mainline-anderson-plus-hartree-tail-freeze-guard",
+        solver_variant="anderson-plus-hartree-tail-freeze-guard",
+        final_total_energy_ha=-0.21489744628153173,
+        final_lowest_eigenvalue_ha=-0.31920640994,
+        final_density_residual=0.2770747769150879,
+        final_energy_change_ha=-0.0015757057289482734,
+        total_wall_time_seconds=341.549431,
+        average_iteration_wall_time_seconds=17.077472,
+        behavior_verdict="slow_monotone_or_damped",
+        even_odd_energy_gap_ha=0.006726299084743245,
+        even_odd_residual_gap=0.04469294237492394,
+        tail_energy_history_ha=(
+            0.11528569246257936,
+            0.03369721940978487,
+            -0.26910906344307917,
+            -0.21332174055258346,
+            -0.21489744628153173,
+        ),
+        tail_density_residual_history=(
+            0.5649644023108334,
+            0.4871082685003368,
+            0.3795213860207291,
+            0.274655415902693,
+            0.2770747769150879,
+        ),
+        tail_energy_change_history_ha=(
+            0.181013618342876,
+            -0.08158847305279449,
+            -0.30280628285286404,
+            0.055787322890495705,
+            -0.0015757057289482734,
+        ),
+        tail_residual_ratios=(
+            0.862192850572448,
+            0.7791314797204406,
+            0.7236889040231624,
+            1.0088087140187765,
+        ),
+        average_tail_residual_ratio=0.843455487083707,
+        tail_residual_ratio_std=0.10744113596478964,
+        entered_plateau=False,
+        fixed_point_average_tail_residual_ratio=0.843455487083707,
+        fixed_point_tail_residual_ratio_std=0.10744113596478964,
+        fixed_point_maximum_tail_residual_ratio=1.0088087140187765,
+        fixed_point_entered_plateau=False,
+        fixed_point_plateau_window_length=1,
+        fixed_point_tail_residual_amplitude=0.29030898640814046,
+        fixed_point_local_contraction_verdict="locally_noncontractive_or_expansive",
+        fixed_point_secant_subspace_condition_proxy=103381.41239852249,
+        fixed_point_secant_collinearity_max_abs_cosine=0.994680074282799,
+        fixed_point_diagnosis=(
+            "tail history does not show decisive contraction, which points more to a hard local map than to a small mixer tweak"
+        ),
+        anderson_used_iterations=(3, 4, 5, 6, 8, 9, 10, 11, 13, 15, 17, 18, 19, 20),
+        anderson_reset_iterations=(2, 7, 12, 14, 16),
+        anderson_filtered_history_sizes=(1, 1, 2, 2, 3, 4, 1, 2, 3, 4, 4, 1, 2, 1, 2, 1, 2, 3, 4, 5),
+        anderson_effective_damping_history=(
+            0.55, 0.45, 0.55, 0.75, 0.75, 0.55, 0.75, 0.75,
+            0.75, 0.55, 0.75, 0.75, 0.75, 0.45,
+        ),
+        anderson_projected_residual_ratio_history=(
+            0.6201945892391927,
+            0.6447726045137265,
+            0.45825751122672415,
+            0.2522241592434077,
+            0.3752945876250498,
+            0.45487886989816423,
+            0.2502227970283105,
+            0.25084003977270486,
+            0.5430175411500355,
+            0.591664141360236,
+            0.4113696170894768,
+            0.2700801260635802,
+            0.28409856628677477,
+            0.551172714619615,
+        ),
+        eigensolver_wall_time_seconds=260.068654,
+        static_local_prepare_wall_time_seconds=78.711694,
+        hartree_solve_wall_time_seconds=67.600794,
+        energy_evaluation_wall_time_seconds=40.709251,
+        guard_name="hartree_tail_freeze_guard",
+        guard_strategy="frozen_potential",
+        guard_enabled=True,
+        guard_triggered=True,
+        guard_trigger_count=1,
+        guard_triggered_iterations=(4,),
+        guard_alpha=0.45,
+        guard_residual_ratio_trigger=0.995,
+        guard_projected_ratio_trigger=0.60,
+        guard_hartree_share_trigger=0.80,
+        guard_hold_steps=2,
+        guard_exit_residual_ratio=0.995,
+        guard_exit_stable_steps=2,
+        guard_entry_iterations=(4,),
+        guard_exit_iterations=(6,),
+        guard_hold_lengths=(2,),
+        guard_active_iteration_history=(
+            False, False, False, False, True, True, False, False, False, False,
+            False, False, False, False, False, False, False, False, False, False,
+        ),
+        guard_hartree_share_history=(
+            0.7901847171455306, 0.8124330928407228, 0.8188925591909766, 0.8184148779344327,
+            0.8260953934896802, 0.8515531819424839, 0.8562636535149712, 0.8488842784249975,
+            0.8553834149954185, 0.8427379696196011, 0.8246733669929038, 0.8294678489511019,
+            0.8171565626572911, 0.848684308157848, 0.8409381169712222, 0.8666064281778606,
+            0.8583912953785476, 0.8445256695842868, 0.8144965126273336, 0.8149089316317821,
+        ),
+        guard_residual_ratio_history=(
+            None, 1.127381525200555, 0.9195459777201572, 1.0151339321775432, 0.9078309960179723,
+            0.46282312590242436, 4.37118537893605, 0.8623111241332047,
+            0.9800309674012074, 0.8176402002844343, 0.8293579718392563, 1.0637845070181415,
+            0.8420757961706818, 1.4995629507510921, 0.9269541504119858, 1.4089515866883437,
+            0.862192850572448, 0.7791314797204406, 0.7236889040231624, 1.0088087140187765,
+        ),
+        guard_projected_ratio_history=(
+            None, None, 0.6201945892391927, 0.6447726045137265, 0.45825751122672415,
+            0.2522241592434077, None, 0.3752945876250498, 0.45487886989816423, 0.2502227970283105,
+            0.25084003977270486, None, 0.5430175411500355, None, 0.591664141360236, None, 0.4113696170894768,
+            0.2700801260635802, 0.28409856628677477, 0.551172714619615,
+        ),
+    ),
+    supplemental_stabilizer_route=None,
+    diagnosis=(
+        "The selected structural stabilizer is a guarded Hartree freeze / partial-freeze update: it is stronger than "
+        "the earlier lagged-potential guards, and the 20-step H2 singlet route now moves well below the old plateau "
+        "residual scale. It still does not converge, but it materially improves on the plain anderson-productionish "
+        "baseline and also looks clearly stronger than the three-step lagged guard 2.0. That supports keeping it as "
+        "an experimental/default-off/pattern-triggered stabilizer in the codebase, not as a default strategy."
+    ),
+    note=(
+        "Two-route singlet structural mitigation next-step baseline on the latest frozen JAX A-grid local-only mainline. "
+        "The baseline route is plain anderson-productionish; the only prototype route adds an experimental, default-off, "
+        "singlet-only, pattern-triggered Hartree-tail freeze guard. No 30-step supplement is recorded because, although "
+        "the 20-step prototype route improves materially, it still does not look close enough to justify a longer view."
     ),
 )
 
@@ -4773,6 +4953,7 @@ __all__ = [
     "H2JaxEigensolverHotpathRegressionBaseline",
     "H2JaxSingletAcceptanceRegressionBaseline",
     "H2JaxSingletHartreeTailGuardRegressionBaseline",
+    "H2JaxSingletStructuralStabilizerRegressionBaseline",
     "H2JaxSingletMainlineRegressionBaseline",
     "H2JaxSingletMainlineRouteBaseline",
     "H2JaxSingletResponseChannelDifficultyBaseline",
@@ -4840,6 +5021,7 @@ __all__ = [
     "H2_JAX_SINGLET_ACCEPTANCE_BASELINE",
     "H2_JAX_SINGLET_HARTREE_TAIL_GUARD_BASELINE",
     "H2_JAX_SINGLET_HARTREE_TAIL_GUARD_V2_BASELINE",
+    "H2_JAX_SINGLET_STRUCTURAL_STABILIZER_BASELINE",
     "H2_JAX_SINGLET_MAINLINE_BASELINE",
     "H2_JAX_TRIPLET_END_TO_END_MICRO_PROFILE_BASELINE",
     "H2_JAX_TRIPLET_REINTEGRATION_SMOKE_BASELINE",

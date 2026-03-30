@@ -177,7 +177,7 @@ It does not yet implement GGA, meta-GGA, hybrid functionals, or a standalone int
 The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dry-run validation.
 
 - H2 triplet dry-run is already convergent on the local static chain
-- H2 singlet is currently under an experimental, default-off, pattern-triggered Hartree-tail guard 2.0 audit on top of the productionish Anderson route
+- H2 singlet is currently under an experimental, default-off, pattern-triggered structural stabilizer audit on top of the productionish Anderson route, with the current focus on a stronger Hartree-tail freeze-style guard rather than more mixer-family comparisons
 - nonlocal ionic action is still not migrated onto the A-grid path
 
 ## Minimal Setup

@@ -9,6 +9,7 @@ from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineAudi
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineBehavior
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineParameterSummary
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineRouteResult
+from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletStructuralStabilizerAuditResult
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletMainlineTimingBreakdown
 from isogrid.audit.h2_jax_singlet_mainline_audit import H2JaxSingletResponseChannelDifficulty
 from isogrid.scf import SinglePointEnergyComponents
@@ -190,6 +191,7 @@ def test_h2_jax_singlet_mainline_audit_module_imports() -> None:
     assert hasattr(module, "run_h2_jax_singlet_hartree_tail_guard_audit")
     assert hasattr(module, "run_h2_jax_singlet_acceptance_audit")
     assert hasattr(module, "run_h2_jax_singlet_mainline_audit")
+    assert hasattr(module, "run_h2_jax_singlet_structural_stabilizer_audit")
     assert hasattr(module, "print_h2_jax_singlet_mainline_summary")
 
 
@@ -337,3 +339,56 @@ def test_construct_h2_jax_singlet_hartree_tail_guard_v2_result() -> None:
     assert guard_route.guard_hold_steps == 3
     assert guard_route.guard_hold_lengths == (3,)
     assert guard_route.final_density_residual == 0.30
+
+
+def test_construct_h2_jax_singlet_structural_stabilizer_result() -> None:
+    baseline_route = _build_route(
+        solver_variant="anderson-productionish",
+        mitigation_enabled=False,
+    )
+    stabilizer_route = _build_route(
+        solver_variant="anderson-plus-hartree-tail-freeze-guard",
+        mitigation_enabled=False,
+    )
+    stabilizer_route = H2JaxSingletMainlineRouteResult(
+        **{
+            **stabilizer_route.__dict__,
+            "guard_name": "hartree_tail_freeze_guard",
+            "guard_strategy": "frozen_potential",
+            "guard_enabled": True,
+            "guard_triggered": True,
+            "guard_trigger_count": 1,
+            "guard_triggered_iterations": (4,),
+            "guard_hold_steps": 2,
+            "guard_exit_residual_ratio": 0.995,
+            "guard_exit_stable_steps": 2,
+            "guard_entry_iterations": (4,),
+            "guard_exit_iterations": (6,),
+            "guard_hold_lengths": (2,),
+            "guard_active_iteration_history": (
+                False,
+                False,
+                False,
+                False,
+                True,
+                True,
+            ),
+        }
+    )
+    result = H2JaxSingletStructuralStabilizerAuditResult(
+        path_label="jax-singlet-structural-stabilizer",
+        spin_state_label="singlet",
+        path_type="monitor_a_grid_plus_patch",
+        baseline_route=baseline_route,
+        stabilizer_route=stabilizer_route,
+        supplemental_stabilizer_route=None,
+        diagnosis="structural stabilizer smoke",
+        note="structural stabilizer smoke",
+    )
+
+    assert result.stabilizer_route.solver_backend == "jax"
+    assert result.stabilizer_route.mixer == "anderson"
+    assert result.stabilizer_route.guard_name == "hartree_tail_freeze_guard"
+    assert result.stabilizer_route.guard_strategy == "frozen_potential"
+    assert result.stabilizer_route.guard_hold_steps == 2
+    assert result.stabilizer_route.final_density_residual == 0.30
