@@ -147,6 +147,12 @@ class FixedPotentialEigensolverResult:
     wall_time_seconds: float | None = None
     jax_internal_profile: JaxFixedPotentialInternalProfile | None = None
 
+    @property
+    def internal_profile(self) -> JaxFixedPotentialInternalProfile | None:
+        """Backward-compatible alias for older audit code."""
+
+        return self.jax_internal_profile
+
 
 def _normalize_spin_channel(spin_channel: str) -> str:
     normalized = spin_channel.strip().lower()
@@ -1298,5 +1304,9 @@ def solve_fixed_potential_static_local_eigenproblem(
         ),
         use_jax_cached_kernels=bool(normalized_solver_backend == "jax"),
         wall_time_seconds=result.wall_time_seconds,
-        jax_internal_profile=result.internal_profile,
+        jax_internal_profile=getattr(
+            result,
+            "jax_internal_profile",
+            getattr(result, "internal_profile", None),
+        ),
     )

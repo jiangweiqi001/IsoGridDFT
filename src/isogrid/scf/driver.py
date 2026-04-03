@@ -1017,6 +1017,28 @@ def _detect_monitor_grid_singlet_alternation(
     return bool(distance_to_two_steps_ago < 0.95 * distance_to_previous)
 
 
+def _is_hartree_tail_guard_v2(guard_name: str | None) -> bool:
+    return guard_name is not None and guard_name.strip().lower() == "hartree_tail_guard_v2"
+
+
+def _taper_hartree_tail_guard_release_potential(
+    *,
+    guarded_hartree_potential: np.ndarray,
+    unguarded_hartree_potential: np.ndarray,
+    remaining_steps: int,
+    total_steps: int,
+) -> np.ndarray:
+    if total_steps <= 0 or remaining_steps <= 0:
+        return np.asarray(unguarded_hartree_potential, dtype=np.float64)
+    release_weight = float(remaining_steps) / float(total_steps + 1)
+    release_weight = min(max(release_weight, 0.0), 1.0)
+    return np.asarray(
+        release_weight * guarded_hartree_potential
+        + (1.0 - release_weight) * unguarded_hartree_potential,
+        dtype=np.float64,
+    )
+
+
 def _record_last_jax_hartree_solve_diagnostics(
     *,
     enabled: bool,
@@ -2649,6 +2671,8 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_tail_guard_active_remaining_steps = 0
     hartree_tail_guard_recovered_stable_steps = 0
     hartree_tail_guard_current_hold_length = 0
+    hartree_tail_guard_release_remaining_steps = 0
+    hartree_tail_guard_release_total_steps = 0
     hartree_tail_guard_triggered_iterations: list[int] = []
     hartree_tail_guard_entry_iterations: list[int] = []
     hartree_tail_guard_exit_iterations: list[int] = []
@@ -3384,6 +3408,10 @@ def run_h2_monitor_grid_scf_dry_run(
         if singlet_hartree_tail_triggered:
             singlet_hartree_tail_mitigation_triggered_iterations.append(iteration)
 
+        hartree_tail_guard_v2_enabled = (
+            enable_hartree_tail_guard
+            and _is_hartree_tail_guard_v2(hartree_tail_guard_name)
+        )
         hartree_tail_guard_active_for_iteration = (
             active_hartree_tail_guard_potential is not None
         )
@@ -3419,6 +3447,8 @@ def run_h2_monitor_grid_scf_dry_run(
                         int(hartree_tail_guard_active_remaining_steps),
                     )
                     hartree_tail_guard_recovered_stable_steps = 0
+                    hartree_tail_guard_release_remaining_steps = 0
+                    hartree_tail_guard_release_total_steps = 0
                 recovered_residual = (
                     hartree_tail_guard_residual_ratio is not None
                     and np.isfinite(hartree_tail_guard_residual_ratio)
@@ -3447,25 +3477,88 @@ def run_h2_monitor_grid_scf_dry_run(
                     if hartree_tail_guard_lagged_candidate_potential is None
                     else hartree_tail_guard_lagged_candidate_potential
                 )
-                hartree_tail_guard_active_remaining_steps -= 1
-                guard_recovered = (
-                    hartree_tail_guard_recovered_stable_steps
-                    >= hartree_tail_guard_exit_stable_steps
-                )
-                guard_window_exhausted = hartree_tail_guard_active_remaining_steps <= 0
-                if guard_recovered or guard_window_exhausted:
-                    hartree_tail_guard_exit_iterations.append(iteration)
-                    hartree_tail_guard_hold_lengths.append(
-                        int(hartree_tail_guard_current_hold_length)
-                    )
-                    active_hartree_tail_guard_potential = None
-                    hartree_tail_guard_active_remaining_steps = 0
-                    hartree_tail_guard_recovered_stable_steps = 0
-                    hartree_tail_guard_current_hold_length = 0
-                else:
-                    active_hartree_tail_guard_potential = (
+                if hartree_tail_guard_release_remaining_steps > 0:
+                    next_hartree_tail_guard_potential = (
                         next_hartree_tail_guard_potential
+                        if energy_context is None
+                        else _taper_hartree_tail_guard_release_potential(
+                            guarded_hartree_potential=next_hartree_tail_guard_potential,
+                            unguarded_hartree_potential=energy_context.hartree_potential,
+                            remaining_steps=hartree_tail_guard_release_remaining_steps,
+                            total_steps=hartree_tail_guard_release_total_steps,
+                        )
                     )
+                    hartree_tail_guard_release_remaining_steps -= 1
+                    if hartree_tail_guard_release_remaining_steps <= 0:
+                        hartree_tail_guard_exit_iterations.append(iteration)
+                        hartree_tail_guard_hold_lengths.append(
+                            int(hartree_tail_guard_current_hold_length)
+                        )
+                        active_hartree_tail_guard_potential = None
+                        hartree_tail_guard_active_remaining_steps = 0
+                        hartree_tail_guard_recovered_stable_steps = 0
+                        hartree_tail_guard_current_hold_length = 0
+                        hartree_tail_guard_release_total_steps = 0
+                    else:
+                        active_hartree_tail_guard_potential = (
+                            next_hartree_tail_guard_potential
+                        )
+                else:
+                    effective_exit_stable_steps = int(
+                        hartree_tail_guard_exit_stable_steps
+                    )
+                    if hartree_tail_guard_v2_enabled:
+                        effective_exit_stable_steps += 1
+                    hartree_tail_guard_active_remaining_steps -= 1
+                    guard_recovered = (
+                        hartree_tail_guard_recovered_stable_steps
+                        >= effective_exit_stable_steps
+                    )
+                    guard_window_exhausted = (
+                        hartree_tail_guard_active_remaining_steps <= 0
+                    )
+                    if guard_recovered or guard_window_exhausted:
+                        if (
+                            hartree_tail_guard_v2_enabled
+                            and normalized_hartree_tail_guard_strategy
+                            == "lagged_potential"
+                            and energy_context is not None
+                        ):
+                            hartree_tail_guard_release_total_steps = max(
+                                1,
+                                int(hartree_tail_guard_exit_stable_steps),
+                            )
+                            hartree_tail_guard_release_remaining_steps = (
+                                hartree_tail_guard_release_total_steps
+                            )
+                            active_hartree_tail_guard_potential = (
+                                _taper_hartree_tail_guard_release_potential(
+                                    guarded_hartree_potential=(
+                                        next_hartree_tail_guard_potential
+                                    ),
+                                    unguarded_hartree_potential=(
+                                        energy_context.hartree_potential
+                                    ),
+                                    remaining_steps=(
+                                        hartree_tail_guard_release_remaining_steps
+                                    ),
+                                    total_steps=hartree_tail_guard_release_total_steps,
+                                )
+                            )
+                        else:
+                            hartree_tail_guard_exit_iterations.append(iteration)
+                            hartree_tail_guard_hold_lengths.append(
+                                int(hartree_tail_guard_current_hold_length)
+                            )
+                            active_hartree_tail_guard_potential = None
+                            hartree_tail_guard_active_remaining_steps = 0
+                            hartree_tail_guard_recovered_stable_steps = 0
+                            hartree_tail_guard_current_hold_length = 0
+                            hartree_tail_guard_release_total_steps = 0
+                    else:
+                        active_hartree_tail_guard_potential = (
+                            next_hartree_tail_guard_potential
+                        )
             elif hartree_tail_guard_triggered:
                 active_hartree_tail_guard_potential = (
                     hartree_tail_guard_lagged_candidate_potential
@@ -3477,6 +3570,8 @@ def run_h2_monitor_grid_scf_dry_run(
                 )
                 hartree_tail_guard_recovered_stable_steps = 0
                 hartree_tail_guard_current_hold_length = 0
+                hartree_tail_guard_release_remaining_steps = 0
+                hartree_tail_guard_release_total_steps = 0
             else:
                 active_hartree_tail_guard_potential = None
         hartree_tail_guard_hartree_share_history.append(

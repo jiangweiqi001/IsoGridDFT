@@ -1613,6 +1613,45 @@ def run_h2_jax_singlet_acceptance_audit(
         anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
         anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
     )
+    supplemental_route: H2JaxSingletMainlineRouteResult | None = None
+    if _route_is_close_enough_for_longer_view(acceptance_route):
+        supplemental_route = _run_route(
+            case=case,
+            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
+            mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
+            mixer="anderson",
+            solver_variant="anderson-productionish-long30",
+            enable_anderson=True,
+            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
+            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
+            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
+            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
+            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
+            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
+            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
+            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
+            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
+            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
+            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
+        )
+    return H2JaxSingletAcceptanceAuditResult(
+        path_label="jax-singlet-acceptance-mainline",
+        spin_state_label="singlet",
+        path_type=acceptance_route.path_type,
+        acceptance_route=acceptance_route,
+        supplemental_route=supplemental_route,
+        diagnosis=_build_acceptance_diagnosis(
+            acceptance_route,
+            previous_baseline=H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route,
+            supplemental_route=supplemental_route,
+        ),
+        note=(
+            "Single-route H2 singlet acceptance test on the latest frozen JAX A-grid local-only mainline. "
+            "The route uses the current anderson-productionish mixer with the JAX-native eigensolver formal path. "
+            "No linear/DIIS/Broyden/extra Anderson variants are rerun here; the only optional supplement is a 30-step "
+            "view if the 20-step route looks genuinely close to convergence."
+        ),
+    )
 
 
 def _build_guard_diagnosis(
@@ -2037,45 +2076,6 @@ def run_h2_jax_singlet_structural_stabilizer_audit(
             "The baseline route is plain anderson-productionish; the only prototype route adds an experimental, "
             "default-off, singlet-only, pattern-triggered Hartree-tail freeze guard. This is a guarded Hartree-channel "
             "freeze / partial-freeze structural update, not a physics or mixer-family change."
-        ),
-    )
-    supplemental_route: H2JaxSingletMainlineRouteResult | None = None
-    if _route_is_close_enough_for_longer_view(acceptance_route):
-        supplemental_route = _run_route(
-            case=case,
-            max_iterations=_SINGLET_MAINLINE_SUPPLEMENTAL_MAX_ITERATIONS,
-            mixing=_SINGLET_MAINLINE_BASELINE_MIXING,
-            mixer="anderson",
-            solver_variant="anderson-productionish-long30",
-            enable_anderson=True,
-            anderson_history_length=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_HISTORY,
-            anderson_regularization=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_REGULARIZATION,
-            anderson_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_DAMPING,
-            anderson_step_clip_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_STEP_CLIP,
-            anderson_reset_on_growth=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_ON_GROWTH,
-            anderson_reset_growth_factor=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_RESET_GROWTH_FACTOR,
-            anderson_adaptive_damping_enabled=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ADAPTIVE_DAMPING,
-            anderson_min_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MIN_DAMPING,
-            anderson_max_damping=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_MAX_DAMPING,
-            anderson_acceptance_residual_ratio_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_ACCEPTANCE_RATIO,
-            anderson_collinearity_cosine_threshold=_SINGLET_MAINLINE_ANDERSON_PRODUCTIONISH_COLLINEARITY,
-        )
-    return H2JaxSingletAcceptanceAuditResult(
-        path_label="jax-singlet-acceptance-mainline",
-        spin_state_label="singlet",
-        path_type=acceptance_route.path_type,
-        acceptance_route=acceptance_route,
-        supplemental_route=supplemental_route,
-        diagnosis=_build_acceptance_diagnosis(
-            acceptance_route,
-            previous_baseline=H2_JAX_SINGLET_MAINLINE_BASELINE.anderson_productionish_route,
-            supplemental_route=supplemental_route,
-        ),
-        note=(
-            "Single-route H2 singlet acceptance test on the latest frozen JAX A-grid local-only mainline. "
-            "The route uses the current anderson-productionish mixer with the JAX-native eigensolver formal path. "
-            "No linear/DIIS/Broyden/extra Anderson variants are rerun here; the only optional supplement is a 30-step "
-            "view if the 20-step route looks genuinely close to convergence."
         ),
     )
 
