@@ -1021,6 +1021,9 @@ def _is_hartree_tail_guard_v2(guard_name: str | None) -> bool:
     return guard_name is not None and guard_name.strip().lower() == "hartree_tail_guard_v2"
 
 
+_HARTREE_TAIL_GUARD_V2_MAX_HOLD_CAP = 5
+
+
 def _taper_hartree_tail_guard_release_potential(
     *,
     guarded_hartree_potential: np.ndarray,
@@ -3477,7 +3480,37 @@ def run_h2_monitor_grid_scf_dry_run(
                     if hartree_tail_guard_lagged_candidate_potential is None
                     else hartree_tail_guard_lagged_candidate_potential
                 )
-                if hartree_tail_guard_release_remaining_steps > 0:
+                if (
+                    hartree_tail_guard_v2_enabled
+                    and hartree_tail_guard_release_remaining_steps <= 0
+                    and hartree_tail_guard_current_hold_length
+                    >= _HARTREE_TAIL_GUARD_V2_MAX_HOLD_CAP
+                ):
+                    if (
+                        normalized_hartree_tail_guard_strategy
+                        == "lagged_potential"
+                        and energy_context is not None
+                    ):
+                        hartree_tail_guard_release_total_steps = max(
+                            1,
+                            int(hartree_tail_guard_exit_stable_steps),
+                        )
+                        hartree_tail_guard_release_remaining_steps = (
+                            hartree_tail_guard_release_total_steps
+                        )
+                    else:
+                        hartree_tail_guard_exit_iterations.append(iteration)
+                        hartree_tail_guard_hold_lengths.append(
+                            int(hartree_tail_guard_current_hold_length)
+                        )
+                        active_hartree_tail_guard_potential = None
+                        hartree_tail_guard_active_remaining_steps = 0
+                        hartree_tail_guard_recovered_stable_steps = 0
+                        hartree_tail_guard_current_hold_length = 0
+                        hartree_tail_guard_release_total_steps = 0
+                if active_hartree_tail_guard_potential is None:
+                    pass
+                elif hartree_tail_guard_release_remaining_steps > 0:
                     next_hartree_tail_guard_potential = (
                         next_hartree_tail_guard_potential
                         if energy_context is None
