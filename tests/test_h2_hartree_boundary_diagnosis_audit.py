@@ -18,7 +18,7 @@ def test_hartree_boundary_diagnosis_audit_module_imports() -> None:
 def test_h2_monitor_grid_baseline_shape_reflects_current_frozen_electrostatics_baseline() -> None:
     grid_geometry = build_h2_local_patch_development_monitor_grid()
 
-    assert grid_geometry.spec.shape == (75, 75, 91)
+    assert grid_geometry.spec.shape == (83, 83, 101)
 
 
 def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
@@ -40,6 +40,9 @@ def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
         "likely_scf_or_preconditioning",
         "mixed_or_inconclusive",
     }
+    assert np.isfinite(result.gaussian_centered_monitor.total_charge)
+    assert np.isfinite(result.gaussian_centered_monitor.dipole_norm)
+    assert np.isfinite(result.gaussian_centered_monitor.quadrupole_norm)
     assert np.isfinite(result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha)
     assert np.isfinite(result.gaussian_shift_sensitivity.shifted_minus_centered_hartree_energy_mha)
     assert np.isfinite(result.h2_frozen_difference.monitor_minus_legacy_hartree_energy_mha)

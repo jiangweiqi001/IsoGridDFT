@@ -39,6 +39,9 @@ class FixedDensityHartreeRouteSummary:
     grid_type: str
     box_half_extents_bohr: tuple[float, float, float]
     density_integral: float
+    total_charge: float
+    dipole_norm: float
+    quadrupole_norm: float
     hartree_energy: float
     residual_rms: float
     center_potential: float
@@ -214,6 +217,9 @@ def evaluate_fixed_density_hartree_route(
         grid_type=grid_type,
         box_half_extents_bohr=_box_half_extents(grid_geometry),
         density_integral=float(route_result.density_integral),
+        total_charge=float(route_result.boundary_summary.total_charge),
+        dipole_norm=float(route_result.boundary_summary.dipole_norm),
+        quadrupole_norm=float(route_result.boundary_summary.quadrupole_norm),
         hartree_energy=float(route_result.hartree_energy),
         residual_rms=float(route_result.residual_summary.rms),
         center_potential=float(
