@@ -210,6 +210,8 @@ class H2JaxSingletMainlineParameterSummary:
     hartree_tail_guard_hold_steps: int | None = None
     hartree_tail_guard_exit_residual_ratio: float | None = None
     hartree_tail_guard_exit_stable_steps: int | None = None
+    singlet_real_space_preconditioner_enabled: bool = False
+    singlet_real_space_preconditioner_strength: float | None = None
 
 
 @dataclass(frozen=True)
@@ -940,6 +942,12 @@ def _build_parameter_summary(
         ),
         anderson_collinearity_cosine_threshold=parameters.anderson_collinearity_cosine_threshold,
         anderson_residual_definition=parameters.anderson_residual_definition,
+        singlet_real_space_preconditioner_enabled=(
+            parameters.singlet_real_space_preconditioner_enabled
+        ),
+        singlet_real_space_preconditioner_strength=(
+            parameters.singlet_real_space_preconditioner_strength
+        ),
         singlet_hartree_tail_mitigation_enabled=(
             parameters.singlet_hartree_tail_mitigation_enabled
         ),
@@ -1219,6 +1227,8 @@ def _run_route(
     anderson_max_damping: float = 0.75,
     anderson_acceptance_residual_ratio_threshold: float = 1.02,
     anderson_collinearity_cosine_threshold: float = 0.995,
+    enable_singlet_real_space_preconditioner: bool = False,
+    singlet_real_space_preconditioner_strength: float = 0.35,
     enable_singlet_hartree_tail_mitigation: bool = False,
     singlet_hartree_tail_mitigation_weight: float = _SINGLET_MAINLINE_HARTREE_TAIL_MITIGATION_WEIGHT,
     singlet_hartree_tail_residual_ratio_trigger: float = _SINGLET_MAINLINE_HARTREE_TAIL_RESIDUAL_RATIO_TRIGGER,
@@ -1268,6 +1278,8 @@ def _run_route(
         anderson_max_damping=anderson_max_damping,
         anderson_acceptance_residual_ratio_threshold=anderson_acceptance_residual_ratio_threshold,
         anderson_collinearity_cosine_threshold=anderson_collinearity_cosine_threshold,
+        enable_singlet_real_space_preconditioner=enable_singlet_real_space_preconditioner,
+        singlet_real_space_preconditioner_strength=singlet_real_space_preconditioner_strength,
         enable_singlet_hartree_tail_mitigation=enable_singlet_hartree_tail_mitigation,
         singlet_hartree_tail_mitigation_weight=singlet_hartree_tail_mitigation_weight,
         singlet_hartree_tail_residual_ratio_trigger=singlet_hartree_tail_residual_ratio_trigger,

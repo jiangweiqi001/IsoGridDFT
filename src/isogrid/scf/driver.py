@@ -216,6 +216,8 @@ class H2ScfDryRunParameterSummary:
     hartree_tail_guard_hold_steps: int | None = None
     hartree_tail_guard_exit_residual_ratio: float | None = None
     hartree_tail_guard_exit_stable_steps: int | None = None
+    singlet_real_space_preconditioner_enabled: bool = False
+    singlet_real_space_preconditioner_strength: float | None = None
 
 
 @dataclass(frozen=True)
@@ -889,6 +891,8 @@ def _monitor_grid_scf_parameter_summary(
     hartree_tail_guard_hold_steps: int,
     hartree_tail_guard_exit_residual_ratio: float,
     hartree_tail_guard_exit_stable_steps: int,
+    singlet_real_space_preconditioner_enabled: bool,
+    singlet_real_space_preconditioner_strength: float,
     broyden_enabled: bool,
     broyden_warmup_iterations: int,
     broyden_history_length: int,
@@ -976,6 +980,14 @@ def _monitor_grid_scf_parameter_summary(
         hartree_tail_guard_exit_stable_steps=int(
             hartree_tail_guard_exit_stable_steps
         ),
+        singlet_real_space_preconditioner_enabled=bool(
+            singlet_real_space_preconditioner_enabled
+        ),
+        singlet_real_space_preconditioner_strength=(
+            None
+            if not singlet_real_space_preconditioner_enabled
+            else float(singlet_real_space_preconditioner_strength)
+        ),
         broyden_enabled=bool(broyden_enabled),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),
@@ -1022,6 +1034,8 @@ def _is_hartree_tail_guard_v2(guard_name: str | None) -> bool:
 
 
 _HARTREE_TAIL_GUARD_V2_MAX_HOLD_CAP = 5
+_SINGLET_REAL_SPACE_PRECONDITIONER_SMOOTHING_SWEEPS = 2
+_SINGLET_REAL_SPACE_PRECONDITIONER_NEIGHBOR_BLEND = 0.5
 
 
 def _taper_hartree_tail_guard_release_potential(
@@ -1112,6 +1126,86 @@ def _density_residual_fields(
     return (
         np.asarray(rho_up_out - rho_up_in, dtype=np.float64),
         np.asarray(rho_down_out - rho_down_in, dtype=np.float64),
+    )
+
+
+def _smooth_monitor_grid_field(
+    field: np.ndarray,
+    *,
+    sweeps: int,
+) -> np.ndarray:
+    smoothed = np.asarray(field, dtype=np.float64).copy()
+    if sweeps <= 0:
+        return smoothed
+    for _ in range(sweeps):
+        padded = np.pad(smoothed, 1, mode="edge")
+        neighbor_average = (
+            padded[:-2, 1:-1, 1:-1]
+            + padded[2:, 1:-1, 1:-1]
+            + padded[1:-1, :-2, 1:-1]
+            + padded[1:-1, 2:, 1:-1]
+            + padded[1:-1, 1:-1, :-2]
+            + padded[1:-1, 1:-1, 2:]
+        ) / 6.0
+        smoothed = (
+            (1.0 - _SINGLET_REAL_SPACE_PRECONDITIONER_NEIGHBOR_BLEND) * smoothed
+            + _SINGLET_REAL_SPACE_PRECONDITIONER_NEIGHBOR_BLEND * neighbor_average
+        )
+    return np.asarray(smoothed, dtype=np.float64)
+
+
+def _apply_singlet_real_space_preconditioner(
+    *,
+    occupations: SpinOccupations,
+    grid_geometry: GridGeometryLike,
+    rho_up_current: np.ndarray,
+    rho_down_current: np.ndarray,
+    rho_up_candidate: np.ndarray,
+    rho_down_candidate: np.ndarray,
+    enabled: bool,
+    strength: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    if not enabled or not _is_h2_closed_shell_singlet(occupations):
+        return rho_up_candidate, rho_down_candidate
+
+    delta_up = np.asarray(rho_up_candidate - rho_up_current, dtype=np.float64)
+    delta_down = np.asarray(rho_down_candidate - rho_down_current, dtype=np.float64)
+    delta_total = np.asarray(delta_up + delta_down, dtype=np.float64)
+    delta_spin = np.asarray(delta_up - delta_down, dtype=np.float64)
+    smoothed_total = _smooth_monitor_grid_field(
+        delta_total,
+        sweeps=_SINGLET_REAL_SPACE_PRECONDITIONER_SMOOTHING_SWEEPS,
+    )
+    preconditioned_delta_total = np.asarray(
+        delta_total - float(strength) * smoothed_total,
+        dtype=np.float64,
+    )
+    preconditioned_delta_up = 0.5 * (preconditioned_delta_total + delta_spin)
+    preconditioned_delta_down = 0.5 * (preconditioned_delta_total - delta_spin)
+
+    rho_up_preconditioned = np.maximum(
+        np.asarray(rho_up_current + preconditioned_delta_up, dtype=np.float64),
+        0.0,
+    )
+    rho_down_preconditioned = np.maximum(
+        np.asarray(rho_down_current + preconditioned_delta_down, dtype=np.float64),
+        0.0,
+    )
+    if float(integrate_field(rho_up_preconditioned, grid_geometry=grid_geometry)) <= 1.0e-16:
+        return rho_up_candidate, rho_down_candidate
+    if float(integrate_field(rho_down_preconditioned, grid_geometry=grid_geometry)) <= 1.0e-16:
+        return rho_up_candidate, rho_down_candidate
+    return (
+        _renormalize_density(
+            rho_up_preconditioned,
+            occupations.n_alpha,
+            grid_geometry=grid_geometry,
+        ),
+        _renormalize_density(
+            rho_down_preconditioned,
+            occupations.n_beta,
+            grid_geometry=grid_geometry,
+        ),
     )
 
 
@@ -2444,6 +2538,8 @@ def run_h2_monitor_grid_scf_dry_run(
     singlet_hartree_tail_residual_ratio_trigger: float = 0.995,
     singlet_hartree_tail_projected_ratio_trigger: float = 0.60,
     singlet_hartree_tail_hartree_share_trigger: float = 0.80,
+    enable_singlet_real_space_preconditioner: bool = False,
+    singlet_real_space_preconditioner_strength: float = 0.35,
     enable_hartree_tail_guard: bool = False,
     hartree_tail_guard_name: str = "hartree_tail_guard",
     hartree_tail_guard_strategy: str = "lagged_potential",
@@ -2523,6 +2619,10 @@ def run_h2_monitor_grid_scf_dry_run(
     if not (0.0 < singlet_hartree_tail_mitigation_weight <= 1.0):
         raise ValueError(
             "singlet_hartree_tail_mitigation_weight must satisfy 0 < value <= 1."
+        )
+    if not (0.0 < singlet_real_space_preconditioner_strength <= 1.0):
+        raise ValueError(
+            "singlet_real_space_preconditioner_strength must satisfy 0 < value <= 1."
         )
     if not (0.0 < hartree_tail_guard_alpha <= 1.0):
         raise ValueError("hartree_tail_guard_alpha must satisfy 0 < value <= 1.")
@@ -3411,6 +3511,17 @@ def run_h2_monitor_grid_scf_dry_run(
         if singlet_hartree_tail_triggered:
             singlet_hartree_tail_mitigation_triggered_iterations.append(iteration)
 
+        rho_up_mixed, rho_down_mixed = _apply_singlet_real_space_preconditioner(
+            occupations=occupations,
+            grid_geometry=grid_geometry,
+            rho_up_current=rho_up,
+            rho_down_current=rho_down,
+            rho_up_candidate=rho_up_mixed,
+            rho_down_candidate=rho_down_mixed,
+            enabled=enable_singlet_real_space_preconditioner,
+            strength=singlet_real_space_preconditioner_strength,
+        )
+
         hartree_tail_guard_v2_enabled = (
             enable_hartree_tail_guard
             and _is_hartree_tail_guard_v2(hartree_tail_guard_name)
@@ -3942,6 +4053,8 @@ def run_h2_monitor_grid_scf_dry_run(
             hartree_tail_guard_hold_steps=hartree_tail_guard_hold_steps,
             hartree_tail_guard_exit_residual_ratio=hartree_tail_guard_exit_residual_ratio,
             hartree_tail_guard_exit_stable_steps=hartree_tail_guard_exit_stable_steps,
+            singlet_real_space_preconditioner_enabled=enable_singlet_real_space_preconditioner,
+            singlet_real_space_preconditioner_strength=singlet_real_space_preconditioner_strength,
             broyden_enabled=enable_broyden,
             broyden_warmup_iterations=broyden_warmup_iterations,
             broyden_history_length=broyden_history_length,
