@@ -5,6 +5,7 @@ from importlib import import_module
 import numpy as np
 
 from isogrid.config import H2_BENCHMARK_CASE
+from isogrid.grid import build_h2_local_patch_development_monitor_grid
 
 
 def test_hartree_boundary_diagnosis_audit_module_imports() -> None:
@@ -12,6 +13,12 @@ def test_hartree_boundary_diagnosis_audit_module_imports() -> None:
 
     assert hasattr(module, "run_h2_hartree_boundary_diagnosis_audit")
     assert hasattr(module, "evaluate_fixed_density_hartree_route")
+
+
+def test_h2_monitor_grid_baseline_shape_reflects_current_frozen_electrostatics_baseline() -> None:
+    grid_geometry = build_h2_local_patch_development_monitor_grid()
+
+    assert grid_geometry.spec.shape == (75, 75, 91)
 
 
 def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
