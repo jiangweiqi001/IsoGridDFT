@@ -214,6 +214,54 @@ class HartreeMeasureLedgerAuditResult:
     note: str
 
 
+@dataclass(frozen=True)
+class CellVolumeConstructionSummary:
+    """Trace how monitor cell volumes are constructed from the mapping Jacobian."""
+
+    logical_cell_volume: float
+    physical_box_volume: float
+    stored_cell_volume_sum: float
+    recomputed_cell_volume_sum: float
+    max_abs_cell_volume_difference: float
+    rms_cell_volume_difference: float
+
+
+@dataclass(frozen=True)
+class PolynomialExactnessRow:
+    """Integral biases for one polynomial under several discrete measures."""
+
+    function_label: str
+    reference_value: float
+    uniform_weight_value: float
+    uniform_weight_bias: float
+    current_cell_volume_value: float
+    current_cell_volume_bias: float
+    trapezoidal_adjusted_value: float
+    trapezoidal_adjusted_bias: float
+
+
+@dataclass(frozen=True)
+class GeometryRepresentationErrorRegionSummary:
+    """Where mapping and weight distortions are largest on the monitor grid."""
+
+    boundary_mean_abs_r2_mapping_distortion: float
+    interior_mean_abs_r2_mapping_distortion: float
+    high_jacobian_mean_abs_r2_mapping_distortion: float
+    low_jacobian_mean_abs_r2_mapping_distortion: float
+    boundary_mean_abs_weight_delta: float
+    interior_mean_abs_weight_delta: float
+
+
+@dataclass(frozen=True)
+class HartreeGeometryRepresentationAuditResult:
+    """Geometry/measure representation audit for the monitor grid."""
+
+    cell_volume_construction: CellVolumeConstructionSummary
+    polynomial_exactness_rows: tuple[PolynomialExactnessRow, ...]
+    error_region_summary: GeometryRepresentationErrorRegionSummary
+    note: str
+
+
 def _box_half_extents(
     grid_geometry: GridGeometryLike,
 ) -> tuple[float, float, float]:
@@ -323,6 +371,138 @@ def _measure_ledger_integrals(
             bias=float(np.sum(field * weights, dtype=np.float64) - references[label]),
         )
         for label, field in fields.items()
+    )
+
+
+def _logical_cell_volume(
+    monitor_geometry: MonitorGridGeometry,
+) -> float:
+    dx = float(np.diff(np.asarray(monitor_geometry.logical_x, dtype=np.float64))[0])
+    dy = float(np.diff(np.asarray(monitor_geometry.logical_y, dtype=np.float64))[0])
+    dz = float(np.diff(np.asarray(monitor_geometry.logical_z, dtype=np.float64))[0])
+    return dx * dy * dz
+
+
+def _polynomial_reference_values(
+    box_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+) -> dict[str, float]:
+    x_lower, x_upper = box_bounds[0]
+    y_lower, y_upper = box_bounds[1]
+    z_lower, z_upper = box_bounds[2]
+    half_x = 0.5 * (x_upper - x_lower)
+    half_y = 0.5 * (y_upper - y_lower)
+    half_z = 0.5 * (z_upper - z_lower)
+    volume = (x_upper - x_lower) * (y_upper - y_lower) * (z_upper - z_lower)
+    return {
+        "1": float(volume),
+        "x2": float(volume * half_x * half_x / 3.0),
+        "y2": float(volume * half_y * half_y / 3.0),
+        "z2": float(volume * half_z * half_z / 3.0),
+        "xy": 0.0,
+        "xz": 0.0,
+        "yz": 0.0,
+    }
+
+
+def _polynomial_fields(
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+) -> dict[str, np.ndarray]:
+    return {
+        "1": np.ones_like(x_points, dtype=np.float64),
+        "x2": np.asarray(x_points * x_points, dtype=np.float64),
+        "y2": np.asarray(y_points * y_points, dtype=np.float64),
+        "z2": np.asarray(z_points * z_points, dtype=np.float64),
+        "xy": np.asarray(x_points * y_points, dtype=np.float64),
+        "xz": np.asarray(x_points * z_points, dtype=np.float64),
+        "yz": np.asarray(y_points * z_points, dtype=np.float64),
+    }
+
+
+def _polynomial_exactness_rows(
+    monitor_geometry: MonitorGridGeometry,
+) -> tuple[PolynomialExactnessRow, ...]:
+    box_bounds = monitor_geometry.spec.box_bounds
+    references = _polynomial_reference_values(box_bounds)
+    fields = _polynomial_fields(
+        monitor_geometry.x_points,
+        monitor_geometry.y_points,
+        monitor_geometry.z_points,
+    )
+    physical_box_volume = references["1"]
+    uniform_weight = np.full(
+        monitor_geometry.spec.shape,
+        physical_box_volume / np.prod(monitor_geometry.spec.shape),
+        dtype=np.float64,
+    )
+    current_weight = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    trapezoidal_weight = current_weight * _trapezoidal_logical_weights(monitor_geometry.spec.shape)
+    rows: list[PolynomialExactnessRow] = []
+    for label, field in fields.items():
+        uniform_value = float(np.sum(field * uniform_weight, dtype=np.float64))
+        current_value = float(np.sum(field * current_weight, dtype=np.float64))
+        trapezoidal_value = float(np.sum(field * trapezoidal_weight, dtype=np.float64))
+        reference_value = float(references[label])
+        rows.append(
+            PolynomialExactnessRow(
+                function_label=label,
+                reference_value=reference_value,
+                uniform_weight_value=uniform_value,
+                uniform_weight_bias=float(uniform_value - reference_value),
+                current_cell_volume_value=current_value,
+                current_cell_volume_bias=float(current_value - reference_value),
+                trapezoidal_adjusted_value=trapezoidal_value,
+                trapezoidal_adjusted_bias=float(trapezoidal_value - reference_value),
+            )
+        )
+    return tuple(rows)
+
+
+def _geometry_representation_error_region_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> GeometryRepresentationErrorRegionSummary:
+    uniform_box_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
+    mapped_r2 = (
+        monitor_geometry.x_points * monitor_geometry.x_points
+        + monitor_geometry.y_points * monitor_geometry.y_points
+        + monitor_geometry.z_points * monitor_geometry.z_points
+    )
+    uniform_r2 = (
+        uniform_box_geometry.x_points * uniform_box_geometry.x_points
+        + uniform_box_geometry.y_points * uniform_box_geometry.y_points
+        + uniform_box_geometry.z_points * uniform_box_geometry.z_points
+    )
+    r2_mapping_distortion = np.abs(mapped_r2 - uniform_r2)
+    boundary_mask = np.zeros(monitor_geometry.spec.shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    jacobian = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+    high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_mask = jacobian >= high_jacobian_threshold
+    low_jacobian_mask = jacobian < high_jacobian_threshold
+    current_weight = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    trapezoidal_weight = current_weight * _trapezoidal_logical_weights(monitor_geometry.spec.shape)
+    weight_delta = np.abs(current_weight - trapezoidal_weight)
+    return GeometryRepresentationErrorRegionSummary(
+        boundary_mean_abs_r2_mapping_distortion=float(np.mean(r2_mapping_distortion[boundary_mask])),
+        interior_mean_abs_r2_mapping_distortion=float(np.mean(r2_mapping_distortion[interior_mask])),
+        high_jacobian_mean_abs_r2_mapping_distortion=float(
+            np.mean(r2_mapping_distortion[high_jacobian_mask])
+        ),
+        low_jacobian_mean_abs_r2_mapping_distortion=float(
+            np.mean(r2_mapping_distortion[low_jacobian_mask])
+        ),
+        boundary_mean_abs_weight_delta=float(np.mean(weight_delta[boundary_mask])),
+        interior_mean_abs_weight_delta=float(np.mean(weight_delta[interior_mask])),
     )
 
 
@@ -1360,6 +1540,61 @@ def run_h2_hartree_measure_ledger_audit(
             "This ledger compares the actual discrete measures used by monitor-grid moments, Hartree "
             "energy evaluation, and Poisson RHS assembly against a common fixed-box reference. It is "
             "an audit only and does not modify the production Poisson/Hartree path."
+        ),
+    )
+
+
+def run_h2_hartree_geometry_representation_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+) -> HartreeGeometryRepresentationAuditResult:
+    """Audit the monitor-grid cell-volume construction and polynomial exactness."""
+
+    monitor_geometry = _build_monitor_geometry(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+    )
+    logical_cell_volume = _logical_cell_volume(monitor_geometry)
+    recomputed_cell_volumes = np.asarray(monitor_geometry.jacobian, dtype=np.float64) * logical_cell_volume
+    box_bounds = monitor_geometry.spec.box_bounds
+    physical_box_volume = float(
+        (box_bounds[0][1] - box_bounds[0][0])
+        * (box_bounds[1][1] - box_bounds[1][0])
+        * (box_bounds[2][1] - box_bounds[2][0])
+    )
+    cell_volume_construction = CellVolumeConstructionSummary(
+        logical_cell_volume=float(logical_cell_volume),
+        physical_box_volume=physical_box_volume,
+        stored_cell_volume_sum=float(np.sum(monitor_geometry.cell_volumes, dtype=np.float64)),
+        recomputed_cell_volume_sum=float(np.sum(recomputed_cell_volumes, dtype=np.float64)),
+        max_abs_cell_volume_difference=float(
+            np.max(np.abs(np.asarray(monitor_geometry.cell_volumes, dtype=np.float64) - recomputed_cell_volumes))
+        ),
+        rms_cell_volume_difference=float(
+            np.sqrt(
+                np.mean(
+                    (
+                        np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+                        - recomputed_cell_volumes
+                    )
+                    ** 2
+                )
+            )
+        ),
+    )
+    return HartreeGeometryRepresentationAuditResult(
+        cell_volume_construction=cell_volume_construction,
+        polynomial_exactness_rows=_polynomial_exactness_rows(monitor_geometry),
+        error_region_summary=_geometry_representation_error_region_summary(monitor_geometry),
+        note=(
+            "This audit traces monitor cell_volumes back to J * dxi * deta * dzeta, then checks how "
+            "well equal weights, current cell_volumes, and trapezoidal-adjusted weights recover low-order "
+            "polynomials on the mapped box."
         ),
     )
 
