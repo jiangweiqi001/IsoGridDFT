@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import SimpleNamespace
 
 import numpy as np
 
@@ -98,6 +99,32 @@ class GaussianShiftSensitivitySummary:
 
 
 @dataclass(frozen=True)
+class MonitorVolumeConsistencySummary:
+    """Consistency of the monitor integration measure against the physical box volume."""
+
+    physical_box_volume: float
+    cell_volume_sum: float
+    trapezoidal_cell_volume_sum: float
+    point_volume_relative_error: float
+    trapezoidal_relative_error: float
+
+
+@dataclass(frozen=True)
+class GaussianRepresentationConsistencySummary:
+    """Centered-Gaussian moments under uniform-box and mapped-monitor measures."""
+
+    uniform_box_total_charge: float
+    uniform_box_dipole_norm: float
+    uniform_box_quadrupole_norm: float
+    uniform_box_with_monitor_weights_total_charge: float
+    uniform_box_with_monitor_weights_dipole_norm: float
+    uniform_box_with_monitor_weights_quadrupole_norm: float
+    mapped_monitor_total_charge: float
+    mapped_monitor_dipole_norm: float
+    mapped_monitor_quadrupole_norm: float
+
+
+@dataclass(frozen=True)
 class H2HartreeBoundaryDiagnosisAuditResult:
     """Top-level diagnosis result for fixed-density Hartree/open-boundary behavior."""
 
@@ -113,6 +140,8 @@ class H2HartreeBoundaryDiagnosisAuditResult:
     gaussian_centered_box_sensitivity: MonitorBoxSensitivitySummary
     h2_frozen_box_sensitivity: MonitorBoxSensitivitySummary
     gaussian_shift_sensitivity: GaussianShiftSensitivitySummary
+    monitor_volume_consistency: MonitorVolumeConsistencySummary
+    gaussian_representation_consistency: GaussianRepresentationConsistencySummary
     primary_verdict: str
     diagnosis: str
     note: str
@@ -181,6 +210,160 @@ def _build_gaussian_density(
     )
     normalization = float(integrate_field(rho, grid_geometry=grid_geometry))
     return np.asarray(target_charge * rho / normalization, dtype=np.float64)
+
+
+def _trapezoidal_logical_weights(shape: tuple[int, int, int]) -> np.ndarray:
+    wx = np.ones(shape[0], dtype=np.float64)
+    wy = np.ones(shape[1], dtype=np.float64)
+    wz = np.ones(shape[2], dtype=np.float64)
+    wx[[0, -1]] = 0.5
+    wy[[0, -1]] = 0.5
+    wz[[0, -1]] = 0.5
+    return wx[:, None, None] * wy[None, :, None] * wz[None, None, :]
+
+
+def _quadrupole_tensor(
+    density_field: np.ndarray,
+    grid_geometry: GridGeometryLike,
+) -> np.ndarray:
+    dx = grid_geometry.x_points
+    dy = grid_geometry.y_points
+    dz = grid_geometry.z_points
+    radius_squared = dx * dx + dy * dy + dz * dz
+    return np.array(
+        [
+            [
+                integrate_field(density_field * (3.0 * dx * dx - radius_squared), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dx * dy), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dx * dz), grid_geometry=grid_geometry),
+            ],
+            [
+                integrate_field(density_field * (3.0 * dy * dx), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dy * dy - radius_squared), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dy * dz), grid_geometry=grid_geometry),
+            ],
+            [
+                integrate_field(density_field * (3.0 * dz * dx), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dz * dy), grid_geometry=grid_geometry),
+                integrate_field(density_field * (3.0 * dz * dz - radius_squared), grid_geometry=grid_geometry),
+            ],
+        ],
+        dtype=np.float64,
+    )
+
+
+def _dipole_vector(
+    density_field: np.ndarray,
+    grid_geometry: GridGeometryLike,
+) -> np.ndarray:
+    return np.array(
+        [
+            integrate_field(density_field * grid_geometry.x_points, grid_geometry=grid_geometry),
+            integrate_field(density_field * grid_geometry.y_points, grid_geometry=grid_geometry),
+            integrate_field(density_field * grid_geometry.z_points, grid_geometry=grid_geometry),
+        ],
+        dtype=np.float64,
+    )
+
+
+def _build_uniform_box_measure_geometry(
+    monitor_geometry: MonitorGridGeometry,
+    *,
+    use_monitor_cell_volumes: bool,
+) -> GridGeometryLike:
+    bounds = monitor_geometry.spec.box_bounds
+    x_axis = np.linspace(bounds[0][0], bounds[0][1], monitor_geometry.spec.shape[0], dtype=np.float64)
+    y_axis = np.linspace(bounds[1][0], bounds[1][1], monitor_geometry.spec.shape[1], dtype=np.float64)
+    z_axis = np.linspace(bounds[2][0], bounds[2][1], monitor_geometry.spec.shape[2], dtype=np.float64)
+    x_points, y_points, z_points = np.meshgrid(x_axis, y_axis, z_axis, indexing="ij")
+    if use_monitor_cell_volumes:
+        cell_volumes = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    else:
+        dx = float((bounds[0][1] - bounds[0][0]) / (monitor_geometry.spec.shape[0] - 1))
+        dy = float((bounds[1][1] - bounds[1][0]) / (monitor_geometry.spec.shape[1] - 1))
+        dz = float((bounds[2][1] - bounds[2][0]) / (monitor_geometry.spec.shape[2] - 1))
+        cell_volumes = np.full(monitor_geometry.spec.shape, dx * dy * dz, dtype=np.float64)
+    return SimpleNamespace(
+        spec=SimpleNamespace(shape=monitor_geometry.spec.shape),
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        cell_volumes=cell_volumes,
+    )
+
+
+def _monitor_volume_consistency_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> MonitorVolumeConsistencySummary:
+    box_bounds = monitor_geometry.spec.box_bounds
+    physical_box_volume = float(
+        (box_bounds[0][1] - box_bounds[0][0])
+        * (box_bounds[1][1] - box_bounds[1][0])
+        * (box_bounds[2][1] - box_bounds[2][0])
+    )
+    cell_volume_sum = float(np.sum(monitor_geometry.cell_volumes, dtype=np.float64))
+    trapezoidal_cell_volume_sum = float(
+        np.sum(
+            np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+            * _trapezoidal_logical_weights(monitor_geometry.spec.shape),
+            dtype=np.float64,
+        )
+    )
+    return MonitorVolumeConsistencySummary(
+        physical_box_volume=physical_box_volume,
+        cell_volume_sum=cell_volume_sum,
+        trapezoidal_cell_volume_sum=trapezoidal_cell_volume_sum,
+        point_volume_relative_error=float(cell_volume_sum / physical_box_volume - 1.0),
+        trapezoidal_relative_error=float(trapezoidal_cell_volume_sum / physical_box_volume - 1.0),
+    )
+
+
+def _gaussian_representation_consistency_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> GaussianRepresentationConsistencySummary:
+    uniform_box_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
+    uniform_box_monitor_weight_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=True,
+    )
+    uniform_box_density = _build_gaussian_density(uniform_box_geometry)
+    uniform_box_monitor_weight_density = _build_gaussian_density(uniform_box_monitor_weight_geometry)
+    mapped_monitor_density = _build_gaussian_density(monitor_geometry)
+    uniform_box_dipole = _dipole_vector(uniform_box_density, uniform_box_geometry)
+    uniform_box_monitor_weight_dipole = _dipole_vector(
+        uniform_box_monitor_weight_density,
+        uniform_box_monitor_weight_geometry,
+    )
+    mapped_monitor_dipole = _dipole_vector(mapped_monitor_density, monitor_geometry)
+    uniform_box_quadrupole = _quadrupole_tensor(uniform_box_density, uniform_box_geometry)
+    uniform_box_monitor_weight_quadrupole = _quadrupole_tensor(
+        uniform_box_monitor_weight_density,
+        uniform_box_monitor_weight_geometry,
+    )
+    mapped_monitor_quadrupole = _quadrupole_tensor(mapped_monitor_density, monitor_geometry)
+    return GaussianRepresentationConsistencySummary(
+        uniform_box_total_charge=float(integrate_field(uniform_box_density, grid_geometry=uniform_box_geometry)),
+        uniform_box_dipole_norm=float(np.linalg.norm(uniform_box_dipole)),
+        uniform_box_quadrupole_norm=float(np.linalg.norm(uniform_box_quadrupole)),
+        uniform_box_with_monitor_weights_total_charge=float(
+            integrate_field(
+                uniform_box_monitor_weight_density,
+                grid_geometry=uniform_box_monitor_weight_geometry,
+            )
+        ),
+        uniform_box_with_monitor_weights_dipole_norm=float(
+            np.linalg.norm(uniform_box_monitor_weight_dipole)
+        ),
+        uniform_box_with_monitor_weights_quadrupole_norm=float(
+            np.linalg.norm(uniform_box_monitor_weight_quadrupole)
+        ),
+        mapped_monitor_total_charge=float(integrate_field(mapped_monitor_density, grid_geometry=monitor_geometry)),
+        mapped_monitor_dipole_norm=float(np.linalg.norm(mapped_monitor_dipole)),
+        mapped_monitor_quadrupole_norm=float(np.linalg.norm(mapped_monitor_quadrupole)),
+    )
 
 
 def _far_field_diagnostic(route_result: PoissonOperatorRouteResult):
@@ -803,6 +986,10 @@ def run_h2_hartree_boundary_diagnosis_audit(
         centered_operator_route=gaussian_centered_monitor_operator,
         shifted_operator_route=gaussian_shifted_monitor_operator,
     )
+    monitor_volume_consistency = _monitor_volume_consistency_summary(monitor_geometry)
+    gaussian_representation_consistency = _gaussian_representation_consistency_summary(
+        monitor_geometry
+    )
     primary_verdict, diagnosis = _diagnose(
         gaussian_centered_difference=gaussian_centered_difference,
         h2_frozen_difference=h2_frozen_difference,
@@ -824,6 +1011,8 @@ def run_h2_hartree_boundary_diagnosis_audit(
         gaussian_centered_box_sensitivity=gaussian_centered_box_sensitivity,
         h2_frozen_box_sensitivity=h2_frozen_box_sensitivity,
         gaussian_shift_sensitivity=gaussian_shift_sensitivity,
+        monitor_volume_consistency=monitor_volume_consistency,
+        gaussian_representation_consistency=gaussian_representation_consistency,
         primary_verdict=primary_verdict,
         diagnosis=diagnosis,
         note=(

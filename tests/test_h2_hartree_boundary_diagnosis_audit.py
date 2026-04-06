@@ -43,9 +43,19 @@ def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
     assert np.isfinite(result.gaussian_centered_monitor.total_charge)
     assert np.isfinite(result.gaussian_centered_monitor.dipole_norm)
     assert np.isfinite(result.gaussian_centered_monitor.quadrupole_norm)
+    assert np.isfinite(result.monitor_volume_consistency.physical_box_volume)
+    assert np.isfinite(result.monitor_volume_consistency.cell_volume_sum)
+    assert np.isfinite(result.monitor_volume_consistency.trapezoidal_cell_volume_sum)
+    assert np.isfinite(result.gaussian_representation_consistency.uniform_box_quadrupole_norm)
+    assert np.isfinite(
+        result.gaussian_representation_consistency.uniform_box_with_monitor_weights_quadrupole_norm
+    )
     assert np.isfinite(result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha)
     assert np.isfinite(result.gaussian_shift_sensitivity.shifted_minus_centered_hartree_energy_mha)
     assert np.isfinite(result.h2_frozen_difference.monitor_minus_legacy_hartree_energy_mha)
+    assert abs(result.monitor_volume_consistency.trapezoidal_relative_error) <= abs(
+        result.monitor_volume_consistency.point_volume_relative_error
+    )
 
 
 def test_small_hartree_boundary_shape_sweep_is_finite_and_not_systematically_worse() -> None:
