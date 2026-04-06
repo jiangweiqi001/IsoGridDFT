@@ -253,6 +253,8 @@ class SecondOrderRegionRow:
     interior_mean_abs_mapping_distortion: float
     high_jacobian_mean_abs_mapping_distortion: float
     low_jacobian_mean_abs_mapping_distortion: float
+    z_dominant_mean_abs_mapping_distortion: float
+    xy_comparable_mean_abs_mapping_distortion: float
 
 
 @dataclass(frozen=True)
@@ -268,6 +270,22 @@ class GeometryRepresentationErrorRegionSummary:
 
 
 @dataclass(frozen=True)
+class MappingZStretchSummary:
+    """Local z-direction stretch diagnostics for the monitor mapping."""
+
+    uniform_physical_dz: float
+    mean_spacing_z: float
+    high_jacobian_mean_spacing_z: float
+    low_jacobian_mean_spacing_z: float
+    mean_abs_dz_dzeta: float
+    high_jacobian_mean_abs_dz_dzeta: float
+    low_jacobian_mean_abs_dz_dzeta: float
+    mean_abs_second_z_variation: float
+    high_jacobian_mean_abs_second_z_variation: float
+    low_jacobian_mean_abs_second_z_variation: float
+
+
+@dataclass(frozen=True)
 class HartreeGeometryRepresentationAuditResult:
     """Geometry/measure representation audit for the monitor grid."""
 
@@ -275,6 +293,7 @@ class HartreeGeometryRepresentationAuditResult:
     polynomial_exactness_rows: tuple[PolynomialExactnessRow, ...]
     second_order_region_rows: tuple[SecondOrderRegionRow, ...]
     error_region_summary: GeometryRepresentationErrorRegionSummary
+    mapping_z_stretch_summary: MappingZStretchSummary
     note: str
 
 
@@ -530,6 +549,12 @@ def _second_order_region_rows(
     high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
     high_jacobian_mask = jacobian >= high_jacobian_threshold
     low_jacobian_mask = jacobian < high_jacobian_threshold
+    x2_distortion = np.abs(mapped_fields["x2"] - uniform_fields["x2"])
+    y2_distortion = np.abs(mapped_fields["y2"] - uniform_fields["y2"])
+    z2_distortion = np.abs(mapped_fields["z2"] - uniform_fields["z2"])
+    xy_scale = 0.5 * (x2_distortion + y2_distortion)
+    z_dominant_mask = z2_distortion > 1.25 * xy_scale
+    xy_comparable_mask = ~z_dominant_mask
     rows: list[SecondOrderRegionRow] = []
     for label in ("x2", "y2", "z2", "r2"):
         distortion = np.abs(mapped_fields[label] - uniform_fields[label])
@@ -544,9 +569,52 @@ def _second_order_region_rows(
                 low_jacobian_mean_abs_mapping_distortion=float(
                     np.mean(distortion[low_jacobian_mask])
                 ),
+                z_dominant_mean_abs_mapping_distortion=float(
+                    np.mean(distortion[z_dominant_mask])
+                ),
+                xy_comparable_mean_abs_mapping_distortion=float(
+                    np.mean(distortion[xy_comparable_mask])
+                ),
             )
         )
     return tuple(rows)
+
+
+def _mapping_z_stretch_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> MappingZStretchSummary:
+    jacobian = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+    high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_mask = jacobian >= high_jacobian_threshold
+    low_jacobian_mask = jacobian < high_jacobian_threshold
+    box_bounds = monitor_geometry.spec.box_bounds
+    uniform_physical_dz = float(
+        (box_bounds[2][1] - box_bounds[2][0]) / (monitor_geometry.spec.shape[2] - 1)
+    )
+    spacing_z = np.asarray(monitor_geometry.spacing_z, dtype=np.float64)
+    dz_dzeta = np.asarray(monitor_geometry.covariant_basis[..., 2, 2], dtype=np.float64)
+    second_z_variation = np.gradient(
+        dz_dzeta,
+        np.asarray(monitor_geometry.logical_z, dtype=np.float64),
+        axis=2,
+        edge_order=2,
+    )
+    return MappingZStretchSummary(
+        uniform_physical_dz=uniform_physical_dz,
+        mean_spacing_z=float(np.mean(spacing_z)),
+        high_jacobian_mean_spacing_z=float(np.mean(spacing_z[high_jacobian_mask])),
+        low_jacobian_mean_spacing_z=float(np.mean(spacing_z[low_jacobian_mask])),
+        mean_abs_dz_dzeta=float(np.mean(np.abs(dz_dzeta))),
+        high_jacobian_mean_abs_dz_dzeta=float(np.mean(np.abs(dz_dzeta[high_jacobian_mask]))),
+        low_jacobian_mean_abs_dz_dzeta=float(np.mean(np.abs(dz_dzeta[low_jacobian_mask]))),
+        mean_abs_second_z_variation=float(np.mean(np.abs(second_z_variation))),
+        high_jacobian_mean_abs_second_z_variation=float(
+            np.mean(np.abs(second_z_variation[high_jacobian_mask]))
+        ),
+        low_jacobian_mean_abs_second_z_variation=float(
+            np.mean(np.abs(second_z_variation[low_jacobian_mask]))
+        ),
+    )
 
 
 def _geometry_representation_error_region_summary(
@@ -1682,6 +1750,7 @@ def run_h2_hartree_geometry_representation_audit(
         polynomial_exactness_rows=_polynomial_exactness_rows(monitor_geometry),
         second_order_region_rows=_second_order_region_rows(monitor_geometry),
         error_region_summary=_geometry_representation_error_region_summary(monitor_geometry),
+        mapping_z_stretch_summary=_mapping_z_stretch_summary(monitor_geometry),
         note=(
             "This audit traces monitor cell_volumes back to J * dxi * deta * dzeta, then checks how "
             "well equal weights, current cell_volumes, and trapezoidal-adjusted weights recover low-order "
