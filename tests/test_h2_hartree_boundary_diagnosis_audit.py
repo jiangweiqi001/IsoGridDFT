@@ -50,6 +50,14 @@ def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
     assert np.isfinite(
         result.gaussian_representation_consistency.uniform_box_with_monitor_weights_quadrupole_norm
     )
+    assert np.isfinite(
+        result.gaussian_representation_consistency.mapped_monitor_with_uniform_weights_quadrupole_norm
+    )
+    assert np.isfinite(result.gaussian_representation_consistency.mapped_monitor_quadrupole_norm)
+    assert np.isfinite(result.monitor_inversion_symmetry.coordinate_pairing_max_abs)
+    assert np.isfinite(result.monitor_inversion_symmetry.cell_volume_pairing_max_abs)
+    assert np.isfinite(result.monitor_inversion_symmetry.gaussian_density_pairing_rms)
+    assert np.isfinite(result.monitor_inversion_symmetry.gaussian_dipole_integrand_pairing_rms)
     assert np.isfinite(result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha)
     assert np.isfinite(result.gaussian_shift_sensitivity.shifted_minus_centered_hartree_energy_mha)
     assert np.isfinite(result.h2_frozen_difference.monitor_minus_legacy_hartree_energy_mha)
@@ -91,3 +99,25 @@ def test_small_hartree_boundary_shape_sweep_is_finite_and_not_systematically_wor
     assert h2_gaps[-1] <= h2_gaps[0] + 1.0e-12
     assert gaussian_box[-1] <= gaussian_box[0] + 1.0e-12
     assert h2_box[-1] <= h2_box[0] + 1.0e-12
+
+
+def test_small_hartree_measure_ledger_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_measure_ledger_audit,
+    )
+
+    result = run_h2_hartree_measure_ledger_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+    )
+
+    assert len(result.path_summaries) >= 3
+    assert result.path_summaries[0].measure_name == "cell_volumes"
+    assert result.path_summaries[1].measure_name == "cell_volumes"
+    assert result.path_summaries[2].measure_name == "identity_collocation"
+    for path in result.path_summaries:
+        for integral in path.integrals:
+            assert np.isfinite(integral.value)
+            assert np.isfinite(integral.reference_value)
+            assert np.isfinite(integral.bias)

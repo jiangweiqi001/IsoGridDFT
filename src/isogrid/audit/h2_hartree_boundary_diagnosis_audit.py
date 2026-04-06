@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 
 import numpy as np
+from math import erf
+from math import sqrt
 
 from isogrid.config import BenchmarkCase
 from isogrid.config import H2_BENCHMARK_CASE
@@ -119,9 +121,22 @@ class GaussianRepresentationConsistencySummary:
     uniform_box_with_monitor_weights_total_charge: float
     uniform_box_with_monitor_weights_dipole_norm: float
     uniform_box_with_monitor_weights_quadrupole_norm: float
+    mapped_monitor_with_uniform_weights_total_charge: float
+    mapped_monitor_with_uniform_weights_dipole_norm: float
+    mapped_monitor_with_uniform_weights_quadrupole_norm: float
     mapped_monitor_total_charge: float
     mapped_monitor_dipole_norm: float
     mapped_monitor_quadrupole_norm: float
+
+
+@dataclass(frozen=True)
+class MonitorInversionSymmetrySummary:
+    """Very local inversion-pairing diagnostics for the centered-Gaussian monitor route."""
+
+    coordinate_pairing_max_abs: float
+    cell_volume_pairing_max_abs: float
+    gaussian_density_pairing_rms: float
+    gaussian_dipole_integrand_pairing_rms: float
 
 
 @dataclass(frozen=True)
@@ -142,6 +157,7 @@ class H2HartreeBoundaryDiagnosisAuditResult:
     gaussian_shift_sensitivity: GaussianShiftSensitivitySummary
     monitor_volume_consistency: MonitorVolumeConsistencySummary
     gaussian_representation_consistency: GaussianRepresentationConsistencySummary
+    monitor_inversion_symmetry: MonitorInversionSymmetrySummary
     primary_verdict: str
     diagnosis: str
     note: str
@@ -166,6 +182,35 @@ class HartreeBoundaryShapeSweepAuditResult:
     points: tuple[HartreeBoundaryShapeSweepPoint, ...]
     trend_verdict: str
     diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class MeasureLedgerIntegralSummary:
+    """One test-function integral under one discrete measure."""
+
+    function_label: str
+    value: float
+    reference_value: float
+    bias: float
+
+
+@dataclass(frozen=True)
+class MeasureLedgerPathSummary:
+    """One audit ledger row for a concrete path/measure pairing."""
+
+    path_name: str
+    role: str
+    measure_name: str
+    measure_description: str
+    integrals: tuple[MeasureLedgerIntegralSummary, ...]
+
+
+@dataclass(frozen=True)
+class HartreeMeasureLedgerAuditResult:
+    """Ledger audit for monitor-grid measures used by Hartree-related paths."""
+
+    path_summaries: tuple[MeasureLedgerPathSummary, ...]
     note: str
 
 
@@ -220,6 +265,65 @@ def _trapezoidal_logical_weights(shape: tuple[int, int, int]) -> np.ndarray:
     wy[[0, -1]] = 0.5
     wz[[0, -1]] = 0.5
     return wx[:, None, None] * wy[None, :, None] * wz[None, None, :]
+
+
+def _analytic_box_integrals(
+    box_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+    *,
+    gaussian_alpha: float = _DEFAULT_GAUSSIAN_ALPHA,
+) -> dict[str, float]:
+    x_lower, x_upper = box_bounds[0]
+    y_lower, y_upper = box_bounds[1]
+    z_lower, z_upper = box_bounds[2]
+    half_x = 0.5 * (x_upper - x_lower)
+    half_y = 0.5 * (y_upper - y_lower)
+    half_z = 0.5 * (z_upper - z_lower)
+    volume = (x_upper - x_lower) * (y_upper - y_lower) * (z_upper - z_lower)
+    gaussian_axis_prefactor = sqrt(np.pi / gaussian_alpha)
+    gaussian_integral = (
+        gaussian_axis_prefactor * erf(sqrt(gaussian_alpha) * half_x)
+        * gaussian_axis_prefactor * erf(sqrt(gaussian_alpha) * half_y)
+        * gaussian_axis_prefactor * erf(sqrt(gaussian_alpha) * half_z)
+    )
+    return {
+        "1": float(volume),
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0,
+        "r2": float(volume * (half_x * half_x + half_y * half_y + half_z * half_z) / 3.0),
+        "centered_gaussian": float(gaussian_integral),
+    }
+
+
+def _measure_ledger_integrals(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    weights: np.ndarray,
+    box_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+) -> tuple[MeasureLedgerIntegralSummary, ...]:
+    fields = {
+        "1": np.ones_like(x_points, dtype=np.float64),
+        "x": np.asarray(x_points, dtype=np.float64),
+        "y": np.asarray(y_points, dtype=np.float64),
+        "z": np.asarray(z_points, dtype=np.float64),
+        "r2": np.asarray(x_points * x_points + y_points * y_points + z_points * z_points, dtype=np.float64),
+        "centered_gaussian": np.asarray(
+            np.exp(-_DEFAULT_GAUSSIAN_ALPHA * (x_points * x_points + y_points * y_points + z_points * z_points)),
+            dtype=np.float64,
+        ),
+    }
+    references = _analytic_box_integrals(box_bounds)
+    return tuple(
+        MeasureLedgerIntegralSummary(
+            function_label=label,
+            value=float(np.sum(field * weights, dtype=np.float64)),
+            reference_value=float(references[label]),
+            bias=float(np.sum(field * weights, dtype=np.float64) - references[label]),
+        )
+        for label, field in fields.items()
+    )
 
 
 def _quadrupole_tensor(
@@ -292,6 +396,28 @@ def _build_uniform_box_measure_geometry(
     )
 
 
+def _build_mapped_coordinate_measure_geometry(
+    monitor_geometry: MonitorGridGeometry,
+    *,
+    use_monitor_cell_volumes: bool,
+) -> GridGeometryLike:
+    if use_monitor_cell_volumes:
+        cell_volumes = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    else:
+        bounds = monitor_geometry.spec.box_bounds
+        dx = float((bounds[0][1] - bounds[0][0]) / (monitor_geometry.spec.shape[0] - 1))
+        dy = float((bounds[1][1] - bounds[1][0]) / (monitor_geometry.spec.shape[1] - 1))
+        dz = float((bounds[2][1] - bounds[2][0]) / (monitor_geometry.spec.shape[2] - 1))
+        cell_volumes = np.full(monitor_geometry.spec.shape, dx * dy * dz, dtype=np.float64)
+    return SimpleNamespace(
+        spec=SimpleNamespace(shape=monitor_geometry.spec.shape),
+        x_points=np.asarray(monitor_geometry.x_points, dtype=np.float64),
+        y_points=np.asarray(monitor_geometry.y_points, dtype=np.float64),
+        z_points=np.asarray(monitor_geometry.z_points, dtype=np.float64),
+        cell_volumes=cell_volumes,
+    )
+
+
 def _monitor_volume_consistency_summary(
     monitor_geometry: MonitorGridGeometry,
 ) -> MonitorVolumeConsistencySummary:
@@ -329,19 +455,34 @@ def _gaussian_representation_consistency_summary(
         monitor_geometry,
         use_monitor_cell_volumes=True,
     )
+    mapped_monitor_uniform_weight_geometry = _build_mapped_coordinate_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
     uniform_box_density = _build_gaussian_density(uniform_box_geometry)
     uniform_box_monitor_weight_density = _build_gaussian_density(uniform_box_monitor_weight_geometry)
+    mapped_monitor_uniform_weight_density = _build_gaussian_density(
+        mapped_monitor_uniform_weight_geometry
+    )
     mapped_monitor_density = _build_gaussian_density(monitor_geometry)
     uniform_box_dipole = _dipole_vector(uniform_box_density, uniform_box_geometry)
     uniform_box_monitor_weight_dipole = _dipole_vector(
         uniform_box_monitor_weight_density,
         uniform_box_monitor_weight_geometry,
     )
+    mapped_monitor_uniform_weight_dipole = _dipole_vector(
+        mapped_monitor_uniform_weight_density,
+        mapped_monitor_uniform_weight_geometry,
+    )
     mapped_monitor_dipole = _dipole_vector(mapped_monitor_density, monitor_geometry)
     uniform_box_quadrupole = _quadrupole_tensor(uniform_box_density, uniform_box_geometry)
     uniform_box_monitor_weight_quadrupole = _quadrupole_tensor(
         uniform_box_monitor_weight_density,
         uniform_box_monitor_weight_geometry,
+    )
+    mapped_monitor_uniform_weight_quadrupole = _quadrupole_tensor(
+        mapped_monitor_uniform_weight_density,
+        mapped_monitor_uniform_weight_geometry,
     )
     mapped_monitor_quadrupole = _quadrupole_tensor(mapped_monitor_density, monitor_geometry)
     return GaussianRepresentationConsistencySummary(
@@ -360,9 +501,51 @@ def _gaussian_representation_consistency_summary(
         uniform_box_with_monitor_weights_quadrupole_norm=float(
             np.linalg.norm(uniform_box_monitor_weight_quadrupole)
         ),
+        mapped_monitor_with_uniform_weights_total_charge=float(
+            integrate_field(
+                mapped_monitor_uniform_weight_density,
+                grid_geometry=mapped_monitor_uniform_weight_geometry,
+            )
+        ),
+        mapped_monitor_with_uniform_weights_dipole_norm=float(
+            np.linalg.norm(mapped_monitor_uniform_weight_dipole)
+        ),
+        mapped_monitor_with_uniform_weights_quadrupole_norm=float(
+            np.linalg.norm(mapped_monitor_uniform_weight_quadrupole)
+        ),
         mapped_monitor_total_charge=float(integrate_field(mapped_monitor_density, grid_geometry=monitor_geometry)),
         mapped_monitor_dipole_norm=float(np.linalg.norm(mapped_monitor_dipole)),
         mapped_monitor_quadrupole_norm=float(np.linalg.norm(mapped_monitor_quadrupole)),
+    )
+
+
+def _monitor_inversion_symmetry_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> MonitorInversionSymmetrySummary:
+    mirrored_x = np.flip(monitor_geometry.x_points)
+    mirrored_y = np.flip(monitor_geometry.y_points)
+    mirrored_z = np.flip(monitor_geometry.z_points)
+    mirrored_cell_volumes = np.flip(monitor_geometry.cell_volumes)
+    gaussian_density = _build_gaussian_density(monitor_geometry)
+    dipole_integrand = gaussian_density * monitor_geometry.z_points
+    mirrored_dipole_integrand = np.flip(dipole_integrand)
+    return MonitorInversionSymmetrySummary(
+        coordinate_pairing_max_abs=float(
+            max(
+                np.max(np.abs(monitor_geometry.x_points + mirrored_x)),
+                np.max(np.abs(monitor_geometry.y_points + mirrored_y)),
+                np.max(np.abs(monitor_geometry.z_points + mirrored_z)),
+            )
+        ),
+        cell_volume_pairing_max_abs=float(
+            np.max(np.abs(monitor_geometry.cell_volumes - mirrored_cell_volumes))
+        ),
+        gaussian_density_pairing_rms=float(
+            np.sqrt(np.mean((gaussian_density - np.flip(gaussian_density)) ** 2))
+        ),
+        gaussian_dipole_integrand_pairing_rms=float(
+            np.sqrt(np.mean((dipole_integrand + mirrored_dipole_integrand) ** 2))
+        ),
     )
 
 
@@ -990,6 +1173,7 @@ def run_h2_hartree_boundary_diagnosis_audit(
     gaussian_representation_consistency = _gaussian_representation_consistency_summary(
         monitor_geometry
     )
+    monitor_inversion_symmetry = _monitor_inversion_symmetry_summary(monitor_geometry)
     primary_verdict, diagnosis = _diagnose(
         gaussian_centered_difference=gaussian_centered_difference,
         h2_frozen_difference=h2_frozen_difference,
@@ -1013,6 +1197,7 @@ def run_h2_hartree_boundary_diagnosis_audit(
         gaussian_shift_sensitivity=gaussian_shift_sensitivity,
         monitor_volume_consistency=monitor_volume_consistency,
         gaussian_representation_consistency=gaussian_representation_consistency,
+        monitor_inversion_symmetry=monitor_inversion_symmetry,
         primary_verdict=primary_verdict,
         diagnosis=diagnosis,
         note=(
@@ -1091,6 +1276,90 @@ def run_h2_hartree_boundary_shape_sweep_audit(
             "This sweep keeps the density and monitor-box protocol fixed while varying only the A-grid "
             "shape, so it diagnoses whether fake moments and fixed-density Hartree gaps are actually "
             "converging with representation resolution."
+        ),
+    )
+
+
+def run_h2_hartree_measure_ledger_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+) -> HartreeMeasureLedgerAuditResult:
+    """Audit the discrete measures used by monitor-grid Hartree-related paths."""
+
+    monitor_geometry = _build_monitor_geometry(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+    )
+    box_bounds = monitor_geometry.spec.box_bounds
+    cell_volumes = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    trapezoidal_weights = cell_volumes * _trapezoidal_logical_weights(monitor_geometry.spec.shape)
+    identity_weights = np.ones(monitor_geometry.spec.shape, dtype=np.float64)
+
+    path_summaries = (
+        MeasureLedgerPathSummary(
+            path_name="moments_path",
+            role="total charge / dipole / quadrupole via integrate_field",
+            measure_name="cell_volumes",
+            measure_description="Mapped coordinates with monitor point-centered cell volumes.",
+            integrals=_measure_ledger_integrals(
+                x_points=monitor_geometry.x_points,
+                y_points=monitor_geometry.y_points,
+                z_points=monitor_geometry.z_points,
+                weights=cell_volumes,
+                box_bounds=box_bounds,
+            ),
+        ),
+        MeasureLedgerPathSummary(
+            path_name="hartree_energy_path",
+            role="0.5 * integrate_field(rho * v_H)",
+            measure_name="cell_volumes",
+            measure_description="Mapped coordinates with the same monitor point-centered cell volumes.",
+            integrals=_measure_ledger_integrals(
+                x_points=monitor_geometry.x_points,
+                y_points=monitor_geometry.y_points,
+                z_points=monitor_geometry.z_points,
+                weights=cell_volumes,
+                box_bounds=box_bounds,
+            ),
+        ),
+        MeasureLedgerPathSummary(
+            path_name="poisson_rhs_path",
+            role="pointwise RHS collocation (-4 pi rho plus boundary split term)",
+            measure_name="identity_collocation",
+            measure_description="No quadrature weight; nodal field samples enter the discrete operator directly.",
+            integrals=_measure_ledger_integrals(
+                x_points=monitor_geometry.x_points,
+                y_points=monitor_geometry.y_points,
+                z_points=monitor_geometry.z_points,
+                weights=identity_weights,
+                box_bounds=box_bounds,
+            ),
+        ),
+        MeasureLedgerPathSummary(
+            path_name="trapezoidal_reference",
+            role="audit-only logical half-weight reference on the mapped monitor box",
+            measure_name="cell_volumes_times_logical_half_weight",
+            measure_description="Mapped coordinates with monitor cell volumes times tensor-product logical trapezoidal factors.",
+            integrals=_measure_ledger_integrals(
+                x_points=monitor_geometry.x_points,
+                y_points=monitor_geometry.y_points,
+                z_points=monitor_geometry.z_points,
+                weights=trapezoidal_weights,
+                box_bounds=box_bounds,
+            ),
+        ),
+    )
+    return HartreeMeasureLedgerAuditResult(
+        path_summaries=path_summaries,
+        note=(
+            "This ledger compares the actual discrete measures used by monitor-grid moments, Hartree "
+            "energy evaluation, and Poisson RHS assembly against a common fixed-box reference. It is "
+            "an audit only and does not modify the production Poisson/Hartree path."
         ),
     )
 
