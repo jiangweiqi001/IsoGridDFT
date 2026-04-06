@@ -118,6 +118,28 @@ class H2HartreeBoundaryDiagnosisAuditResult:
     note: str
 
 
+@dataclass(frozen=True)
+class HartreeBoundaryShapeSweepPoint:
+    """One fixed-density Hartree diagnosis sample at a selected monitor shape."""
+
+    monitor_shape: tuple[int, int, int]
+    gaussian_centered_monitor_quadrupole_norm: float
+    gaussian_monitor_minus_legacy_hartree_energy_mha: float
+    h2_frozen_monitor_minus_legacy_hartree_energy_mha: float
+    gaussian_box_expand_sensitivity_mha: float
+    h2_frozen_box_expand_sensitivity_mha: float
+
+
+@dataclass(frozen=True)
+class HartreeBoundaryShapeSweepAuditResult:
+    """Resolution sweep summary for fixed-density Hartree/open-boundary behavior."""
+
+    points: tuple[HartreeBoundaryShapeSweepPoint, ...]
+    trend_verdict: str
+    diagnosis: str
+    note: str
+
+
 def _box_half_extents(
     grid_geometry: GridGeometryLike,
 ) -> tuple[float, float, float]:
@@ -529,6 +551,57 @@ def _diagnose(
     )
 
 
+def _is_nearly_nonincreasing(values: tuple[float, ...]) -> bool:
+    if len(values) < 2:
+        return True
+    total_drop = max(0.0, values[0] - values[-1])
+    local_scale = max(abs(value) for value in values)
+    tolerance = max(1.0e-12, 0.05 * local_scale, 0.20 * total_drop)
+    return all(next_value <= current_value + tolerance for current_value, next_value in zip(values, values[1:]))
+
+
+def _shape_sweep_diagnosis(
+    points: tuple[HartreeBoundaryShapeSweepPoint, ...],
+) -> tuple[str, str]:
+    gaussian_quadrupoles = tuple(point.gaussian_centered_monitor_quadrupole_norm for point in points)
+    gaussian_gaps = tuple(point.gaussian_monitor_minus_legacy_hartree_energy_mha for point in points)
+    h2_gaps = tuple(point.h2_frozen_monitor_minus_legacy_hartree_energy_mha for point in points)
+    gaussian_box = tuple(point.gaussian_box_expand_sensitivity_mha for point in points)
+    h2_box = tuple(point.h2_frozen_box_expand_sensitivity_mha for point in points)
+    sequences = (
+        gaussian_quadrupoles,
+        gaussian_gaps,
+        h2_gaps,
+        gaussian_box,
+        h2_box,
+    )
+    near_nonincreasing = all(_is_nearly_nonincreasing(sequence) for sequence in sequences)
+    strong_improvements = sum(
+        sequence[-1] <= 0.85 * sequence[0]
+        for sequence in sequences
+        if abs(sequence[0]) > 1.0e-12
+    )
+    if near_nonincreasing and strong_improvements >= 4:
+        return (
+            "resolution_improving",
+            "The fake Gaussian quadrupole, Hartree gaps, and box sensitivities all decrease nearly "
+            "monotonically with shape. The dominant issue still looks like monitor representation "
+            "resolution / box-domain coupling rather than a separate SCF defect.",
+        )
+    if near_nonincreasing:
+        return (
+            "resolution_plateau",
+            "The monitored quantities do not systematically worsen with shape, but the improvement is "
+            "already flattening. Representation resolution helps, yet the remaining error may not be "
+            "removed quickly by further baseline enlargement alone.",
+        )
+    return (
+        "resolution_mixed",
+        "The shape sweep is not cleanly monotone. Representation resolution still matters, but the "
+        "remaining behavior likely includes a more systematic mapping / metric / weighting bias.",
+    )
+
+
 def run_h2_hartree_boundary_diagnosis_audit(
     *,
     case: BenchmarkCase = H2_BENCHMARK_CASE,
@@ -757,6 +830,78 @@ def run_h2_hartree_boundary_diagnosis_audit(
             "This audit fixes the input density and diagnoses Hartree/open-boundary behavior without "
             "running SCF. It is intended to separate electrostatics/boundary sensitivity from outer "
             "fixed-point/preconditioning difficulty."
+        ),
+    )
+
+
+def run_h2_hartree_boundary_shape_sweep_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    shapes: tuple[tuple[int, int, int], ...] = (
+        (67, 67, 81),
+        (75, 75, 91),
+        (83, 83, 101),
+        (91, 91, 111),
+    ),
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    expanded_monitor_box_half_extents: tuple[float, float, float] = (
+        _DEFAULT_EXPANDED_MONITOR_BOX_HALF_EXTENTS_BOHR
+    ),
+    gaussian_shift_bohr: float = _DEFAULT_GAUSSIAN_SHIFT_BOHR,
+    tolerance: float = _DEFAULT_TOLERANCE,
+    max_iterations: int = _DEFAULT_MAX_ITERATIONS,
+) -> HartreeBoundaryShapeSweepAuditResult:
+    """Run a small monitor-shape sweep for fixed-density Hartree/open-boundary diagnosis."""
+
+    points = []
+    for monitor_shape in shapes:
+        diagnosis_result = run_h2_hartree_boundary_diagnosis_audit(
+            case=case,
+            monitor_shape=monitor_shape,
+            baseline_monitor_box_half_extents=baseline_monitor_box_half_extents,
+            expanded_monitor_box_half_extents=expanded_monitor_box_half_extents,
+            gaussian_shift_bohr=gaussian_shift_bohr,
+            tolerance=tolerance,
+            max_iterations=max_iterations,
+        )
+        points.append(
+            HartreeBoundaryShapeSweepPoint(
+                monitor_shape=monitor_shape,
+                gaussian_centered_monitor_quadrupole_norm=float(
+                    diagnosis_result.gaussian_centered_monitor.quadrupole_norm
+                ),
+                gaussian_monitor_minus_legacy_hartree_energy_mha=float(
+                    abs(
+                        diagnosis_result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha
+                    )
+                ),
+                h2_frozen_monitor_minus_legacy_hartree_energy_mha=float(
+                    abs(diagnosis_result.h2_frozen_difference.monitor_minus_legacy_hartree_energy_mha)
+                ),
+                gaussian_box_expand_sensitivity_mha=float(
+                    abs(
+                        diagnosis_result.gaussian_centered_box_sensitivity.expanded_minus_baseline_hartree_energy_mha
+                    )
+                ),
+                h2_frozen_box_expand_sensitivity_mha=float(
+                    abs(
+                        diagnosis_result.h2_frozen_box_sensitivity.expanded_minus_baseline_hartree_energy_mha
+                    )
+                ),
+            )
+        )
+    point_tuple = tuple(points)
+    trend_verdict, diagnosis = _shape_sweep_diagnosis(point_tuple)
+    return HartreeBoundaryShapeSweepAuditResult(
+        points=point_tuple,
+        trend_verdict=trend_verdict,
+        diagnosis=diagnosis,
+        note=(
+            "This sweep keeps the density and monitor-box protocol fixed while varying only the A-grid "
+            "shape, so it diagnoses whether fake moments and fixed-density Hartree gaps are actually "
+            "converging with representation resolution."
         ),
     )
 

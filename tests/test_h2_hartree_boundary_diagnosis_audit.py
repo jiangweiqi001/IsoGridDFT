@@ -46,3 +46,38 @@ def test_small_hartree_boundary_diagnosis_audit_is_finite() -> None:
     assert np.isfinite(result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha)
     assert np.isfinite(result.gaussian_shift_sensitivity.shifted_minus_centered_hartree_energy_mha)
     assert np.isfinite(result.h2_frozen_difference.monitor_minus_legacy_hartree_energy_mha)
+
+
+def test_small_hartree_boundary_shape_sweep_is_finite_and_not_systematically_worse() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_boundary_shape_sweep_audit,
+    )
+
+    result = run_h2_hartree_boundary_shape_sweep_audit(
+        case=H2_BENCHMARK_CASE,
+        shapes=((19, 19, 23), (23, 23, 27), (27, 27, 31)),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        expanded_monitor_box_half_extents=(10.0, 10.0, 12.0),
+        tolerance=1.0e-6,
+        max_iterations=200,
+    )
+
+    gaussian_quadrupoles = [point.gaussian_centered_monitor_quadrupole_norm for point in result.points]
+    gaussian_gaps = [point.gaussian_monitor_minus_legacy_hartree_energy_mha for point in result.points]
+    h2_gaps = [point.h2_frozen_monitor_minus_legacy_hartree_energy_mha for point in result.points]
+    gaussian_box = [point.gaussian_box_expand_sensitivity_mha for point in result.points]
+    h2_box = [point.h2_frozen_box_expand_sensitivity_mha for point in result.points]
+
+    for sequence in (gaussian_quadrupoles, gaussian_gaps, h2_gaps, gaussian_box, h2_box):
+        assert all(np.isfinite(sequence))
+
+    assert result.trend_verdict in {
+        "resolution_improving",
+        "resolution_plateau",
+        "resolution_mixed",
+    }
+    assert gaussian_quadrupoles[-1] <= gaussian_quadrupoles[0] + 1.0e-12
+    assert gaussian_gaps[-1] <= gaussian_gaps[0] + 1.0e-12
+    assert h2_gaps[-1] <= h2_gaps[0] + 1.0e-12
+    assert gaussian_box[-1] <= gaussian_box[0] + 1.0e-12
+    assert h2_box[-1] <= h2_box[0] + 1.0e-12
