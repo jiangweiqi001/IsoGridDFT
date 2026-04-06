@@ -158,3 +158,114 @@ def test_small_hartree_geometry_representation_audit_is_finite() -> None:
     assert np.isfinite(result.mapping_z_stretch_summary.uniform_physical_dz)
     assert np.isfinite(result.mapping_z_stretch_summary.high_jacobian_mean_abs_dz_dzeta)
     assert np.isfinite(result.mapping_z_stretch_summary.high_jacobian_mean_abs_second_z_variation)
+    assert len(result.axis_mapping_rows) == 3
+    for row in result.axis_mapping_rows:
+        assert np.isfinite(row.uniform_physical_spacing)
+        assert np.isfinite(row.high_jacobian_mean_abs_first_derivative)
+        assert np.isfinite(row.high_jacobian_mean_abs_second_derivative)
+    assert np.isfinite(result.monitor_strength_proxy_summary.high_jacobian_mean_monitor_value)
+    assert np.isfinite(result.monitor_strength_proxy_summary.low_jacobian_mean_monitor_value)
+    assert np.isfinite(result.monitor_strength_proxy_summary.monitor_vs_z2_distortion_correlation)
+    assert np.isfinite(result.monitor_strength_proxy_summary.monitor_vs_r2_distortion_correlation)
+
+
+def test_small_hartree_mapping_stage_attribution_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_mapping_stage_attribution_audit,
+    )
+
+    result = run_h2_hartree_mapping_stage_attribution_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        max_inner_iterations_override=60,
+    )
+
+    assert len(result.stage_rows) >= 6
+    for row in result.stage_rows:
+        assert row.stage_name
+        assert np.isfinite(row.z2_related_metric)
+        assert np.isfinite(row.quadrupole_related_metric)
+        assert np.isfinite(row.high_jacobian_distortion_metric)
+
+
+def test_small_hartree_reference_quadrature_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_reference_quadrature_audit,
+    )
+
+    result = run_h2_hartree_reference_quadrature_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        subcell_divisions=(2, 2, 2),
+    )
+
+    assert len(result.integral_rows) >= 6
+    for row in result.integral_rows:
+        assert row.function_label
+        assert np.isfinite(row.reference_value)
+        assert np.isfinite(row.production_value)
+        assert np.isfinite(row.production_bias)
+        assert np.isfinite(row.reference_quadrature_value)
+        assert np.isfinite(row.reference_quadrature_bias)
+    assert np.isfinite(result.gaussian_production_total_charge)
+    assert np.isfinite(result.gaussian_reference_quadrature_total_charge)
+    assert np.isfinite(result.gaussian_production_quadrupole_norm)
+    assert np.isfinite(result.gaussian_reference_quadrature_quadrupole_norm)
+
+
+def test_small_hartree_inside_cell_representation_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_inside_cell_representation_audit,
+    )
+
+    result = run_h2_hartree_inside_cell_representation_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        cell_subsamples=5,
+        moment_subcell_divisions=(3, 3, 3),
+    )
+
+    assert len(result.cell_summaries) >= 2
+    for cell in result.cell_summaries:
+        assert cell.cell_label
+        assert np.isfinite(cell.mean_jacobian)
+        assert np.isfinite(cell.profile_rms_error_x)
+        assert np.isfinite(cell.profile_rms_error_y)
+        assert np.isfinite(cell.profile_rms_error_z)
+        assert np.isfinite(cell.local_x2_contribution_error)
+        assert np.isfinite(cell.local_y2_contribution_error)
+        assert np.isfinite(cell.local_z2_contribution_error)
+        assert np.isfinite(cell.local_quadrupole_component_error)
+
+
+def test_small_hartree_inside_cell_reconstruction_comparison_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_inside_cell_reconstruction_comparison_audit,
+    )
+
+    result = run_h2_hartree_inside_cell_reconstruction_comparison_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        cell_subsamples=5,
+        moment_subcell_divisions=(3, 3, 3),
+    )
+
+    assert len(result.cell_summaries) >= 2
+    for cell in result.cell_summaries:
+        assert cell.cell_label
+        assert np.isfinite(cell.mean_jacobian)
+        assert len(cell.reconstruction_summaries) >= 2
+        for reconstruction in cell.reconstruction_summaries:
+            assert reconstruction.reconstruction_label
+            assert np.isfinite(reconstruction.profile_rms_error_x)
+            assert np.isfinite(reconstruction.profile_rms_error_y)
+            assert np.isfinite(reconstruction.profile_rms_error_z)
+            assert np.isfinite(reconstruction.local_x2_contribution_error)
+            assert np.isfinite(reconstruction.local_y2_contribution_error)
+            assert np.isfinite(reconstruction.local_z2_contribution_error)
+            assert np.isfinite(reconstruction.local_r2_contribution_error)
+            assert np.isfinite(reconstruction.local_quadrupole_component_error)

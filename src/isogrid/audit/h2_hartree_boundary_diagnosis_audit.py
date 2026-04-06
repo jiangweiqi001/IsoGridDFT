@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from dataclasses import replace
 from types import SimpleNamespace
 
 import numpy as np
@@ -21,6 +22,13 @@ from isogrid.grid import build_default_h2_grid_geometry
 from isogrid.grid import build_h2_local_patch_development_element_parameters
 from isogrid.grid import build_monitor_grid_for_case
 from isogrid.ops import integrate_field
+from isogrid.grid.monitor_builder import build_monitor_grid_spec_for_case
+from isogrid.grid.monitor_geometry import _backtracking_update
+from isogrid.grid.monitor_geometry import _basic_geometry_from_coordinates
+from isogrid.grid.monitor_geometry import _smooth_monitor_field
+from isogrid.grid.monitor_geometry import _solve_weighted_harmonic_coordinates
+from isogrid.grid.monitor_geometry import build_reference_box_coordinates
+from isogrid.grid.monitor_geometry import evaluate_global_monitor_field
 
 from .h2_monitor_grid_poisson_operator_audit import evaluate_poisson_operator_route
 from .h2_monitor_grid_poisson_operator_audit import PoissonOperatorRouteResult
@@ -286,6 +294,34 @@ class MappingZStretchSummary:
 
 
 @dataclass(frozen=True)
+class AxisMappingRow:
+    """Per-axis first/second-derivative summary for the monitor mapping."""
+
+    axis_label: str
+    uniform_physical_spacing: float
+    mean_spacing: float
+    high_jacobian_mean_spacing: float
+    low_jacobian_mean_spacing: float
+    mean_abs_first_derivative: float
+    high_jacobian_mean_abs_first_derivative: float
+    low_jacobian_mean_abs_first_derivative: float
+    mean_abs_second_derivative: float
+    high_jacobian_mean_abs_second_derivative: float
+    low_jacobian_mean_abs_second_derivative: float
+
+
+@dataclass(frozen=True)
+class MonitorStrengthProxySummary:
+    """Very-light proxy summary relating monitor strength to second-order distortion."""
+
+    mean_monitor_value: float
+    high_jacobian_mean_monitor_value: float
+    low_jacobian_mean_monitor_value: float
+    monitor_vs_z2_distortion_correlation: float
+    monitor_vs_r2_distortion_correlation: float
+
+
+@dataclass(frozen=True)
 class HartreeGeometryRepresentationAuditResult:
     """Geometry/measure representation audit for the monitor grid."""
 
@@ -294,6 +330,127 @@ class HartreeGeometryRepresentationAuditResult:
     second_order_region_rows: tuple[SecondOrderRegionRow, ...]
     error_region_summary: GeometryRepresentationErrorRegionSummary
     mapping_z_stretch_summary: MappingZStretchSummary
+    axis_mapping_rows: tuple[AxisMappingRow, ...]
+    monitor_strength_proxy_summary: MonitorStrengthProxySummary
+    note: str
+
+
+@dataclass(frozen=True)
+class MappingStageAttributionRow:
+    """One stage row in the monitor-mapping attribution ledger."""
+
+    stage_name: str
+    stage_metric_basis: str
+    x2_related_metric: float
+    y2_related_metric: float
+    z2_related_metric: float
+    r2_related_metric: float
+    quadrupole_related_metric: float
+    high_jacobian_distortion_metric: float
+    worsened_vs_previous_stage: bool
+    optional_hartree_observable_mha: float | None = None
+
+
+@dataclass(frozen=True)
+class H2HartreeMappingStageAttributionAuditResult:
+    """Stage-by-stage attribution audit for monitor mapping error amplification."""
+
+    stage_rows: tuple[MappingStageAttributionRow, ...]
+    first_clearly_worse_stage: str
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class ReferenceQuadratureIntegralRow:
+    """Production nodal measure versus audit-only reference quadrature for one function."""
+
+    function_label: str
+    reference_value: float
+    production_value: float
+    production_bias: float
+    reference_quadrature_value: float
+    reference_quadrature_bias: float
+
+
+@dataclass(frozen=True)
+class H2HartreeReferenceQuadratureAuditResult:
+    """Audit whether a higher-quality local reference quadrature improves mapped-grid exactness."""
+
+    subcell_divisions: tuple[int, int, int]
+    integral_rows: tuple[ReferenceQuadratureIntegralRow, ...]
+    gaussian_production_total_charge: float
+    gaussian_reference_quadrature_total_charge: float
+    gaussian_production_quadrupole_norm: float
+    gaussian_reference_quadrature_quadrupole_norm: float
+    note: str
+
+
+@dataclass(frozen=True)
+class InsideCellRepresentationCellSummary:
+    """One representative mapped cell compared under analytic vs trilinear Gaussian representation."""
+
+    cell_label: str
+    cell_index: tuple[int, int, int]
+    region_label: str
+    mean_jacobian: float
+    profile_rms_error_x: float
+    profile_rms_error_y: float
+    profile_rms_error_z: float
+    profile_max_abs_error_x: float
+    profile_max_abs_error_y: float
+    profile_max_abs_error_z: float
+    local_x2_contribution_error: float
+    local_y2_contribution_error: float
+    local_z2_contribution_error: float
+    local_r2_contribution_error: float
+    local_quadrupole_component_error: float
+
+
+@dataclass(frozen=True)
+class H2HartreeInsideCellRepresentationAuditResult:
+    """Audit whether fake quadrupole is already formed inside mapped-cell Gaussian representation."""
+
+    cell_summaries: tuple[InsideCellRepresentationCellSummary, ...]
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
+class InsideCellReconstructionSummary:
+    """One local field reconstruction compared against analytic Gaussian on a mapped cell."""
+
+    reconstruction_label: str
+    profile_rms_error_x: float
+    profile_rms_error_y: float
+    profile_rms_error_z: float
+    profile_max_abs_error_x: float
+    profile_max_abs_error_y: float
+    profile_max_abs_error_z: float
+    local_x2_contribution_error: float
+    local_y2_contribution_error: float
+    local_z2_contribution_error: float
+    local_r2_contribution_error: float
+    local_quadrupole_component_error: float
+
+
+@dataclass(frozen=True)
+class InsideCellReconstructionComparisonCellSummary:
+    """One representative cell with multiple reconstruction-only comparisons."""
+
+    cell_label: str
+    cell_index: tuple[int, int, int]
+    region_label: str
+    mean_jacobian: float
+    reconstruction_summaries: tuple[InsideCellReconstructionSummary, ...]
+
+
+@dataclass(frozen=True)
+class H2HartreeInsideCellReconstructionComparisonAuditResult:
+    """Audit-only comparison of local Gaussian field reconstructions on mapped cells."""
+
+    cell_summaries: tuple[InsideCellReconstructionComparisonCellSummary, ...]
+    diagnosis: str
     note: str
 
 
@@ -614,6 +771,100 @@ def _mapping_z_stretch_summary(
         low_jacobian_mean_abs_second_z_variation=float(
             np.mean(np.abs(second_z_variation[low_jacobian_mask]))
         ),
+    )
+
+
+def _axis_mapping_rows(
+    monitor_geometry: MonitorGridGeometry,
+) -> tuple[AxisMappingRow, ...]:
+    jacobian = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+    high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_mask = jacobian >= high_jacobian_threshold
+    low_jacobian_mask = jacobian < high_jacobian_threshold
+    axis_specs = (
+        ("x", monitor_geometry.spacing_x, monitor_geometry.covariant_basis[..., 0, 0], monitor_geometry.logical_x, 0),
+        ("y", monitor_geometry.spacing_y, monitor_geometry.covariant_basis[..., 1, 1], monitor_geometry.logical_y, 1),
+        ("z", monitor_geometry.spacing_z, monitor_geometry.covariant_basis[..., 2, 2], monitor_geometry.logical_z, 2),
+    )
+    box_bounds = monitor_geometry.spec.box_bounds
+    box_widths = (
+        box_bounds[0][1] - box_bounds[0][0],
+        box_bounds[1][1] - box_bounds[1][0],
+        box_bounds[2][1] - box_bounds[2][0],
+    )
+    rows: list[AxisMappingRow] = []
+    for axis_label, spacing, first_derivative, logical_axis, axis_index in axis_specs:
+        uniform_spacing = float(box_widths[axis_index] / (monitor_geometry.spec.shape[axis_index] - 1))
+        second_derivative = np.gradient(
+            np.asarray(first_derivative, dtype=np.float64),
+            np.asarray(logical_axis, dtype=np.float64),
+            axis=axis_index,
+            edge_order=2,
+        )
+        spacing = np.asarray(spacing, dtype=np.float64)
+        first_derivative = np.asarray(first_derivative, dtype=np.float64)
+        rows.append(
+            AxisMappingRow(
+                axis_label=axis_label,
+                uniform_physical_spacing=uniform_spacing,
+                mean_spacing=float(np.mean(spacing)),
+                high_jacobian_mean_spacing=float(np.mean(spacing[high_jacobian_mask])),
+                low_jacobian_mean_spacing=float(np.mean(spacing[low_jacobian_mask])),
+                mean_abs_first_derivative=float(np.mean(np.abs(first_derivative))),
+                high_jacobian_mean_abs_first_derivative=float(
+                    np.mean(np.abs(first_derivative[high_jacobian_mask]))
+                ),
+                low_jacobian_mean_abs_first_derivative=float(
+                    np.mean(np.abs(first_derivative[low_jacobian_mask]))
+                ),
+                mean_abs_second_derivative=float(np.mean(np.abs(second_derivative))),
+                high_jacobian_mean_abs_second_derivative=float(
+                    np.mean(np.abs(second_derivative[high_jacobian_mask]))
+                ),
+                low_jacobian_mean_abs_second_derivative=float(
+                    np.mean(np.abs(second_derivative[low_jacobian_mask]))
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _monitor_strength_proxy_summary(
+    monitor_geometry: MonitorGridGeometry,
+) -> MonitorStrengthProxySummary:
+    jacobian = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+    high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_mask = jacobian >= high_jacobian_threshold
+    low_jacobian_mask = jacobian < high_jacobian_threshold
+    uniform_box_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
+    mapped_fields = _polynomial_fields(
+        monitor_geometry.x_points,
+        monitor_geometry.y_points,
+        monitor_geometry.z_points,
+    )
+    uniform_fields = _polynomial_fields(
+        uniform_box_geometry.x_points,
+        uniform_box_geometry.y_points,
+        uniform_box_geometry.z_points,
+    )
+    z2_distortion = np.abs(mapped_fields["z2"] - uniform_fields["z2"]).reshape(-1)
+    r2_distortion = np.abs(mapped_fields["r2"] - uniform_fields["r2"]).reshape(-1)
+    monitor_values = np.asarray(monitor_geometry.monitor_field.values, dtype=np.float64).reshape(-1)
+    z2_corr = float(np.corrcoef(monitor_values, z2_distortion)[0, 1])
+    r2_corr = float(np.corrcoef(monitor_values, r2_distortion)[0, 1])
+    return MonitorStrengthProxySummary(
+        mean_monitor_value=float(np.mean(monitor_geometry.monitor_field.values)),
+        high_jacobian_mean_monitor_value=float(
+            np.mean(monitor_geometry.monitor_field.values[high_jacobian_mask])
+        ),
+        low_jacobian_mean_monitor_value=float(
+            np.mean(monitor_geometry.monitor_field.values[low_jacobian_mask])
+        ),
+        monitor_vs_z2_distortion_correlation=z2_corr,
+        monitor_vs_r2_distortion_correlation=r2_corr,
     )
 
 
@@ -1751,10 +2002,1269 @@ def run_h2_hartree_geometry_representation_audit(
         second_order_region_rows=_second_order_region_rows(monitor_geometry),
         error_region_summary=_geometry_representation_error_region_summary(monitor_geometry),
         mapping_z_stretch_summary=_mapping_z_stretch_summary(monitor_geometry),
+        axis_mapping_rows=_axis_mapping_rows(monitor_geometry),
+        monitor_strength_proxy_summary=_monitor_strength_proxy_summary(monitor_geometry),
         note=(
             "This audit traces monitor cell_volumes back to J * dxi * deta * dzeta, then checks how "
             "well equal weights, current cell_volumes, and trapezoidal-adjusted weights recover low-order "
             "polynomials on the mapped box."
+        ),
+    )
+
+
+def _geometry_namespace(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    cell_volumes: np.ndarray,
+    shape: tuple[int, int, int],
+) -> GridGeometryLike:
+    return SimpleNamespace(
+        spec=SimpleNamespace(shape=shape),
+        x_points=np.asarray(x_points, dtype=np.float64),
+        y_points=np.asarray(y_points, dtype=np.float64),
+        z_points=np.asarray(z_points, dtype=np.float64),
+        cell_volumes=np.asarray(cell_volumes, dtype=np.float64),
+    )
+
+
+def _stage_polynomial_biases(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    weights: np.ndarray,
+    box_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+) -> dict[str, float]:
+    references = _polynomial_reference_values(box_bounds)
+    fields = _polynomial_fields(x_points, y_points, z_points)
+    return {
+        label: float(np.sum(field * weights, dtype=np.float64) - references[label])
+        for label, field in fields.items()
+    }
+
+
+def _stage_high_jacobian_contribution_distortion(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    weights: np.ndarray,
+    reference_x: np.ndarray,
+    reference_y: np.ndarray,
+    reference_z: np.ndarray,
+    reference_weights: np.ndarray,
+    high_jacobian_interior_mask: np.ndarray,
+) -> float:
+    stage_r2_contribution = weights * (
+        x_points * x_points + y_points * y_points + z_points * z_points
+    )
+    reference_r2_contribution = reference_weights * (
+        reference_x * reference_x + reference_y * reference_y + reference_z * reference_z
+    )
+    distortion = np.abs(stage_r2_contribution - reference_r2_contribution)
+    return float(np.mean(distortion[high_jacobian_interior_mask]))
+
+
+def _stage_row_from_geometry(
+    *,
+    stage_name: str,
+    stage_metric_basis: str,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    weights: np.ndarray,
+    shape: tuple[int, int, int],
+    box_bounds: tuple[tuple[float, float], tuple[float, float], tuple[float, float]],
+    reference_x: np.ndarray,
+    reference_y: np.ndarray,
+    reference_z: np.ndarray,
+    reference_weights: np.ndarray,
+    high_jacobian_interior_mask: np.ndarray,
+    optional_hartree_observable_mha: float | None = None,
+) -> MappingStageAttributionRow:
+    geometry = _geometry_namespace(
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        cell_volumes=weights,
+        shape=shape,
+    )
+    gaussian_density = _build_gaussian_density(geometry)
+    quadrupole_norm = float(np.linalg.norm(_quadrupole_tensor(gaussian_density, geometry)))
+    biases = _stage_polynomial_biases(
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        weights=weights,
+        box_bounds=box_bounds,
+    )
+    high_j_distortion = _stage_high_jacobian_contribution_distortion(
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        weights=weights,
+        reference_x=reference_x,
+        reference_y=reference_y,
+        reference_z=reference_z,
+        reference_weights=reference_weights,
+        high_jacobian_interior_mask=high_jacobian_interior_mask,
+    )
+    return MappingStageAttributionRow(
+        stage_name=stage_name,
+        stage_metric_basis=stage_metric_basis,
+        x2_related_metric=float(abs(biases["x2"])),
+        y2_related_metric=float(abs(biases["y2"])),
+        z2_related_metric=float(abs(biases["z2"])),
+        r2_related_metric=float(abs(biases["r2"])),
+        quadrupole_related_metric=quadrupole_norm,
+        high_jacobian_distortion_metric=high_j_distortion,
+        worsened_vs_previous_stage=False,
+        optional_hartree_observable_mha=optional_hartree_observable_mha,
+    )
+
+
+def _mapping_stage_worsened(
+    previous: MappingStageAttributionRow,
+    current: MappingStageAttributionRow,
+) -> bool:
+    def _material_increase(new_value: float, old_value: float) -> bool:
+        scale = max(1.0e-12, abs(old_value))
+        return new_value > old_value + max(1.0e-12, 0.10 * scale)
+
+    increases = (
+        _material_increase(current.z2_related_metric, previous.z2_related_metric),
+        _material_increase(current.quadrupole_related_metric, previous.quadrupole_related_metric),
+        _material_increase(
+            current.high_jacobian_distortion_metric,
+            previous.high_jacobian_distortion_metric,
+        ),
+    )
+    return sum(increases) >= 2
+
+
+def _stage_rows_with_worsening_flags(
+    rows: list[MappingStageAttributionRow],
+) -> tuple[MappingStageAttributionRow, ...]:
+    if not rows:
+        return ()
+    flagged_rows = [rows[0]]
+    for row in rows[1:]:
+        previous = flagged_rows[-1]
+        flagged_rows.append(
+            replace(
+                row,
+                worsened_vs_previous_stage=_mapping_stage_worsened(previous, row),
+            )
+        )
+    return tuple(flagged_rows)
+
+
+def run_h2_hartree_mapping_stage_attribution_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    max_inner_iterations_override: int | None = None,
+) -> H2HartreeMappingStageAttributionAuditResult:
+    """Attribute where mapping-chain stages first amplify z-directed second-moment error."""
+
+    spec = build_monitor_grid_spec_for_case(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    if max_inner_iterations_override is not None:
+        spec = replace(
+            spec,
+            harmonic_inner_iterations=min(
+                spec.harmonic_inner_iterations,
+                int(max_inner_iterations_override),
+            ),
+        )
+
+    logical_x, logical_y, logical_z, x_ref, y_ref, z_ref = build_reference_box_coordinates(spec)
+    boundary_coordinates = np.stack([x_ref, y_ref, z_ref], axis=-1)
+    coordinates = np.array(boundary_coordinates, copy=True)
+
+    first_raw_monitor_values: np.ndarray | None = None
+    first_smoothed_monitor_values: np.ndarray | None = None
+    first_updated_coordinates: np.ndarray | None = None
+
+    for outer_iteration in range(spec.harmonic_outer_iterations):
+        monitor_field = evaluate_global_monitor_field(
+            case=case,
+            spec=spec,
+            x_points=coordinates[..., 0],
+            y_points=coordinates[..., 1],
+            z_points=coordinates[..., 2],
+        )
+        smoothed_monitor = _smooth_monitor_field(
+            monitor_field.values,
+            smoothing=spec.monitor_smoothing,
+        )
+        solved_coordinates = _solve_weighted_harmonic_coordinates(
+            coefficient=smoothed_monitor,
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            boundary_coordinates=boundary_coordinates,
+            initial_coordinates=coordinates,
+            inner_iterations=spec.harmonic_inner_iterations,
+            tolerance=spec.harmonic_tolerance,
+            relaxation=spec.inner_relaxation,
+        )
+        updated_coordinates = _backtracking_update(
+            current_coordinates=coordinates,
+            solved_coordinates=solved_coordinates,
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            relaxation=spec.harmonic_relaxation,
+        )
+        if outer_iteration == 0:
+            first_raw_monitor_values = np.asarray(monitor_field.values, dtype=np.float64)
+            first_smoothed_monitor_values = np.asarray(smoothed_monitor, dtype=np.float64)
+            first_updated_coordinates = np.asarray(updated_coordinates, dtype=np.float64)
+        max_displacement = float(np.max(np.abs(updated_coordinates - coordinates)))
+        coordinates = updated_coordinates
+        if max_displacement < spec.harmonic_tolerance:
+            break
+
+    final_monitor_field = evaluate_global_monitor_field(
+        case=case,
+        spec=spec,
+        x_points=coordinates[..., 0],
+        y_points=coordinates[..., 1],
+        z_points=coordinates[..., 2],
+    )
+    basis, jacobian, metric_tensor, inverse_metric_tensor, cell_volumes, point_spacings = (
+        _basic_geometry_from_coordinates(
+            logical_x,
+            logical_y,
+            logical_z,
+            coordinates,
+        )
+    )
+    spacing_measure = np.mean(point_spacings, axis=-1)
+    monitor_geometry = MonitorGridGeometry(
+        spec=spec,
+        logical_x=logical_x,
+        logical_y=logical_y,
+        logical_z=logical_z,
+        x_points=np.asarray(coordinates[..., 0], dtype=np.float64),
+        y_points=np.asarray(coordinates[..., 1], dtype=np.float64),
+        z_points=np.asarray(coordinates[..., 2], dtype=np.float64),
+        covariant_basis=basis,
+        jacobian=jacobian,
+        metric_tensor=metric_tensor,
+        inverse_metric_tensor=inverse_metric_tensor,
+        cell_volumes=cell_volumes,
+        spacing_x=point_spacings[..., 0],
+        spacing_y=point_spacings[..., 1],
+        spacing_z=point_spacings[..., 2],
+        spacing_measure=spacing_measure,
+        monitor_field=final_monitor_field,
+        patch_interfaces=(),
+        quality_report=SimpleNamespace(),
+    )
+    diagnosis_result = run_h2_hartree_boundary_diagnosis_audit(
+        case=case,
+        monitor_shape=monitor_shape,
+        baseline_monitor_box_half_extents=baseline_monitor_box_half_extents,
+        tolerance=1.0e-6,
+        max_iterations=200,
+    )
+
+    if first_raw_monitor_values is None or first_smoothed_monitor_values is None or first_updated_coordinates is None:
+        raise RuntimeError("Expected the monitor mapping loop to capture at least one outer iteration.")
+
+    shape = spec.shape
+    box_bounds = spec.box_bounds
+    physical_box_volume = float(
+        (box_bounds[0][1] - box_bounds[0][0])
+        * (box_bounds[1][1] - box_bounds[1][0])
+        * (box_bounds[2][1] - box_bounds[2][0])
+    )
+    uniform_point_weight = np.full(shape, physical_box_volume / np.prod(shape), dtype=np.float64)
+    raw_monitor_weights = uniform_point_weight * (
+        first_raw_monitor_values / float(np.mean(first_raw_monitor_values))
+    )
+    smoothed_monitor_weights = uniform_point_weight * (
+        first_smoothed_monitor_values / float(np.mean(first_smoothed_monitor_values))
+    )
+    boundary_mask = np.zeros(shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    high_j_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_interior_mask = (jacobian >= high_j_threshold) & interior_mask
+
+    stage_rows = [
+        _stage_row_from_geometry(
+            stage_name="raw_monitor_field",
+            stage_metric_basis=(
+                "reference-box centered Gaussian under raw-monitor-induced pseudo-measure"
+            ),
+            x_points=x_ref,
+            y_points=y_ref,
+            z_points=z_ref,
+            weights=raw_monitor_weights,
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="smoothed_monitor_field",
+            stage_metric_basis=(
+                "reference-box centered Gaussian under smoothed-monitor-induced pseudo-measure"
+            ),
+            x_points=x_ref,
+            y_points=y_ref,
+            z_points=z_ref,
+            weights=smoothed_monitor_weights,
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="first_coordinate_update_output",
+            stage_metric_basis="first outer-iteration updated coordinates with uniform point measure",
+            x_points=first_updated_coordinates[..., 0],
+            y_points=first_updated_coordinates[..., 1],
+            z_points=first_updated_coordinates[..., 2],
+            weights=uniform_point_weight,
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="final_mapped_coordinates",
+            stage_metric_basis="final mapped coordinates with uniform point measure",
+            x_points=monitor_geometry.x_points,
+            y_points=monitor_geometry.y_points,
+            z_points=monitor_geometry.z_points,
+            weights=uniform_point_weight,
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="jacobian_metric_derived_measure",
+            stage_metric_basis="reference-box coordinates with final Jacobian-derived cell-volume weights",
+            x_points=x_ref,
+            y_points=y_ref,
+            z_points=z_ref,
+            weights=np.asarray(monitor_geometry.cell_volumes, dtype=np.float64),
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="cell_volumes_measure",
+            stage_metric_basis="final mapped coordinates with final cell-volume measure",
+            x_points=monitor_geometry.x_points,
+            y_points=monitor_geometry.y_points,
+            z_points=monitor_geometry.z_points,
+            weights=np.asarray(monitor_geometry.cell_volumes, dtype=np.float64),
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+        ),
+        _stage_row_from_geometry(
+            stage_name="moments_hartree_observable",
+            stage_metric_basis="final mapped measure plus Gaussian Hartree-gap observable",
+            x_points=monitor_geometry.x_points,
+            y_points=monitor_geometry.y_points,
+            z_points=monitor_geometry.z_points,
+            weights=np.asarray(monitor_geometry.cell_volumes, dtype=np.float64),
+            shape=shape,
+            box_bounds=box_bounds,
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            reference_weights=uniform_point_weight,
+            high_jacobian_interior_mask=high_jacobian_interior_mask,
+            optional_hartree_observable_mha=float(
+                abs(
+                    diagnosis_result.gaussian_centered_difference.monitor_minus_legacy_hartree_energy_mha
+                )
+            ),
+        ),
+    ]
+    stage_row_tuple = _stage_rows_with_worsening_flags(stage_rows)
+    first_clearly_worse_stage = next(
+        (
+            row.stage_name
+            for row in stage_row_tuple
+            if row.worsened_vs_previous_stage
+        ),
+        "none",
+    )
+    diagnosis = (
+        "The first clearly worse stage is where at least two of three metrics (z^2 bias, centered-"
+        "Gaussian quadrupole norm, and high-jacobian interior contribution distortion) materially "
+        "increase relative to the immediately preceding stage."
+    )
+    return H2HartreeMappingStageAttributionAuditResult(
+        stage_rows=stage_row_tuple,
+        first_clearly_worse_stage=first_clearly_worse_stage,
+        diagnosis=diagnosis,
+        note=(
+            "This audit keeps the production mapping unchanged and only attributes where the centered-"
+            "Gaussian z-directed second-moment error first gets amplified along the monitor-to-"
+            "mapping chain."
+        ),
+    )
+
+
+def _trilinear_sample(
+    nodal_values: np.ndarray,
+    *,
+    u: float,
+    v: float,
+    w: float,
+) -> np.ndarray:
+    c000 = nodal_values[:-1, :-1, :-1]
+    c100 = nodal_values[1:, :-1, :-1]
+    c010 = nodal_values[:-1, 1:, :-1]
+    c110 = nodal_values[1:, 1:, :-1]
+    c001 = nodal_values[:-1, :-1, 1:]
+    c101 = nodal_values[1:, :-1, 1:]
+    c011 = nodal_values[:-1, 1:, 1:]
+    c111 = nodal_values[1:, 1:, 1:]
+    um = 1.0 - u
+    vm = 1.0 - v
+    wm = 1.0 - w
+    return (
+        um * vm * wm * c000
+        + u * vm * wm * c100
+        + um * v * wm * c010
+        + u * v * wm * c110
+        + um * vm * w * c001
+        + u * vm * w * c101
+        + um * v * w * c011
+        + u * v * w * c111
+    )
+
+
+def _trilinear_cell_value(
+    cell_corners: np.ndarray,
+    *,
+    u: float,
+    v: float,
+    w: float,
+) -> float:
+    um = 1.0 - u
+    vm = 1.0 - v
+    wm = 1.0 - w
+    return float(
+        um * vm * wm * cell_corners[0, 0, 0]
+        + u * vm * wm * cell_corners[1, 0, 0]
+        + um * v * wm * cell_corners[0, 1, 0]
+        + u * v * wm * cell_corners[1, 1, 0]
+        + um * vm * w * cell_corners[0, 0, 1]
+        + u * vm * w * cell_corners[1, 0, 1]
+        + um * v * w * cell_corners[0, 1, 1]
+        + u * v * w * cell_corners[1, 1, 1]
+    )
+
+
+def _cell_average_from_nodal_field(field: np.ndarray) -> np.ndarray:
+    return (
+        field[:-1, :-1, :-1]
+        + field[1:, :-1, :-1]
+        + field[:-1, 1:, :-1]
+        + field[1:, 1:, :-1]
+        + field[:-1, :-1, 1:]
+        + field[1:, :-1, 1:]
+        + field[:-1, 1:, 1:]
+        + field[1:, 1:, 1:]
+    ) / 8.0
+
+
+def _representative_cell_indices(
+    monitor_geometry: MonitorGridGeometry,
+) -> tuple[tuple[str, tuple[int, int, int], str], ...]:
+    cell_jacobian = _cell_average_from_nodal_field(np.asarray(monitor_geometry.jacobian, dtype=np.float64))
+    cell_shape = cell_jacobian.shape
+    boundary_mask = np.zeros(cell_shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    interior_indices = np.argwhere(interior_mask)
+    interior_values = cell_jacobian[interior_mask]
+    high_flat_index = int(np.argmax(interior_values))
+    low_flat_index = int(np.argmin(interior_values))
+    median_value = float(np.median(interior_values))
+    median_flat_index = int(np.argmin(np.abs(interior_values - median_value)))
+    return (
+        ("high_jacobian_interior", tuple(int(v) for v in interior_indices[high_flat_index]), "high_jacobian_interior"),
+        ("median_jacobian_interior", tuple(int(v) for v in interior_indices[median_flat_index]), "ordinary_interior"),
+        ("low_jacobian_interior", tuple(int(v) for v in interior_indices[low_flat_index]), "low_jacobian_interior"),
+    )
+
+
+def _inside_cell_profile_errors(
+    *,
+    x_cell: np.ndarray,
+    y_cell: np.ndarray,
+    z_cell: np.ndarray,
+    rho_cell: np.ndarray,
+    normalization_constant: float,
+    cell_subsamples: int,
+) -> dict[str, tuple[float, float]]:
+    if cell_subsamples < 2:
+        raise ValueError("cell_subsamples must be at least 2.")
+    profile_errors: dict[str, tuple[float, float]] = {}
+    axis_map = {
+        "x": lambda t: (t, 0.5, 0.5),
+        "y": lambda t: (0.5, t, 0.5),
+        "z": lambda t: (0.5, 0.5, t),
+    }
+    for axis_label, point_builder in axis_map.items():
+        errors = []
+        for t in np.linspace(0.0, 1.0, cell_subsamples, dtype=np.float64):
+            u, v, w = point_builder(float(t))
+            x_value = _trilinear_cell_value(x_cell, u=u, v=v, w=w)
+            y_value = _trilinear_cell_value(y_cell, u=u, v=v, w=w)
+            z_value = _trilinear_cell_value(z_cell, u=u, v=v, w=w)
+            analytic_density = normalization_constant * np.exp(
+                -_DEFAULT_GAUSSIAN_ALPHA * (x_value * x_value + y_value * y_value + z_value * z_value)
+            )
+            reconstructed_density = _trilinear_cell_value(rho_cell, u=u, v=v, w=w)
+            errors.append(reconstructed_density - analytic_density)
+        error_array = np.asarray(errors, dtype=np.float64)
+        profile_errors[axis_label] = (
+            float(np.sqrt(np.mean(error_array * error_array))),
+            float(np.max(np.abs(error_array))),
+        )
+    return profile_errors
+
+
+def _inside_cell_moment_errors(
+    *,
+    x_cell: np.ndarray,
+    y_cell: np.ndarray,
+    z_cell: np.ndarray,
+    jacobian_cell: np.ndarray,
+    rho_cell: np.ndarray,
+    normalization_constant: float,
+    logical_cell_volume: float,
+    moment_subcell_divisions: tuple[int, int, int],
+) -> tuple[float, float, float, float, float]:
+    sx, sy, sz = moment_subcell_divisions
+    if sx <= 0 or sy <= 0 or sz <= 0:
+        raise ValueError("moment_subcell_divisions must be positive in every direction.")
+    subcell_volume = logical_cell_volume / float(sx * sy * sz)
+    analytic_x2 = 0.0
+    analytic_y2 = 0.0
+    analytic_z2 = 0.0
+    analytic_r2 = 0.0
+    analytic_qzz = 0.0
+    reconstructed_x2 = 0.0
+    reconstructed_y2 = 0.0
+    reconstructed_z2 = 0.0
+    reconstructed_r2 = 0.0
+    reconstructed_qzz = 0.0
+    for ix in range(sx):
+        u = (ix + 0.5) / sx
+        for iy in range(sy):
+            v = (iy + 0.5) / sy
+            for iz in range(sz):
+                w = (iz + 0.5) / sz
+                x_value = _trilinear_cell_value(x_cell, u=u, v=v, w=w)
+                y_value = _trilinear_cell_value(y_cell, u=u, v=v, w=w)
+                z_value = _trilinear_cell_value(z_cell, u=u, v=v, w=w)
+                jacobian_value = _trilinear_cell_value(jacobian_cell, u=u, v=v, w=w)
+                analytic_density = normalization_constant * np.exp(
+                    -_DEFAULT_GAUSSIAN_ALPHA * (x_value * x_value + y_value * y_value + z_value * z_value)
+                )
+                reconstructed_density = _trilinear_cell_value(rho_cell, u=u, v=v, w=w)
+                weight = jacobian_value * subcell_volume
+                x2 = x_value * x_value
+                y2 = y_value * y_value
+                z2 = z_value * z_value
+                r2 = x2 + y2 + z2
+                qzz_factor = 3.0 * z2 - r2
+                analytic_x2 += analytic_density * x2 * weight
+                analytic_y2 += analytic_density * y2 * weight
+                analytic_z2 += analytic_density * z2 * weight
+                analytic_r2 += analytic_density * r2 * weight
+                analytic_qzz += analytic_density * qzz_factor * weight
+                reconstructed_x2 += reconstructed_density * x2 * weight
+                reconstructed_y2 += reconstructed_density * y2 * weight
+                reconstructed_z2 += reconstructed_density * z2 * weight
+                reconstructed_r2 += reconstructed_density * r2 * weight
+                reconstructed_qzz += reconstructed_density * qzz_factor * weight
+    return (
+        float(reconstructed_x2 - analytic_x2),
+        float(reconstructed_y2 - analytic_y2),
+        float(reconstructed_z2 - analytic_z2),
+        float(reconstructed_r2 - analytic_r2),
+        float(reconstructed_qzz - analytic_qzz),
+    )
+
+
+def _analytic_gaussian_value(
+    x_value: float,
+    y_value: float,
+    z_value: float,
+    *,
+    normalization_constant: float,
+) -> float:
+    return float(
+        normalization_constant
+        * np.exp(-_DEFAULT_GAUSSIAN_ALPHA * (x_value * x_value + y_value * y_value + z_value * z_value))
+    )
+
+
+def _local_quadratic_fit_coefficients(
+    *,
+    x_stencil: np.ndarray,
+    y_stencil: np.ndarray,
+    z_stencil: np.ndarray,
+    values: np.ndarray,
+) -> np.ndarray:
+    x_flat = np.asarray(x_stencil, dtype=np.float64).reshape(-1)
+    y_flat = np.asarray(y_stencil, dtype=np.float64).reshape(-1)
+    z_flat = np.asarray(z_stencil, dtype=np.float64).reshape(-1)
+    design = np.column_stack(
+        [
+            np.ones_like(x_flat),
+            x_flat,
+            y_flat,
+            z_flat,
+            x_flat * x_flat,
+            y_flat * y_flat,
+            z_flat * z_flat,
+            x_flat * y_flat,
+            x_flat * z_flat,
+            y_flat * z_flat,
+        ]
+    )
+    coefficients, *_ = np.linalg.lstsq(
+        design,
+        np.asarray(values, dtype=np.float64).reshape(-1),
+        rcond=None,
+    )
+    return np.asarray(coefficients, dtype=np.float64)
+
+
+def _evaluate_quadratic_fit(
+    coefficients: np.ndarray,
+    *,
+    x_value: float,
+    y_value: float,
+    z_value: float,
+) -> float:
+    basis = np.array(
+        [
+            1.0,
+            x_value,
+            y_value,
+            z_value,
+            x_value * x_value,
+            y_value * y_value,
+            z_value * z_value,
+            x_value * y_value,
+            x_value * z_value,
+            y_value * z_value,
+        ],
+        dtype=np.float64,
+    )
+    return float(np.dot(coefficients, basis))
+
+
+def _cell_and_neighbor_slices(
+    cell_index: tuple[int, int, int],
+    *,
+    shape: tuple[int, int, int],
+) -> tuple[slice, slice, slice]:
+    i, j, k = cell_index
+    nx, ny, nz = shape
+    return (
+        slice(max(i - 1, 0), min(i + 3, nx)),
+        slice(max(j - 1, 0), min(j + 3, ny)),
+        slice(max(k - 1, 0), min(k + 3, nz)),
+    )
+
+
+def _inside_cell_profile_errors_from_reconstruction(
+    *,
+    x_cell: np.ndarray,
+    y_cell: np.ndarray,
+    z_cell: np.ndarray,
+    reconstruction,
+    normalization_constant: float,
+    cell_subsamples: int,
+) -> dict[str, tuple[float, float]]:
+    if cell_subsamples < 2:
+        raise ValueError("cell_subsamples must be at least 2.")
+    profile_errors: dict[str, tuple[float, float]] = {}
+    axis_map = {
+        "x": lambda t: (t, 0.5, 0.5),
+        "y": lambda t: (0.5, t, 0.5),
+        "z": lambda t: (0.5, 0.5, t),
+    }
+    for axis_label, point_builder in axis_map.items():
+        errors = []
+        for t in np.linspace(0.0, 1.0, cell_subsamples, dtype=np.float64):
+            u, v, w = point_builder(float(t))
+            x_value = _trilinear_cell_value(x_cell, u=u, v=v, w=w)
+            y_value = _trilinear_cell_value(y_cell, u=u, v=v, w=w)
+            z_value = _trilinear_cell_value(z_cell, u=u, v=v, w=w)
+            analytic_density = _analytic_gaussian_value(
+                x_value,
+                y_value,
+                z_value,
+                normalization_constant=normalization_constant,
+            )
+            reconstructed_density = float(reconstruction(u=u, v=v, w=w, x=x_value, y=y_value, z=z_value))
+            errors.append(reconstructed_density - analytic_density)
+        error_array = np.asarray(errors, dtype=np.float64)
+        profile_errors[axis_label] = (
+            float(np.sqrt(np.mean(error_array * error_array))),
+            float(np.max(np.abs(error_array))),
+        )
+    return profile_errors
+
+
+def _inside_cell_moment_errors_from_reconstruction(
+    *,
+    x_cell: np.ndarray,
+    y_cell: np.ndarray,
+    z_cell: np.ndarray,
+    jacobian_cell: np.ndarray,
+    reconstruction,
+    normalization_constant: float,
+    logical_cell_volume: float,
+    moment_subcell_divisions: tuple[int, int, int],
+) -> tuple[float, float, float, float, float]:
+    sx, sy, sz = moment_subcell_divisions
+    if sx <= 0 or sy <= 0 or sz <= 0:
+        raise ValueError("moment_subcell_divisions must be positive in every direction.")
+    subcell_volume = logical_cell_volume / float(sx * sy * sz)
+    analytic_x2 = 0.0
+    analytic_y2 = 0.0
+    analytic_z2 = 0.0
+    analytic_r2 = 0.0
+    analytic_qzz = 0.0
+    reconstructed_x2 = 0.0
+    reconstructed_y2 = 0.0
+    reconstructed_z2 = 0.0
+    reconstructed_r2 = 0.0
+    reconstructed_qzz = 0.0
+    for ix in range(sx):
+        u = (ix + 0.5) / sx
+        for iy in range(sy):
+            v = (iy + 0.5) / sy
+            for iz in range(sz):
+                w = (iz + 0.5) / sz
+                x_value = _trilinear_cell_value(x_cell, u=u, v=v, w=w)
+                y_value = _trilinear_cell_value(y_cell, u=u, v=v, w=w)
+                z_value = _trilinear_cell_value(z_cell, u=u, v=v, w=w)
+                jacobian_value = _trilinear_cell_value(jacobian_cell, u=u, v=v, w=w)
+                analytic_density = _analytic_gaussian_value(
+                    x_value,
+                    y_value,
+                    z_value,
+                    normalization_constant=normalization_constant,
+                )
+                reconstructed_density = float(reconstruction(u=u, v=v, w=w, x=x_value, y=y_value, z=z_value))
+                weight = jacobian_value * subcell_volume
+                x2 = x_value * x_value
+                y2 = y_value * y_value
+                z2 = z_value * z_value
+                r2 = x2 + y2 + z2
+                qzz_factor = 3.0 * z2 - r2
+                analytic_x2 += analytic_density * x2 * weight
+                analytic_y2 += analytic_density * y2 * weight
+                analytic_z2 += analytic_density * z2 * weight
+                analytic_r2 += analytic_density * r2 * weight
+                analytic_qzz += analytic_density * qzz_factor * weight
+                reconstructed_x2 += reconstructed_density * x2 * weight
+                reconstructed_y2 += reconstructed_density * y2 * weight
+                reconstructed_z2 += reconstructed_density * z2 * weight
+                reconstructed_r2 += reconstructed_density * r2 * weight
+                reconstructed_qzz += reconstructed_density * qzz_factor * weight
+    return (
+        float(reconstructed_x2 - analytic_x2),
+        float(reconstructed_y2 - analytic_y2),
+        float(reconstructed_z2 - analytic_z2),
+        float(reconstructed_r2 - analytic_r2),
+        float(reconstructed_qzz - analytic_qzz),
+    )
+
+
+def _inside_cell_reconstruction_summary(
+    *,
+    reconstruction_label: str,
+    x_cell: np.ndarray,
+    y_cell: np.ndarray,
+    z_cell: np.ndarray,
+    jacobian_cell: np.ndarray,
+    reconstruction,
+    normalization_constant: float,
+    logical_cell_volume: float,
+    cell_subsamples: int,
+    moment_subcell_divisions: tuple[int, int, int],
+) -> InsideCellReconstructionSummary:
+    profile_errors = _inside_cell_profile_errors_from_reconstruction(
+        x_cell=x_cell,
+        y_cell=y_cell,
+        z_cell=z_cell,
+        reconstruction=reconstruction,
+        normalization_constant=normalization_constant,
+        cell_subsamples=cell_subsamples,
+    )
+    x2_error, y2_error, z2_error, r2_error, qzz_error = (
+        _inside_cell_moment_errors_from_reconstruction(
+            x_cell=x_cell,
+            y_cell=y_cell,
+            z_cell=z_cell,
+            jacobian_cell=jacobian_cell,
+            reconstruction=reconstruction,
+            normalization_constant=normalization_constant,
+            logical_cell_volume=logical_cell_volume,
+            moment_subcell_divisions=moment_subcell_divisions,
+        )
+    )
+    return InsideCellReconstructionSummary(
+        reconstruction_label=reconstruction_label,
+        profile_rms_error_x=profile_errors["x"][0],
+        profile_rms_error_y=profile_errors["y"][0],
+        profile_rms_error_z=profile_errors["z"][0],
+        profile_max_abs_error_x=profile_errors["x"][1],
+        profile_max_abs_error_y=profile_errors["y"][1],
+        profile_max_abs_error_z=profile_errors["z"][1],
+        local_x2_contribution_error=x2_error,
+        local_y2_contribution_error=y2_error,
+        local_z2_contribution_error=z2_error,
+        local_r2_contribution_error=r2_error,
+        local_quadrupole_component_error=qzz_error,
+    )
+
+
+def run_h2_hartree_inside_cell_representation_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    cell_subsamples: int = 9,
+    moment_subcell_divisions: tuple[int, int, int] = (4, 4, 4),
+) -> H2HartreeInsideCellRepresentationAuditResult:
+    """Audit Gaussian inside-cell representation error on representative mapped cells."""
+
+    monitor_geometry = _build_monitor_geometry(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+    )
+    gaussian_density = _build_gaussian_density(monitor_geometry)
+    raw_gaussian = np.exp(
+        -_DEFAULT_GAUSSIAN_ALPHA
+        * (
+            monitor_geometry.x_points * monitor_geometry.x_points
+            + monitor_geometry.y_points * monitor_geometry.y_points
+            + monitor_geometry.z_points * monitor_geometry.z_points
+        )
+    )
+    normalization_constant = float(
+        np.sum(gaussian_density * np.asarray(monitor_geometry.cell_volumes, dtype=np.float64), dtype=np.float64)
+        / np.sum(raw_gaussian * np.asarray(monitor_geometry.cell_volumes, dtype=np.float64), dtype=np.float64)
+    )
+    logical_cell_volume = _logical_cell_volume(monitor_geometry)
+    cell_summaries = []
+    for cell_label, cell_index, region_label in _representative_cell_indices(monitor_geometry):
+        i, j, k = cell_index
+        x_cell = np.asarray(monitor_geometry.x_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        y_cell = np.asarray(monitor_geometry.y_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        z_cell = np.asarray(monitor_geometry.z_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        jacobian_cell = np.asarray(monitor_geometry.jacobian[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        rho_cell = np.asarray(gaussian_density[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        profile_errors = _inside_cell_profile_errors(
+            x_cell=x_cell,
+            y_cell=y_cell,
+            z_cell=z_cell,
+            rho_cell=rho_cell,
+            normalization_constant=normalization_constant,
+            cell_subsamples=cell_subsamples,
+        )
+        x2_error, y2_error, z2_error, r2_error, qzz_error = _inside_cell_moment_errors(
+            x_cell=x_cell,
+            y_cell=y_cell,
+            z_cell=z_cell,
+            jacobian_cell=jacobian_cell,
+            rho_cell=rho_cell,
+            normalization_constant=normalization_constant,
+            logical_cell_volume=logical_cell_volume,
+            moment_subcell_divisions=moment_subcell_divisions,
+        )
+        cell_summaries.append(
+            InsideCellRepresentationCellSummary(
+                cell_label=cell_label,
+                cell_index=cell_index,
+                region_label=region_label,
+                mean_jacobian=float(np.mean(jacobian_cell)),
+                profile_rms_error_x=profile_errors["x"][0],
+                profile_rms_error_y=profile_errors["y"][0],
+                profile_rms_error_z=profile_errors["z"][0],
+                profile_max_abs_error_x=profile_errors["x"][1],
+                profile_max_abs_error_y=profile_errors["y"][1],
+                profile_max_abs_error_z=profile_errors["z"][1],
+                local_x2_contribution_error=x2_error,
+                local_y2_contribution_error=y2_error,
+                local_z2_contribution_error=z2_error,
+                local_r2_contribution_error=r2_error,
+                local_quadrupole_component_error=qzz_error,
+            )
+        )
+    high_j_cell = next(
+        cell for cell in cell_summaries if cell.cell_label == "high_jacobian_interior"
+    )
+    diagnosis = (
+        "This audit compares analytic centered-Gaussian values on the trilinearly mapped cell against "
+        "the trilinear reconstruction of nodal Gaussian values. If the high-jacobian interior cell "
+        "already shows larger z-profile and z^2/qzz contribution errors than ordinary cells, the fake "
+        "quadrupole is being formed inside the mapped-cell field representation itself."
+    )
+    return H2HartreeInsideCellRepresentationAuditResult(
+        cell_summaries=tuple(cell_summaries),
+        diagnosis=diagnosis,
+        note=(
+            "The production measure is kept fixed. Only the cell-local representation of the centered "
+            "Gaussian is compared against a denser audit-only reference within representative mapped cells. "
+            f"Current high-jacobian interior z-profile RMS error: {high_j_cell.profile_rms_error_z:.6e}."
+        ),
+    )
+
+
+def run_h2_hartree_inside_cell_reconstruction_comparison_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    cell_subsamples: int = 9,
+    moment_subcell_divisions: tuple[int, int, int] = (4, 4, 4),
+) -> H2HartreeInsideCellReconstructionComparisonAuditResult:
+    """Compare audit-only local Gaussian reconstructions on representative mapped cells."""
+
+    monitor_geometry = _build_monitor_geometry(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+    )
+    gaussian_density = _build_gaussian_density(monitor_geometry)
+    raw_gaussian = np.exp(
+        -_DEFAULT_GAUSSIAN_ALPHA
+        * (
+            monitor_geometry.x_points * monitor_geometry.x_points
+            + monitor_geometry.y_points * monitor_geometry.y_points
+            + monitor_geometry.z_points * monitor_geometry.z_points
+        )
+    )
+    normalization_constant = float(
+        np.sum(gaussian_density * np.asarray(monitor_geometry.cell_volumes, dtype=np.float64), dtype=np.float64)
+        / np.sum(raw_gaussian * np.asarray(monitor_geometry.cell_volumes, dtype=np.float64), dtype=np.float64)
+    )
+    logical_cell_volume = _logical_cell_volume(monitor_geometry)
+    cell_summaries = []
+    shape = monitor_geometry.spec.shape
+    for cell_label, cell_index, region_label in _representative_cell_indices(monitor_geometry):
+        i, j, k = cell_index
+        x_cell = np.asarray(monitor_geometry.x_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        y_cell = np.asarray(monitor_geometry.y_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        z_cell = np.asarray(monitor_geometry.z_points[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        jacobian_cell = np.asarray(monitor_geometry.jacobian[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+        rho_cell = np.asarray(gaussian_density[i : i + 2, j : j + 2, k : k + 2], dtype=np.float64)
+
+        def _trilinear_reconstruction(*, u: float, v: float, w: float, x: float, y: float, z: float) -> float:
+            del x, y, z
+            return _trilinear_cell_value(rho_cell, u=u, v=v, w=w)
+
+        sx, sy, sz = _cell_and_neighbor_slices(cell_index, shape=shape)
+        quadratic_coefficients = _local_quadratic_fit_coefficients(
+            x_stencil=np.asarray(monitor_geometry.x_points[sx, sy, sz], dtype=np.float64),
+            y_stencil=np.asarray(monitor_geometry.y_points[sx, sy, sz], dtype=np.float64),
+            z_stencil=np.asarray(monitor_geometry.z_points[sx, sy, sz], dtype=np.float64),
+            values=np.asarray(gaussian_density[sx, sy, sz], dtype=np.float64),
+        )
+
+        def _quadratic_reconstruction(*, u: float, v: float, w: float, x: float, y: float, z: float) -> float:
+            del u, v, w
+            return _evaluate_quadratic_fit(
+                quadratic_coefficients,
+                x_value=x,
+                y_value=y,
+                z_value=z,
+            )
+
+        reconstruction_summaries = (
+            _inside_cell_reconstruction_summary(
+                reconstruction_label="trilinear_nodal",
+                x_cell=x_cell,
+                y_cell=y_cell,
+                z_cell=z_cell,
+                jacobian_cell=jacobian_cell,
+                reconstruction=_trilinear_reconstruction,
+                normalization_constant=normalization_constant,
+                logical_cell_volume=logical_cell_volume,
+                cell_subsamples=cell_subsamples,
+                moment_subcell_divisions=moment_subcell_divisions,
+            ),
+            _inside_cell_reconstruction_summary(
+                reconstruction_label="local_quadratic_fit",
+                x_cell=x_cell,
+                y_cell=y_cell,
+                z_cell=z_cell,
+                jacobian_cell=jacobian_cell,
+                reconstruction=_quadratic_reconstruction,
+                normalization_constant=normalization_constant,
+                logical_cell_volume=logical_cell_volume,
+                cell_subsamples=cell_subsamples,
+                moment_subcell_divisions=moment_subcell_divisions,
+            ),
+        )
+        cell_summaries.append(
+            InsideCellReconstructionComparisonCellSummary(
+                cell_label=cell_label,
+                cell_index=cell_index,
+                region_label=region_label,
+                mean_jacobian=float(np.mean(jacobian_cell)),
+                reconstruction_summaries=reconstruction_summaries,
+            )
+        )
+
+    diagnosis = (
+        "This audit keeps mapping, Jacobian, and quadrature fixed, and only swaps the local field "
+        "reconstruction inside representative mapped cells. If local z^2 / Qzz errors drop sharply "
+        "when trilinear nodal reconstruction is replaced by a local quadratic fit, the low-level fake "
+        "quadrupole is primarily a field-representation issue."
+    )
+    return H2HartreeInsideCellReconstructionComparisonAuditResult(
+        cell_summaries=tuple(cell_summaries),
+        diagnosis=diagnosis,
+        note=(
+            "The local quadratic fit is audit-only and uses a small neighboring nodal stencil. "
+            "It does not modify the production mapped grid, Jacobian, or measure."
+        ),
+    )
+
+
+def _reference_quadrature_summary(
+    monitor_geometry: MonitorGridGeometry,
+    *,
+    subcell_divisions: tuple[int, int, int],
+    gaussian_target_charge: float = 2.0,
+) -> tuple[tuple[ReferenceQuadratureIntegralRow, ...], float, float]:
+    sx, sy, sz = subcell_divisions
+    if sx <= 0 or sy <= 0 or sz <= 0:
+        raise ValueError("subcell_divisions must be positive in every direction.")
+    box_bounds = monitor_geometry.spec.box_bounds
+    references = _analytic_box_integrals(box_bounds)
+    polynomial_references = _polynomial_reference_values(box_bounds)
+    logical_subcell_volume = _logical_cell_volume(monitor_geometry) / float(sx * sy * sz)
+    x_nodal = np.asarray(monitor_geometry.x_points, dtype=np.float64)
+    y_nodal = np.asarray(monitor_geometry.y_points, dtype=np.float64)
+    z_nodal = np.asarray(monitor_geometry.z_points, dtype=np.float64)
+    jacobian_nodal = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+
+    accumulators = {
+        "1": 0.0,
+        "x2": 0.0,
+        "y2": 0.0,
+        "z2": 0.0,
+        "r2": 0.0,
+        "centered_gaussian": 0.0,
+    }
+    gaussian_tensor = np.zeros((3, 3), dtype=np.float64)
+    for ix in range(sx):
+        u = (ix + 0.5) / sx
+        for iy in range(sy):
+            v = (iy + 0.5) / sy
+            for iz in range(sz):
+                w = (iz + 0.5) / sz
+                xs = _trilinear_sample(x_nodal, u=u, v=v, w=w)
+                ys = _trilinear_sample(y_nodal, u=u, v=v, w=w)
+                zs = _trilinear_sample(z_nodal, u=u, v=v, w=w)
+                js = _trilinear_sample(jacobian_nodal, u=u, v=v, w=w)
+                weight = js * logical_subcell_volume
+                x2 = xs * xs
+                y2 = ys * ys
+                z2 = zs * zs
+                r2 = x2 + y2 + z2
+                gaussian = np.exp(-_DEFAULT_GAUSSIAN_ALPHA * r2)
+                accumulators["1"] += float(np.sum(weight, dtype=np.float64))
+                accumulators["x2"] += float(np.sum(x2 * weight, dtype=np.float64))
+                accumulators["y2"] += float(np.sum(y2 * weight, dtype=np.float64))
+                accumulators["z2"] += float(np.sum(z2 * weight, dtype=np.float64))
+                accumulators["r2"] += float(np.sum(r2 * weight, dtype=np.float64))
+                accumulators["centered_gaussian"] += float(np.sum(gaussian * weight, dtype=np.float64))
+                gaussian_tensor[0, 0] += float(
+                    np.sum(gaussian * (3.0 * x2 - r2) * weight, dtype=np.float64)
+                )
+                gaussian_tensor[1, 1] += float(
+                    np.sum(gaussian * (3.0 * y2 - r2) * weight, dtype=np.float64)
+                )
+                gaussian_tensor[2, 2] += float(
+                    np.sum(gaussian * (3.0 * z2 - r2) * weight, dtype=np.float64)
+                )
+                xy = xs * ys
+                xz = xs * zs
+                yz = ys * zs
+                offdiag_xy = float(np.sum(gaussian * 3.0 * xy * weight, dtype=np.float64))
+                offdiag_xz = float(np.sum(gaussian * 3.0 * xz * weight, dtype=np.float64))
+                offdiag_yz = float(np.sum(gaussian * 3.0 * yz * weight, dtype=np.float64))
+                gaussian_tensor[0, 1] += offdiag_xy
+                gaussian_tensor[1, 0] += offdiag_xy
+                gaussian_tensor[0, 2] += offdiag_xz
+                gaussian_tensor[2, 0] += offdiag_xz
+                gaussian_tensor[1, 2] += offdiag_yz
+                gaussian_tensor[2, 1] += offdiag_yz
+
+    production_fields = _polynomial_fields(
+        monitor_geometry.x_points,
+        monitor_geometry.y_points,
+        monitor_geometry.z_points,
+    )
+    production_weights = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
+    integral_rows = []
+    for label in ("1", "x2", "y2", "z2", "r2"):
+        reference_value = polynomial_references[label]
+        production_value = float(
+            np.sum(production_fields[label] * production_weights, dtype=np.float64)
+        )
+        reference_quadrature_value = float(accumulators[label])
+        integral_rows.append(
+            ReferenceQuadratureIntegralRow(
+                function_label=label,
+                reference_value=float(reference_value),
+                production_value=production_value,
+                production_bias=float(production_value - reference_value),
+                reference_quadrature_value=reference_quadrature_value,
+                reference_quadrature_bias=float(reference_quadrature_value - reference_value),
+            )
+        )
+    gaussian_production_value = float(
+        np.sum(
+            np.exp(
+                -_DEFAULT_GAUSSIAN_ALPHA
+                * (
+                    monitor_geometry.x_points * monitor_geometry.x_points
+                    + monitor_geometry.y_points * monitor_geometry.y_points
+                    + monitor_geometry.z_points * monitor_geometry.z_points
+                )
+            )
+            * production_weights,
+            dtype=np.float64,
+        )
+    )
+    integral_rows.append(
+        ReferenceQuadratureIntegralRow(
+            function_label="centered_gaussian",
+            reference_value=float(references["centered_gaussian"]),
+            production_value=gaussian_production_value,
+            production_bias=float(gaussian_production_value - references["centered_gaussian"]),
+            reference_quadrature_value=float(accumulators["centered_gaussian"]),
+            reference_quadrature_bias=float(
+                accumulators["centered_gaussian"] - references["centered_gaussian"]
+            ),
+        )
+    )
+    gaussian_production_density = _build_gaussian_density(
+        monitor_geometry,
+        target_charge=gaussian_target_charge,
+    )
+    gaussian_production_quadrupole = _quadrupole_tensor(
+        gaussian_production_density,
+        monitor_geometry,
+    )
+    gaussian_reference_quadrupole = (
+        (gaussian_target_charge / accumulators["centered_gaussian"]) * gaussian_tensor
+    )
+    return (
+        tuple(integral_rows),
+        float(np.linalg.norm(gaussian_production_quadrupole)),
+        float(np.linalg.norm(gaussian_reference_quadrupole)),
+    )
+
+
+def run_h2_hartree_reference_quadrature_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    subcell_divisions: tuple[int, int, int] = (2, 2, 2),
+) -> H2HartreeReferenceQuadratureAuditResult:
+    """Compare the production nodal monitor measure against an audit-only subcell quadrature."""
+
+    monitor_geometry = _build_monitor_geometry(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+    )
+    integral_rows, production_quadrupole_norm, reference_quadrupole_norm = (
+        _reference_quadrature_summary(
+            monitor_geometry,
+            subcell_divisions=subcell_divisions,
+        )
+    )
+    gaussian_row = next(
+        row for row in integral_rows if row.function_label == "centered_gaussian"
+    )
+    return H2HartreeReferenceQuadratureAuditResult(
+        subcell_divisions=subcell_divisions,
+        integral_rows=integral_rows,
+        gaussian_production_total_charge=float(gaussian_row.production_value),
+        gaussian_reference_quadrature_total_charge=float(gaussian_row.reference_quadrature_value),
+        gaussian_production_quadrupole_norm=production_quadrupole_norm,
+        gaussian_reference_quadrature_quadrupole_norm=reference_quadrupole_norm,
+        note=(
+            "This audit keeps the mapped grid fixed and compares the production nodal J*dξ*dη*dζ "
+            "measure against an audit-only trilinear subcell midpoint quadrature on each logical cell."
         ),
     )
 
