@@ -6,14 +6,18 @@ from importlib import import_module
 
 import numpy as np
 
+from isogrid.config import H2_BENCHMARK_CASE
 from isogrid.audit.local_hamiltonian_h2_trial_audit import build_symmetric_h2_trial_orbital
 from isogrid.grid import build_default_h2_grid_geometry
+from isogrid.grid import build_h2_local_patch_development_element_parameters
+from isogrid.grid import build_monitor_grid_for_case
 from isogrid.ks import build_singlet_like_spin_densities
 from isogrid.ks import build_total_density
 from isogrid.ks import evaluate_static_ks_terms
 from isogrid.poisson import build_hartree_action
 from isogrid.poisson import evaluate_hartree_energy
 from isogrid.poisson import solve_hartree_potential
+from isogrid.poisson.open_boundary import _compute_multipole_boundary_condition
 
 
 def test_poisson_and_hartree_modules_import() -> None:
@@ -86,3 +90,52 @@ def test_static_ks_with_hartree_runs_and_is_finite() -> None:
     assert np.all(np.isfinite(terms.total_action))
     assert np.all(np.isfinite(terms.hartree_potential))
     assert np.allclose(terms.hartree_action, terms.hartree_action[:, :, ::-1])
+
+
+def test_monitor_grid_multipole_boundary_reduces_centered_gaussian_fake_quadrupole() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + grid_geometry.z_points**2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+    dx = grid_geometry.x_points
+    dy = grid_geometry.y_points
+    dz = grid_geometry.z_points
+    radius_squared = dx * dx + dy * dy + dz * dz
+    nodal_quadrupole = np.array(
+        [
+            [
+                np.sum(rho * (3.0 * dx * dx - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dx * dy) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dx * dz) * grid_geometry.cell_volumes, dtype=np.float64),
+            ],
+            [
+                np.sum(rho * (3.0 * dy * dx) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dy * dy - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dy * dz) * grid_geometry.cell_volumes, dtype=np.float64),
+            ],
+            [
+                np.sum(rho * (3.0 * dz * dx) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dz * dy) * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * (3.0 * dz * dz - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+            ],
+        ],
+        dtype=np.float64,
+    )
+    boundary = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=2,
+    )
+
+    assert np.linalg.norm(boundary.quadrupole_tensor) < 0.95 * np.linalg.norm(nodal_quadrupole)

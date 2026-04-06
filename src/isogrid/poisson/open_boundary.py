@@ -33,6 +33,8 @@ from isogrid.ops import validate_orbital_field
 _FOUR_PI = 4.0 * np.pi
 _JACOBI_DAMPING = 0.8
 _JACOBI_CHECK_INTERVAL = 25
+_MONITOR_MOMENT_RECONSTRUCTION_JACOBIAN_QUANTILE = 0.9
+_MONITOR_MOMENT_RECONSTRUCTION_SUBCELL_DIVISIONS = (2, 2, 2)
 GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
@@ -97,6 +99,213 @@ def _boundary_mask(shape: tuple[int, int, int]) -> np.ndarray:
     return mask
 
 
+def _trilinear_cell_value(
+    cell_corners: np.ndarray,
+    *,
+    u: float,
+    v: float,
+    w: float,
+) -> float:
+    um = 1.0 - u
+    vm = 1.0 - v
+    wm = 1.0 - w
+    return float(
+        um * vm * wm * cell_corners[0, 0, 0]
+        + u * vm * wm * cell_corners[1, 0, 0]
+        + um * v * wm * cell_corners[0, 1, 0]
+        + u * v * wm * cell_corners[1, 1, 0]
+        + um * vm * w * cell_corners[0, 0, 1]
+        + u * vm * w * cell_corners[1, 0, 1]
+        + um * v * w * cell_corners[0, 1, 1]
+        + u * v * w * cell_corners[1, 1, 1]
+    )
+
+
+def _cell_average_from_nodal_field(field: np.ndarray) -> np.ndarray:
+    return (
+        field[:-1, :-1, :-1]
+        + field[1:, :-1, :-1]
+        + field[:-1, 1:, :-1]
+        + field[1:, 1:, :-1]
+        + field[:-1, :-1, 1:]
+        + field[1:, :-1, 1:]
+        + field[:-1, 1:, 1:]
+        + field[1:, 1:, 1:]
+    ) / 8.0
+
+
+def _cell_and_neighbor_slices(
+    cell_index: tuple[int, int, int],
+    *,
+    shape: tuple[int, int, int],
+) -> tuple[slice, slice, slice]:
+    i, j, k = cell_index
+    nx, ny, nz = shape
+    return (
+        slice(max(i - 1, 0), min(i + 3, nx)),
+        slice(max(j - 1, 0), min(j + 3, ny)),
+        slice(max(k - 1, 0), min(k + 3, nz)),
+    )
+
+
+def _local_quadratic_fit_coefficients(
+    *,
+    x_stencil: np.ndarray,
+    y_stencil: np.ndarray,
+    z_stencil: np.ndarray,
+    values: np.ndarray,
+) -> np.ndarray:
+    x_flat = np.asarray(x_stencil, dtype=np.float64).reshape(-1)
+    y_flat = np.asarray(y_stencil, dtype=np.float64).reshape(-1)
+    z_flat = np.asarray(z_stencil, dtype=np.float64).reshape(-1)
+    design = np.column_stack(
+        [
+            np.ones_like(x_flat),
+            x_flat,
+            y_flat,
+            z_flat,
+            x_flat * x_flat,
+            y_flat * y_flat,
+            z_flat * z_flat,
+            x_flat * y_flat,
+            x_flat * z_flat,
+            y_flat * z_flat,
+        ]
+    )
+    coefficients, *_ = np.linalg.lstsq(
+        design,
+        np.asarray(values, dtype=np.float64).reshape(-1),
+        rcond=None,
+    )
+    return np.asarray(coefficients, dtype=np.float64)
+
+
+def _evaluate_quadratic_fit(
+    coefficients: np.ndarray,
+    *,
+    x_value: float,
+    y_value: float,
+    z_value: float,
+) -> float:
+    basis = np.array(
+        [
+            1.0,
+            x_value,
+            y_value,
+            z_value,
+            x_value * x_value,
+            y_value * y_value,
+            z_value * z_value,
+            x_value * y_value,
+            x_value * z_value,
+            y_value * z_value,
+        ],
+        dtype=np.float64,
+    )
+    return float(np.dot(coefficients, basis))
+
+
+def _monitor_grid_multipole_correction(
+    grid_geometry: MonitorGridGeometry,
+    rho: np.ndarray,
+    *,
+    reference_center: tuple[float, float, float],
+) -> tuple[float, np.ndarray, np.ndarray]:
+    cell_jacobian = _cell_average_from_nodal_field(np.asarray(grid_geometry.jacobian, dtype=np.float64))
+    cell_shape = cell_jacobian.shape
+    boundary_mask = np.zeros(cell_shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    high_threshold = float(
+        np.quantile(
+            cell_jacobian[interior_mask],
+            _MONITOR_MOMENT_RECONSTRUCTION_JACOBIAN_QUANTILE,
+        )
+    )
+    selected_cells = np.argwhere(interior_mask & (cell_jacobian >= high_threshold))
+    if selected_cells.size == 0:
+        return 0.0, np.zeros(3, dtype=np.float64), np.zeros((3, 3), dtype=np.float64)
+
+    logical_x = np.asarray(grid_geometry.logical_x, dtype=np.float64)
+    logical_y = np.asarray(grid_geometry.logical_y, dtype=np.float64)
+    logical_z = np.asarray(grid_geometry.logical_z, dtype=np.float64)
+    logical_cell_volume = (
+        float(np.diff(logical_x)[0])
+        * float(np.diff(logical_y)[0])
+        * float(np.diff(logical_z)[0])
+    )
+    sx, sy, sz = _MONITOR_MOMENT_RECONSTRUCTION_SUBCELL_DIVISIONS
+    subcell_volume = logical_cell_volume / float(sx * sy * sz)
+    x_points = np.asarray(grid_geometry.x_points, dtype=np.float64)
+    y_points = np.asarray(grid_geometry.y_points, dtype=np.float64)
+    z_points = np.asarray(grid_geometry.z_points, dtype=np.float64)
+    jacobian = np.asarray(grid_geometry.jacobian, dtype=np.float64)
+    density = np.asarray(rho, dtype=np.float64)
+    charge_correction = 0.0
+    dipole_correction = np.zeros(3, dtype=np.float64)
+    quadrupole_correction = np.zeros((3, 3), dtype=np.float64)
+
+    for cell_index_array in selected_cells:
+        cell_index = tuple(int(value) for value in cell_index_array)
+        i, j, k = cell_index
+        x_cell = x_points[i : i + 2, j : j + 2, k : k + 2]
+        y_cell = y_points[i : i + 2, j : j + 2, k : k + 2]
+        z_cell = z_points[i : i + 2, j : j + 2, k : k + 2]
+        jacobian_cell = jacobian[i : i + 2, j : j + 2, k : k + 2]
+        rho_cell = density[i : i + 2, j : j + 2, k : k + 2]
+        sx_slice, sy_slice, sz_slice = _cell_and_neighbor_slices(
+            cell_index,
+            shape=grid_geometry.spec.shape,
+        )
+        coefficients = _local_quadratic_fit_coefficients(
+            x_stencil=x_points[sx_slice, sy_slice, sz_slice],
+            y_stencil=y_points[sx_slice, sy_slice, sz_slice],
+            z_stencil=z_points[sx_slice, sy_slice, sz_slice],
+            values=density[sx_slice, sy_slice, sz_slice],
+        )
+        for ix in range(sx):
+            u = (ix + 0.5) / sx
+            for iy in range(sy):
+                v = (iy + 0.5) / sy
+                for iz in range(sz):
+                    w = (iz + 0.5) / sz
+                    x_value = _trilinear_cell_value(x_cell, u=u, v=v, w=w)
+                    y_value = _trilinear_cell_value(y_cell, u=u, v=v, w=w)
+                    z_value = _trilinear_cell_value(z_cell, u=u, v=v, w=w)
+                    jacobian_value = _trilinear_cell_value(jacobian_cell, u=u, v=v, w=w)
+                    rho_trilinear = _trilinear_cell_value(rho_cell, u=u, v=v, w=w)
+                    rho_quadratic = _evaluate_quadratic_fit(
+                        coefficients,
+                        x_value=x_value,
+                        y_value=y_value,
+                        z_value=z_value,
+                    )
+                    delta_rho = (rho_quadratic - rho_trilinear) * jacobian_value * subcell_volume
+                    dx = x_value - reference_center[0]
+                    dy = y_value - reference_center[1]
+                    dz = z_value - reference_center[2]
+                    radius_squared = dx * dx + dy * dy + dz * dz
+                    charge_correction += delta_rho
+                    dipole_correction[0] += delta_rho * dx
+                    dipole_correction[1] += delta_rho * dy
+                    dipole_correction[2] += delta_rho * dz
+                    quadrupole_correction[0, 0] += delta_rho * (3.0 * dx * dx - radius_squared)
+                    quadrupole_correction[0, 1] += delta_rho * (3.0 * dx * dy)
+                    quadrupole_correction[0, 2] += delta_rho * (3.0 * dx * dz)
+                    quadrupole_correction[1, 0] += delta_rho * (3.0 * dy * dx)
+                    quadrupole_correction[1, 1] += delta_rho * (3.0 * dy * dy - radius_squared)
+                    quadrupole_correction[1, 2] += delta_rho * (3.0 * dy * dz)
+                    quadrupole_correction[2, 0] += delta_rho * (3.0 * dz * dx)
+                    quadrupole_correction[2, 1] += delta_rho * (3.0 * dz * dy)
+                    quadrupole_correction[2, 2] += delta_rho * (3.0 * dz * dz - radius_squared)
+    return charge_correction, dipole_correction, quadrupole_correction
+
+
 def _compute_multipole_boundary_condition(
     grid_geometry: GridGeometryLike,
     rho: np.ndarray,
@@ -124,8 +333,6 @@ def _compute_multipole_boundary_condition(
     dz = grid_geometry.z_points - reference_center[2]
     radius_squared = dx * dx + dy * dy + dz * dz
     radius = np.sqrt(radius_squared, dtype=np.float64)
-    weights = grid_geometry.cell_volumes
-
     total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
     dipole_moment = np.array(
         [
@@ -143,6 +350,17 @@ def _compute_multipole_boundary_condition(
         ],
         dtype=np.float64,
     )
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        charge_correction, dipole_correction, quadrupole_correction = (
+            _monitor_grid_multipole_correction(
+                grid_geometry,
+                rho,
+                reference_center=reference_center,
+            )
+        )
+        total_charge += charge_correction
+        dipole_moment = dipole_moment + dipole_correction
+        quadrupole_tensor = quadrupole_tensor + quadrupole_correction
 
     boundary_mask = _boundary_mask(grid_geometry.spec.shape)
     boundary_values = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
