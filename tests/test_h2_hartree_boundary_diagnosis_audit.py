@@ -137,11 +137,19 @@ def test_small_hartree_geometry_representation_audit_is_finite() -> None:
     assert np.isfinite(result.cell_volume_construction.logical_cell_volume)
     assert np.isfinite(result.cell_volume_construction.recomputed_cell_volume_sum)
     assert np.isfinite(result.cell_volume_construction.max_abs_cell_volume_difference)
-    assert len(result.polynomial_exactness_rows) == 7
+    assert len(result.polynomial_exactness_rows) == 8
     for row in result.polynomial_exactness_rows:
         assert np.isfinite(row.reference_value)
         assert np.isfinite(row.uniform_weight_value)
         assert np.isfinite(row.current_cell_volume_value)
         assert np.isfinite(row.trapezoidal_adjusted_value)
+        assert np.isfinite(row.uniform_coordinates_monitor_weights_value)
+        assert np.isfinite(row.mapped_coordinates_uniform_weights_value)
+    assert len(result.second_order_region_rows) == 4
+    for row in result.second_order_region_rows:
+        assert np.isfinite(row.boundary_mean_abs_mapping_distortion)
+        assert np.isfinite(row.interior_mean_abs_mapping_distortion)
+        assert np.isfinite(row.high_jacobian_mean_abs_mapping_distortion)
+        assert np.isfinite(row.low_jacobian_mean_abs_mapping_distortion)
     assert np.isfinite(result.error_region_summary.boundary_mean_abs_r2_mapping_distortion)
     assert np.isfinite(result.error_region_summary.high_jacobian_mean_abs_r2_mapping_distortion)

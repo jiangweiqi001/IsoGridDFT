@@ -238,6 +238,21 @@ class PolynomialExactnessRow:
     current_cell_volume_bias: float
     trapezoidal_adjusted_value: float
     trapezoidal_adjusted_bias: float
+    uniform_coordinates_monitor_weights_value: float
+    uniform_coordinates_monitor_weights_bias: float
+    mapped_coordinates_uniform_weights_value: float
+    mapped_coordinates_uniform_weights_bias: float
+
+
+@dataclass(frozen=True)
+class SecondOrderRegionRow:
+    """Regional mapping-distortion summary for one second-order polynomial."""
+
+    function_label: str
+    boundary_mean_abs_mapping_distortion: float
+    interior_mean_abs_mapping_distortion: float
+    high_jacobian_mean_abs_mapping_distortion: float
+    low_jacobian_mean_abs_mapping_distortion: float
 
 
 @dataclass(frozen=True)
@@ -258,6 +273,7 @@ class HartreeGeometryRepresentationAuditResult:
 
     cell_volume_construction: CellVolumeConstructionSummary
     polynomial_exactness_rows: tuple[PolynomialExactnessRow, ...]
+    second_order_region_rows: tuple[SecondOrderRegionRow, ...]
     error_region_summary: GeometryRepresentationErrorRegionSummary
     note: str
 
@@ -398,6 +414,7 @@ def _polynomial_reference_values(
         "x2": float(volume * half_x * half_x / 3.0),
         "y2": float(volume * half_y * half_y / 3.0),
         "z2": float(volume * half_z * half_z / 3.0),
+        "r2": float(volume * (half_x * half_x + half_y * half_y + half_z * half_z) / 3.0),
         "xy": 0.0,
         "xz": 0.0,
         "yz": 0.0,
@@ -414,6 +431,7 @@ def _polynomial_fields(
         "x2": np.asarray(x_points * x_points, dtype=np.float64),
         "y2": np.asarray(y_points * y_points, dtype=np.float64),
         "z2": np.asarray(z_points * z_points, dtype=np.float64),
+        "r2": np.asarray(x_points * x_points + y_points * y_points + z_points * z_points, dtype=np.float64),
         "xy": np.asarray(x_points * y_points, dtype=np.float64),
         "xz": np.asarray(x_points * z_points, dtype=np.float64),
         "yz": np.asarray(y_points * z_points, dtype=np.float64),
@@ -425,10 +443,19 @@ def _polynomial_exactness_rows(
 ) -> tuple[PolynomialExactnessRow, ...]:
     box_bounds = monitor_geometry.spec.box_bounds
     references = _polynomial_reference_values(box_bounds)
-    fields = _polynomial_fields(
+    mapped_fields = _polynomial_fields(
         monitor_geometry.x_points,
         monitor_geometry.y_points,
         monitor_geometry.z_points,
+    )
+    uniform_box_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
+    uniform_fields = _polynomial_fields(
+        uniform_box_geometry.x_points,
+        uniform_box_geometry.y_points,
+        uniform_box_geometry.z_points,
     )
     physical_box_volume = references["1"]
     uniform_weight = np.full(
@@ -439,10 +466,17 @@ def _polynomial_exactness_rows(
     current_weight = np.asarray(monitor_geometry.cell_volumes, dtype=np.float64)
     trapezoidal_weight = current_weight * _trapezoidal_logical_weights(monitor_geometry.spec.shape)
     rows: list[PolynomialExactnessRow] = []
-    for label, field in fields.items():
-        uniform_value = float(np.sum(field * uniform_weight, dtype=np.float64))
-        current_value = float(np.sum(field * current_weight, dtype=np.float64))
-        trapezoidal_value = float(np.sum(field * trapezoidal_weight, dtype=np.float64))
+    for label, mapped_field in mapped_fields.items():
+        uniform_field = uniform_fields[label]
+        uniform_value = float(np.sum(mapped_field * uniform_weight, dtype=np.float64))
+        current_value = float(np.sum(mapped_field * current_weight, dtype=np.float64))
+        trapezoidal_value = float(np.sum(mapped_field * trapezoidal_weight, dtype=np.float64))
+        uniform_coordinates_monitor_weights_value = float(
+            np.sum(uniform_field * current_weight, dtype=np.float64)
+        )
+        mapped_coordinates_uniform_weights_value = float(
+            np.sum(mapped_field * uniform_weight, dtype=np.float64)
+        )
         reference_value = float(references[label])
         rows.append(
             PolynomialExactnessRow(
@@ -454,6 +488,62 @@ def _polynomial_exactness_rows(
                 current_cell_volume_bias=float(current_value - reference_value),
                 trapezoidal_adjusted_value=trapezoidal_value,
                 trapezoidal_adjusted_bias=float(trapezoidal_value - reference_value),
+                uniform_coordinates_monitor_weights_value=uniform_coordinates_monitor_weights_value,
+                uniform_coordinates_monitor_weights_bias=float(
+                    uniform_coordinates_monitor_weights_value - reference_value
+                ),
+                mapped_coordinates_uniform_weights_value=mapped_coordinates_uniform_weights_value,
+                mapped_coordinates_uniform_weights_bias=float(
+                    mapped_coordinates_uniform_weights_value - reference_value
+                ),
+            )
+        )
+    return tuple(rows)
+
+
+def _second_order_region_rows(
+    monitor_geometry: MonitorGridGeometry,
+) -> tuple[SecondOrderRegionRow, ...]:
+    uniform_box_geometry = _build_uniform_box_measure_geometry(
+        monitor_geometry,
+        use_monitor_cell_volumes=False,
+    )
+    mapped_fields = _polynomial_fields(
+        monitor_geometry.x_points,
+        monitor_geometry.y_points,
+        monitor_geometry.z_points,
+    )
+    uniform_fields = _polynomial_fields(
+        uniform_box_geometry.x_points,
+        uniform_box_geometry.y_points,
+        uniform_box_geometry.z_points,
+    )
+    boundary_mask = np.zeros(monitor_geometry.spec.shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    jacobian = np.asarray(monitor_geometry.jacobian, dtype=np.float64)
+    high_jacobian_threshold = float(np.quantile(jacobian, 0.9))
+    high_jacobian_mask = jacobian >= high_jacobian_threshold
+    low_jacobian_mask = jacobian < high_jacobian_threshold
+    rows: list[SecondOrderRegionRow] = []
+    for label in ("x2", "y2", "z2", "r2"):
+        distortion = np.abs(mapped_fields[label] - uniform_fields[label])
+        rows.append(
+            SecondOrderRegionRow(
+                function_label=label,
+                boundary_mean_abs_mapping_distortion=float(np.mean(distortion[boundary_mask])),
+                interior_mean_abs_mapping_distortion=float(np.mean(distortion[interior_mask])),
+                high_jacobian_mean_abs_mapping_distortion=float(
+                    np.mean(distortion[high_jacobian_mask])
+                ),
+                low_jacobian_mean_abs_mapping_distortion=float(
+                    np.mean(distortion[low_jacobian_mask])
+                ),
             )
         )
     return tuple(rows)
@@ -1590,6 +1680,7 @@ def run_h2_hartree_geometry_representation_audit(
     return HartreeGeometryRepresentationAuditResult(
         cell_volume_construction=cell_volume_construction,
         polynomial_exactness_rows=_polynomial_exactness_rows(monitor_geometry),
+        second_order_region_rows=_second_order_region_rows(monitor_geometry),
         error_region_summary=_geometry_representation_error_region_summary(monitor_geometry),
         note=(
             "This audit traces monitor cell_volumes back to J * dxi * deta * dzeta, then checks how "
