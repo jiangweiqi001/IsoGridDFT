@@ -18,6 +18,7 @@ from isogrid.poisson import build_hartree_action
 from isogrid.poisson import evaluate_hartree_energy
 from isogrid.poisson import solve_hartree_potential
 from isogrid.poisson.open_boundary import _compute_multipole_boundary_condition
+from isogrid.poisson.open_boundary import _monitor_grid_nodal_region_moments
 
 
 def test_poisson_and_hartree_modules_import() -> None:
@@ -139,3 +140,98 @@ def test_monitor_grid_multipole_boundary_reduces_centered_gaussian_fake_quadrupo
     )
 
     assert np.linalg.norm(boundary.quadrupole_tensor) < 0.95 * np.linalg.norm(nodal_quadrupole)
+
+
+def test_monitor_grid_multipole_boundary_keeps_centered_gaussian_charge_close_to_two() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + grid_geometry.z_points**2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+
+    boundary = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=2,
+    )
+
+    assert abs(boundary.total_charge - 2.0) < 5.0e-2
+
+
+def test_monitor_grid_nodal_region_moments_recover_full_nodal_moments_for_all_cells() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + grid_geometry.z_points**2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+    selected_cell_mask = np.ones(
+        tuple(dimension - 1 for dimension in grid_geometry.spec.shape),
+        dtype=bool,
+    )
+
+    total_charge, dipole_moment, quadrupole_tensor = _monitor_grid_nodal_region_moments(
+        grid_geometry,
+        rho,
+        reference_center=(0.0, 0.0, 0.0),
+        selected_cell_mask=selected_cell_mask,
+    )
+
+    dx = grid_geometry.x_points
+    dy = grid_geometry.y_points
+    dz = grid_geometry.z_points
+    radius_squared = dx * dx + dy * dy + dz * dz
+    assert np.isclose(total_charge, np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64))
+    assert np.allclose(
+        dipole_moment,
+        np.array(
+            [
+                np.sum(rho * dx * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * dy * grid_geometry.cell_volumes, dtype=np.float64),
+                np.sum(rho * dz * grid_geometry.cell_volumes, dtype=np.float64),
+            ],
+            dtype=np.float64,
+        ),
+    )
+    assert np.allclose(
+        quadrupole_tensor,
+        np.array(
+            [
+                [
+                    np.sum(rho * (3.0 * dx * dx - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dx * dy) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dx * dz) * grid_geometry.cell_volumes, dtype=np.float64),
+                ],
+                [
+                    np.sum(rho * (3.0 * dy * dx) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dy * dy - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dy * dz) * grid_geometry.cell_volumes, dtype=np.float64),
+                ],
+                [
+                    np.sum(rho * (3.0 * dz * dx) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dz * dy) * grid_geometry.cell_volumes, dtype=np.float64),
+                    np.sum(rho * (3.0 * dz * dz - radius_squared) * grid_geometry.cell_volumes, dtype=np.float64),
+                ],
+            ],
+            dtype=np.float64,
+        ),
+    )

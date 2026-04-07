@@ -189,6 +189,29 @@ def test_small_hartree_mapping_stage_attribution_audit_is_finite() -> None:
         assert np.isfinite(row.high_jacobian_distortion_metric)
 
 
+def test_small_hartree_mapping_solve_stage_attribution_audit_is_finite() -> None:
+    from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
+        run_h2_hartree_mapping_solve_stage_attribution_audit,
+    )
+
+    result = run_h2_hartree_mapping_solve_stage_attribution_audit(
+        case=H2_BENCHMARK_CASE,
+        monitor_shape=(19, 19, 23),
+        baseline_monitor_box_half_extents=(8.0, 8.0, 10.0),
+        max_inner_iterations_override=60,
+    )
+
+    assert len(result.stage_rows) >= 7
+    assert result.stage_rows[0].stage_name == "raw_monitor_field"
+    assert any("backtracking_candidate" in row.stage_name for row in result.stage_rows)
+    for row in result.stage_rows:
+        assert row.stage_name
+        assert row.stage_metric_basis
+        assert np.isfinite(row.z_related_first_metric)
+        assert np.isfinite(row.z_related_second_metric)
+        assert np.isfinite(row.high_jacobian_distortion_metric)
+
+
 def test_small_hartree_reference_quadrature_audit_is_finite() -> None:
     from isogrid.audit.h2_hartree_boundary_diagnosis_audit import (
         run_h2_hartree_reference_quadrature_audit,

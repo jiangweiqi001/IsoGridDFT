@@ -362,6 +362,36 @@ class H2HartreeMappingStageAttributionAuditResult:
 
 
 @dataclass(frozen=True)
+class MappingSolveStageAttributionRow:
+    """Deeper mapping-solve stage row with derivative-based geometry diagnostics."""
+
+    stage_name: str
+    stage_metric_basis: str
+    x_related_first_metric: float
+    y_related_first_metric: float
+    z_related_first_metric: float
+    x_related_second_metric: float
+    y_related_second_metric: float
+    z_related_second_metric: float
+    z_related_displacement_metric: float
+    high_jacobian_distortion_metric: float
+    low_jacobian_distortion_metric: float
+    z_dominant_distortion_metric: float
+    xy_comparable_distortion_metric: float
+    worsened_vs_previous_stage: bool
+
+
+@dataclass(frozen=True)
+class H2HartreeMappingSolveStageAttributionAuditResult:
+    """Deeper attribution audit focused on the mapping-solve chain itself."""
+
+    stage_rows: tuple[MappingSolveStageAttributionRow, ...]
+    first_clearly_worse_stage: str
+    diagnosis: str
+    note: str
+
+
+@dataclass(frozen=True)
 class ReferenceQuadratureIntegralRow:
     """Production nodal measure versus audit-only reference quadrature for one function."""
 
@@ -2159,6 +2189,590 @@ def _stage_rows_with_worsening_flags(
             )
         )
     return tuple(flagged_rows)
+
+
+_MAPPING_SOLVE_JACOBIAN_FLOOR = 1.0e-12
+
+
+def _solve_weighted_harmonic_coordinates_trace(
+    *,
+    coefficient: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+    boundary_coordinates: np.ndarray,
+    initial_coordinates: np.ndarray,
+    inner_iterations: int,
+    tolerance: float,
+    relaxation: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Audit-only trace of the production harmonic solve."""
+
+    monitor = np.asarray(coefficient, dtype=np.float64)
+    coordinates = np.asarray(initial_coordinates, dtype=np.float64).copy()
+    boundary_mask = np.zeros(monitor.shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    coordinates[boundary_mask] = boundary_coordinates[boundary_mask]
+
+    dx = float(np.diff(np.asarray(logical_x, dtype=np.float64))[0])
+    dy = float(np.diff(np.asarray(logical_y, dtype=np.float64))[0])
+    dz = float(np.diff(np.asarray(logical_z, dtype=np.float64))[0])
+
+    ax_minus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[:-2, 1:-1, 1:-1]) / (dx * dx)
+    ax_plus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[2:, 1:-1, 1:-1]) / (dx * dx)
+    ay_minus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[1:-1, :-2, 1:-1]) / (dy * dy)
+    ay_plus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[1:-1, 2:, 1:-1]) / (dy * dy)
+    az_minus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[1:-1, 1:-1, :-2]) / (dz * dz)
+    az_plus = 0.5 * (monitor[1:-1, 1:-1, 1:-1] + monitor[1:-1, 1:-1, 2:]) / (dz * dz)
+    diagonal = ax_minus + ax_plus + ay_minus + ay_plus + az_minus + az_plus
+
+    first_updated_coordinates: np.ndarray | None = None
+    for _ in range(inner_iterations):
+        candidate = (
+            ax_minus[..., None] * coordinates[:-2, 1:-1, 1:-1, :]
+            + ax_plus[..., None] * coordinates[2:, 1:-1, 1:-1, :]
+            + ay_minus[..., None] * coordinates[1:-1, :-2, 1:-1, :]
+            + ay_plus[..., None] * coordinates[1:-1, 2:, 1:-1, :]
+            + az_minus[..., None] * coordinates[1:-1, 1:-1, :-2, :]
+            + az_plus[..., None] * coordinates[1:-1, 1:-1, 2:, :]
+        ) / diagonal[..., None]
+
+        updated = np.array(coordinates, copy=True)
+        updated[1:-1, 1:-1, 1:-1, :] = (
+            (1.0 - relaxation) * coordinates[1:-1, 1:-1, 1:-1, :]
+            + relaxation * candidate
+        )
+        updated[boundary_mask] = boundary_coordinates[boundary_mask]
+        if first_updated_coordinates is None:
+            first_updated_coordinates = np.asarray(updated, dtype=np.float64)
+        max_change = float(
+            np.max(np.abs(updated[1:-1, 1:-1, 1:-1, :] - coordinates[1:-1, 1:-1, 1:-1, :]))
+        )
+        coordinates = updated
+        if max_change < tolerance:
+            break
+
+    if first_updated_coordinates is None:
+        first_updated_coordinates = np.asarray(coordinates, dtype=np.float64)
+    return first_updated_coordinates, np.asarray(coordinates, dtype=np.float64)
+
+
+def _backtracking_update_trace(
+    *,
+    current_coordinates: np.ndarray,
+    solved_coordinates: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+    relaxation: float,
+) -> tuple[tuple[tuple[float, np.ndarray, float, bool], ...], np.ndarray]:
+    """Audit-only trace of production backtracking candidates."""
+
+    candidate_rows: list[tuple[float, np.ndarray, float, bool]] = []
+    alpha = relaxation
+    while alpha >= 1.0e-3:
+        trial_coordinates = current_coordinates + alpha * (solved_coordinates - current_coordinates)
+        _, jacobian, _, _, _, _ = _basic_geometry_from_coordinates(
+            logical_x,
+            logical_y,
+            logical_z,
+            trial_coordinates,
+        )
+        min_jacobian = float(np.min(jacobian))
+        accepted = min_jacobian > _MAPPING_SOLVE_JACOBIAN_FLOOR
+        candidate_rows.append((float(alpha), np.asarray(trial_coordinates, dtype=np.float64), min_jacobian, accepted))
+        if accepted:
+            return tuple(candidate_rows), np.asarray(trial_coordinates, dtype=np.float64)
+        alpha *= 0.5
+    return tuple(candidate_rows), np.asarray(current_coordinates, dtype=np.float64)
+
+
+def _second_derivative_fields_from_coordinates(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    x_second = np.gradient(
+        np.gradient(np.asarray(x_points, dtype=np.float64), logical_x, axis=0, edge_order=2),
+        logical_x,
+        axis=0,
+        edge_order=2,
+    )
+    y_second = np.gradient(
+        np.gradient(np.asarray(y_points, dtype=np.float64), logical_y, axis=1, edge_order=2),
+        logical_y,
+        axis=1,
+        edge_order=2,
+    )
+    z_second = np.gradient(
+        np.gradient(np.asarray(z_points, dtype=np.float64), logical_z, axis=2, edge_order=2),
+        logical_z,
+        axis=2,
+        edge_order=2,
+    )
+    return x_second, y_second, z_second
+
+
+def _stage_coordinate_masks(
+    *,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    basis, jacobian, _, _, _, _ = _basic_geometry_from_coordinates(
+        np.asarray(logical_x, dtype=np.float64),
+        np.asarray(logical_y, dtype=np.float64),
+        np.asarray(logical_z, dtype=np.float64),
+        np.stack([x_points, y_points, z_points], axis=-1),
+    )
+    del basis
+    shape = x_points.shape
+    boundary_mask = np.zeros(shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    high_threshold = float(np.quantile(jacobian[interior_mask], 0.9))
+    low_threshold = float(np.quantile(jacobian[interior_mask], 0.1))
+    high_j_mask = interior_mask & (jacobian >= high_threshold)
+    low_j_mask = interior_mask & (jacobian <= low_threshold)
+    return interior_mask, high_j_mask, low_j_mask, jacobian
+
+
+def _mapping_solve_monitor_stage_row(
+    *,
+    stage_name: str,
+    stage_metric_basis: str,
+    values: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+    downstream_high_j_mask: np.ndarray,
+    downstream_low_j_mask: np.ndarray,
+) -> MappingSolveStageAttributionRow:
+    def _masked_mean_abs(values: np.ndarray, mask: np.ndarray) -> float:
+        if not np.any(mask):
+            return 0.0
+        return float(np.mean(np.abs(values)[mask]))
+
+    x_first = np.gradient(np.asarray(values, dtype=np.float64), logical_x, axis=0, edge_order=2)
+    y_first = np.gradient(np.asarray(values, dtype=np.float64), logical_y, axis=1, edge_order=2)
+    z_first = np.gradient(np.asarray(values, dtype=np.float64), logical_z, axis=2, edge_order=2)
+    x_second = np.gradient(x_first, logical_x, axis=0, edge_order=2)
+    y_second = np.gradient(y_first, logical_y, axis=1, edge_order=2)
+    z_second = np.gradient(z_first, logical_z, axis=2, edge_order=2)
+    xy_scale = 0.5 * (np.abs(x_second) + np.abs(y_second))
+    z_dominant_mask = np.abs(z_second) > 1.25 * xy_scale
+    xy_comparable_mask = ~z_dominant_mask
+    return MappingSolveStageAttributionRow(
+        stage_name=stage_name,
+        stage_metric_basis=stage_metric_basis,
+        x_related_first_metric=float(np.mean(np.abs(x_first))),
+        y_related_first_metric=float(np.mean(np.abs(y_first))),
+        z_related_first_metric=float(np.mean(np.abs(z_first))),
+        x_related_second_metric=float(np.mean(np.abs(x_second))),
+        y_related_second_metric=float(np.mean(np.abs(y_second))),
+        z_related_second_metric=float(np.mean(np.abs(z_second))),
+        z_related_displacement_metric=0.0,
+        high_jacobian_distortion_metric=_masked_mean_abs(z_second, downstream_high_j_mask),
+        low_jacobian_distortion_metric=_masked_mean_abs(z_second, downstream_low_j_mask),
+        z_dominant_distortion_metric=_masked_mean_abs(z_second, z_dominant_mask),
+        xy_comparable_distortion_metric=_masked_mean_abs(z_second, xy_comparable_mask),
+        worsened_vs_previous_stage=False,
+    )
+
+
+def _mapping_solve_coordinate_stage_row(
+    *,
+    stage_name: str,
+    stage_metric_basis: str,
+    x_points: np.ndarray,
+    y_points: np.ndarray,
+    z_points: np.ndarray,
+    reference_x: np.ndarray,
+    reference_y: np.ndarray,
+    reference_z: np.ndarray,
+    previous_z_points: np.ndarray,
+    logical_x: np.ndarray,
+    logical_y: np.ndarray,
+    logical_z: np.ndarray,
+) -> MappingSolveStageAttributionRow:
+    def _masked_mean(values: np.ndarray, mask: np.ndarray) -> float:
+        if not np.any(mask):
+            return 0.0
+        return float(np.mean(values[mask]))
+
+    x_first = np.gradient(np.asarray(x_points, dtype=np.float64), logical_x, axis=0, edge_order=2)
+    y_first = np.gradient(np.asarray(y_points, dtype=np.float64), logical_y, axis=1, edge_order=2)
+    z_first = np.gradient(np.asarray(z_points, dtype=np.float64), logical_z, axis=2, edge_order=2)
+    x_second, y_second, z_second = _second_derivative_fields_from_coordinates(
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        logical_x=logical_x,
+        logical_y=logical_y,
+        logical_z=logical_z,
+    )
+    interior_mask, high_j_mask, low_j_mask, _ = _stage_coordinate_masks(
+        x_points=x_points,
+        y_points=y_points,
+        z_points=z_points,
+        logical_x=logical_x,
+        logical_y=logical_y,
+        logical_z=logical_z,
+    )
+    del interior_mask
+    x2_distortion = np.abs(np.asarray(x_points, dtype=np.float64) ** 2 - np.asarray(reference_x, dtype=np.float64) ** 2)
+    y2_distortion = np.abs(np.asarray(y_points, dtype=np.float64) ** 2 - np.asarray(reference_y, dtype=np.float64) ** 2)
+    z2_distortion = np.abs(np.asarray(z_points, dtype=np.float64) ** 2 - np.asarray(reference_z, dtype=np.float64) ** 2)
+    xy_scale = 0.5 * (x2_distortion + y2_distortion)
+    z_dominant_mask = z2_distortion > 1.25 * xy_scale
+    xy_comparable_mask = ~z_dominant_mask
+    return MappingSolveStageAttributionRow(
+        stage_name=stage_name,
+        stage_metric_basis=stage_metric_basis,
+        x_related_first_metric=float(np.mean(np.abs(x_first))),
+        y_related_first_metric=float(np.mean(np.abs(y_first))),
+        z_related_first_metric=float(np.mean(np.abs(z_first))),
+        x_related_second_metric=float(np.mean(np.abs(x_second))),
+        y_related_second_metric=float(np.mean(np.abs(y_second))),
+        z_related_second_metric=float(np.mean(np.abs(z_second))),
+        z_related_displacement_metric=float(
+            np.mean(np.abs(np.asarray(z_points, dtype=np.float64) - np.asarray(previous_z_points, dtype=np.float64)))
+        ),
+        high_jacobian_distortion_metric=_masked_mean(z2_distortion, high_j_mask),
+        low_jacobian_distortion_metric=_masked_mean(z2_distortion, low_j_mask),
+        z_dominant_distortion_metric=_masked_mean(z2_distortion, z_dominant_mask),
+        xy_comparable_distortion_metric=_masked_mean(z2_distortion, xy_comparable_mask),
+        worsened_vs_previous_stage=False,
+    )
+
+
+def _mapping_solve_stage_worsened(
+    previous: MappingSolveStageAttributionRow,
+    current: MappingSolveStageAttributionRow,
+) -> bool:
+    def _material_increase(new_value: float, old_value: float) -> bool:
+        scale = max(1.0e-12, abs(old_value))
+        return new_value > old_value + max(1.0e-12, 0.10 * scale)
+
+    increases = (
+        _material_increase(current.z_related_second_metric, previous.z_related_second_metric),
+        _material_increase(current.high_jacobian_distortion_metric, previous.high_jacobian_distortion_metric),
+        _material_increase(current.z_dominant_distortion_metric, previous.z_dominant_distortion_metric),
+    )
+    return sum(increases) >= 2
+
+
+def _mapping_solve_rows_with_worsening_flags(
+    rows: list[MappingSolveStageAttributionRow],
+) -> tuple[MappingSolveStageAttributionRow, ...]:
+    if not rows:
+        return ()
+    flagged_rows = [rows[0]]
+    for row in rows[1:]:
+        previous = flagged_rows[-1]
+        flagged_rows.append(
+            replace(
+                row,
+                worsened_vs_previous_stage=_mapping_solve_stage_worsened(previous, row),
+            )
+        )
+    return tuple(flagged_rows)
+
+
+def run_h2_hartree_mapping_solve_stage_attribution_audit(
+    *,
+    case: BenchmarkCase = H2_BENCHMARK_CASE,
+    monitor_shape: tuple[int, int, int] = H2_MONITOR_LOCAL_PATCH_BASELINE_SHAPE,
+    baseline_monitor_box_half_extents: tuple[float, float, float] = (
+        H2_MONITOR_LOCAL_PATCH_BASELINE_BOX_HALF_EXTENTS_BOHR
+    ),
+    max_inner_iterations_override: int | None = None,
+) -> H2HartreeMappingSolveStageAttributionAuditResult:
+    """Deeper stage-by-stage attribution focused on the first mapping outer update."""
+
+    spec = build_monitor_grid_spec_for_case(
+        case,
+        shape=monitor_shape,
+        box_half_extents=baseline_monitor_box_half_extents,
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    if max_inner_iterations_override is not None:
+        spec = replace(
+            spec,
+            harmonic_inner_iterations=min(
+                spec.harmonic_inner_iterations,
+                int(max_inner_iterations_override),
+            ),
+        )
+
+    logical_x, logical_y, logical_z, x_ref, y_ref, z_ref = build_reference_box_coordinates(spec)
+    boundary_coordinates = np.stack([x_ref, y_ref, z_ref], axis=-1)
+    pre_update_coordinates = np.array(boundary_coordinates, copy=True)
+
+    monitor_field = evaluate_global_monitor_field(
+        case=case,
+        spec=spec,
+        x_points=pre_update_coordinates[..., 0],
+        y_points=pre_update_coordinates[..., 1],
+        z_points=pre_update_coordinates[..., 2],
+    )
+    smoothed_monitor = _smooth_monitor_field(
+        monitor_field.values,
+        smoothing=spec.monitor_smoothing,
+    )
+    first_inner_coordinates, solved_coordinates = _solve_weighted_harmonic_coordinates_trace(
+        coefficient=smoothed_monitor,
+        logical_x=logical_x,
+        logical_y=logical_y,
+        logical_z=logical_z,
+        boundary_coordinates=boundary_coordinates,
+        initial_coordinates=pre_update_coordinates,
+        inner_iterations=spec.harmonic_inner_iterations,
+        tolerance=spec.harmonic_tolerance,
+        relaxation=spec.inner_relaxation,
+    )
+    backtracking_candidates, accepted_coordinates = _backtracking_update_trace(
+        current_coordinates=pre_update_coordinates,
+        solved_coordinates=solved_coordinates,
+        logical_x=logical_x,
+        logical_y=logical_y,
+        logical_z=logical_z,
+        relaxation=spec.harmonic_relaxation,
+    )
+
+    coordinates = np.array(pre_update_coordinates, copy=True)
+    coordinates = accepted_coordinates
+    for _ in range(1, spec.harmonic_outer_iterations):
+        later_monitor_field = evaluate_global_monitor_field(
+            case=case,
+            spec=spec,
+            x_points=coordinates[..., 0],
+            y_points=coordinates[..., 1],
+            z_points=coordinates[..., 2],
+        )
+        later_smoothed = _smooth_monitor_field(
+            later_monitor_field.values,
+            smoothing=spec.monitor_smoothing,
+        )
+        later_solved = _solve_weighted_harmonic_coordinates(
+            coefficient=later_smoothed,
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            boundary_coordinates=boundary_coordinates,
+            initial_coordinates=coordinates,
+            inner_iterations=spec.harmonic_inner_iterations,
+            tolerance=spec.harmonic_tolerance,
+            relaxation=spec.inner_relaxation,
+        )
+        later_updated = _backtracking_update(
+            current_coordinates=coordinates,
+            solved_coordinates=later_solved,
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            relaxation=spec.harmonic_relaxation,
+        )
+        max_displacement = float(np.max(np.abs(later_updated - coordinates)))
+        coordinates = later_updated
+        if max_displacement < spec.harmonic_tolerance:
+            break
+
+    _, final_jacobian, _, _, final_cell_volumes, _ = _basic_geometry_from_coordinates(
+        logical_x,
+        logical_y,
+        logical_z,
+        coordinates,
+    )
+    boundary_mask = np.zeros(spec.shape, dtype=bool)
+    boundary_mask[0, :, :] = True
+    boundary_mask[-1, :, :] = True
+    boundary_mask[:, 0, :] = True
+    boundary_mask[:, -1, :] = True
+    boundary_mask[:, :, 0] = True
+    boundary_mask[:, :, -1] = True
+    interior_mask = ~boundary_mask
+    final_high_threshold = float(np.quantile(final_jacobian[interior_mask], 0.9))
+    final_low_threshold = float(np.quantile(final_jacobian[interior_mask], 0.1))
+    final_high_j_mask = interior_mask & (final_jacobian >= final_high_threshold)
+    final_low_j_mask = interior_mask & (final_jacobian <= final_low_threshold)
+
+    stage_rows: list[MappingSolveStageAttributionRow] = [
+        _mapping_solve_monitor_stage_row(
+            stage_name="raw_monitor_field",
+            stage_metric_basis=(
+                "logical-grid monitor derivative proxy on the first outer iteration"
+            ),
+            values=np.asarray(monitor_field.values, dtype=np.float64),
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            downstream_high_j_mask=final_high_j_mask,
+            downstream_low_j_mask=final_low_j_mask,
+        ),
+        _mapping_solve_monitor_stage_row(
+            stage_name="smoothed_monitor_field",
+            stage_metric_basis=(
+                "logical-grid smoothed-monitor derivative proxy on the first outer iteration"
+            ),
+            values=np.asarray(smoothed_monitor, dtype=np.float64),
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+            downstream_high_j_mask=final_high_j_mask,
+            downstream_low_j_mask=final_low_j_mask,
+        ),
+        _mapping_solve_coordinate_stage_row(
+            stage_name="pre_update_coordinate_state",
+            stage_metric_basis="reference-box coordinates before the first harmonic inner solve",
+            x_points=pre_update_coordinates[..., 0],
+            y_points=pre_update_coordinates[..., 1],
+            z_points=pre_update_coordinates[..., 2],
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            previous_z_points=pre_update_coordinates[..., 2],
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+        ),
+        _mapping_solve_coordinate_stage_row(
+            stage_name="first_coordinate_update_output",
+            stage_metric_basis="first inner harmonic-solve Jacobi update before convergence of the inner solve",
+            x_points=first_inner_coordinates[..., 0],
+            y_points=first_inner_coordinates[..., 1],
+            z_points=first_inner_coordinates[..., 2],
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            previous_z_points=pre_update_coordinates[..., 2],
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+        ),
+        _mapping_solve_coordinate_stage_row(
+            stage_name="solved_coordinate_output",
+            stage_metric_basis="full inner harmonic solve output before outer backtracking acceptance",
+            x_points=solved_coordinates[..., 0],
+            y_points=solved_coordinates[..., 1],
+            z_points=solved_coordinates[..., 2],
+            reference_x=x_ref,
+            reference_y=y_ref,
+            reference_z=z_ref,
+            previous_z_points=pre_update_coordinates[..., 2],
+            logical_x=logical_x,
+            logical_y=logical_y,
+            logical_z=logical_z,
+        ),
+    ]
+    for alpha, trial_coordinates, min_jacobian, accepted in backtracking_candidates:
+        stage_rows.append(
+            _mapping_solve_coordinate_stage_row(
+                stage_name=f"backtracking_candidate_alpha_{alpha:.3f}",
+                stage_metric_basis=(
+                    f"outer backtracking trial with alpha={alpha:.3f}, min_jacobian={min_jacobian:.3e}, "
+                    f"accepted={accepted}"
+                ),
+                x_points=trial_coordinates[..., 0],
+                y_points=trial_coordinates[..., 1],
+                z_points=trial_coordinates[..., 2],
+                reference_x=x_ref,
+                reference_y=y_ref,
+                reference_z=z_ref,
+                previous_z_points=pre_update_coordinates[..., 2],
+                logical_x=logical_x,
+                logical_y=logical_y,
+                logical_z=logical_z,
+            )
+        )
+    stage_rows.extend(
+        [
+            _mapping_solve_coordinate_stage_row(
+                stage_name="accepted_post_backtracking_update",
+                stage_metric_basis="accepted first outer update after backtracking",
+                x_points=accepted_coordinates[..., 0],
+                y_points=accepted_coordinates[..., 1],
+                z_points=accepted_coordinates[..., 2],
+                reference_x=x_ref,
+                reference_y=y_ref,
+                reference_z=z_ref,
+                previous_z_points=pre_update_coordinates[..., 2],
+                logical_x=logical_x,
+                logical_y=logical_y,
+                logical_z=logical_z,
+            ),
+            _mapping_solve_coordinate_stage_row(
+                stage_name="final_mapped_coordinates",
+                stage_metric_basis="final converged mapped coordinates after the outer mapping loop",
+                x_points=coordinates[..., 0],
+                y_points=coordinates[..., 1],
+                z_points=coordinates[..., 2],
+                reference_x=x_ref,
+                reference_y=y_ref,
+                reference_z=z_ref,
+                previous_z_points=accepted_coordinates[..., 2],
+                logical_x=logical_x,
+                logical_y=logical_y,
+                logical_z=logical_z,
+            ),
+            _mapping_solve_coordinate_stage_row(
+                stage_name="jacobian_metric_derived_quantities",
+                stage_metric_basis=(
+                    "final mapped coordinates observed together with final Jacobian-derived measure"
+                ),
+                x_points=coordinates[..., 0],
+                y_points=coordinates[..., 1],
+                z_points=coordinates[..., 2],
+                reference_x=x_ref,
+                reference_y=y_ref,
+                reference_z=z_ref,
+                previous_z_points=accepted_coordinates[..., 2],
+                logical_x=logical_x,
+                logical_y=logical_y,
+                logical_z=logical_z,
+            ),
+        ]
+    )
+    stage_row_tuple = _mapping_solve_rows_with_worsening_flags(stage_rows)
+    first_clearly_worse_stage = next(
+        (
+            row.stage_name
+            for row in stage_row_tuple
+            if row.worsened_vs_previous_stage
+        ),
+        "none",
+    )
+    diagnosis = (
+        "The first clearly worse stage is where at least two of three geometry metrics "
+        "(z second derivative, high-jacobian z^2 distortion, and z-dominant distortion) "
+        "materially increase relative to the immediately preceding stage."
+    )
+    return H2HartreeMappingSolveStageAttributionAuditResult(
+        stage_rows=stage_row_tuple,
+        first_clearly_worse_stage=first_clearly_worse_stage,
+        diagnosis=diagnosis,
+        note=(
+            "This audit keeps the production mapping unchanged and only decomposes the first harmonic "
+            "outer update into monitor, inner-solve, backtracking, and accepted-update stages."
+        ),
+    )
 
 
 def run_h2_hartree_mapping_stage_attribution_audit(

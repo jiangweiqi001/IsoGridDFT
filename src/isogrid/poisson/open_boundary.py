@@ -134,6 +134,99 @@ def _cell_average_from_nodal_field(field: np.ndarray) -> np.ndarray:
     ) / 8.0
 
 
+def _selected_cell_incident_node_counts(selected_cell_mask: np.ndarray) -> np.ndarray:
+    cell_mask = np.asarray(selected_cell_mask, dtype=np.float64)
+    node_counts = np.zeros(
+        tuple(dimension + 1 for dimension in cell_mask.shape),
+        dtype=np.float64,
+    )
+    node_counts[:-1, :-1, :-1] += cell_mask
+    node_counts[1:, :-1, :-1] += cell_mask
+    node_counts[:-1, 1:, :-1] += cell_mask
+    node_counts[1:, 1:, :-1] += cell_mask
+    node_counts[:-1, :-1, 1:] += cell_mask
+    node_counts[1:, :-1, 1:] += cell_mask
+    node_counts[:-1, 1:, 1:] += cell_mask
+    node_counts[1:, 1:, 1:] += cell_mask
+    return node_counts
+
+
+def _accumulate_multipole_moments(
+    weighted_density: np.ndarray,
+    *,
+    dx: np.ndarray,
+    dy: np.ndarray,
+    dz: np.ndarray,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    dx = np.asarray(dx, dtype=np.float64)
+    dy = np.asarray(dy, dtype=np.float64)
+    dz = np.asarray(dz, dtype=np.float64)
+    weight = np.asarray(weighted_density, dtype=np.float64)
+    radius_squared = dx * dx + dy * dy + dz * dz
+    total_charge = float(np.sum(weight, dtype=np.float64))
+    dipole_moment = np.array(
+        [
+            np.sum(weight * dx, dtype=np.float64),
+            np.sum(weight * dy, dtype=np.float64),
+            np.sum(weight * dz, dtype=np.float64),
+        ],
+        dtype=np.float64,
+    )
+    quadrupole_tensor = np.array(
+        [
+            [
+                np.sum(weight * (3.0 * dx * dx - radius_squared), dtype=np.float64),
+                np.sum(weight * (3.0 * dx * dy), dtype=np.float64),
+                np.sum(weight * (3.0 * dx * dz), dtype=np.float64),
+            ],
+            [
+                np.sum(weight * (3.0 * dy * dx), dtype=np.float64),
+                np.sum(weight * (3.0 * dy * dy - radius_squared), dtype=np.float64),
+                np.sum(weight * (3.0 * dy * dz), dtype=np.float64),
+            ],
+            [
+                np.sum(weight * (3.0 * dz * dx), dtype=np.float64),
+                np.sum(weight * (3.0 * dz * dy), dtype=np.float64),
+                np.sum(weight * (3.0 * dz * dz - radius_squared), dtype=np.float64),
+            ],
+        ],
+        dtype=np.float64,
+    )
+    return total_charge, dipole_moment, quadrupole_tensor
+
+
+def _monitor_grid_nodal_region_moments(
+    grid_geometry: MonitorGridGeometry,
+    rho: np.ndarray,
+    *,
+    reference_center: tuple[float, float, float],
+    selected_cell_mask: np.ndarray,
+) -> tuple[float, np.ndarray, np.ndarray]:
+    node_selected_counts = _selected_cell_incident_node_counts(selected_cell_mask)
+    if not np.any(node_selected_counts):
+        return 0.0, np.zeros(3, dtype=np.float64), np.zeros((3, 3), dtype=np.float64)
+    total_incident_counts = _selected_cell_incident_node_counts(
+        np.ones_like(selected_cell_mask, dtype=bool)
+    )
+    selected_fraction = np.divide(
+        node_selected_counts,
+        total_incident_counts,
+        out=np.zeros_like(node_selected_counts, dtype=np.float64),
+        where=total_incident_counts > 0.0,
+    )
+    weighted_density = (
+        np.asarray(rho, dtype=np.float64)
+        * np.asarray(grid_geometry.cell_volumes, dtype=np.float64)
+        * selected_fraction
+    )
+    return _accumulate_multipole_moments(
+        weighted_density,
+        dx=np.asarray(grid_geometry.x_points, dtype=np.float64) - reference_center[0],
+        dy=np.asarray(grid_geometry.y_points, dtype=np.float64) - reference_center[1],
+        dz=np.asarray(grid_geometry.z_points, dtype=np.float64) - reference_center[2],
+    )
+
+
 def _cell_and_neighbor_slices(
     cell_index: tuple[int, int, int],
     *,
@@ -227,9 +320,17 @@ def _monitor_grid_multipole_correction(
             _MONITOR_MOMENT_RECONSTRUCTION_JACOBIAN_QUANTILE,
         )
     )
-    selected_cells = np.argwhere(interior_mask & (cell_jacobian >= high_threshold))
+    selected_cell_mask = interior_mask & (cell_jacobian >= high_threshold)
+    selected_cells = np.argwhere(selected_cell_mask)
     if selected_cells.size == 0:
         return 0.0, np.zeros(3, dtype=np.float64), np.zeros((3, 3), dtype=np.float64)
+
+    nodal_charge, nodal_dipole, nodal_quadrupole = _monitor_grid_nodal_region_moments(
+        grid_geometry,
+        rho,
+        reference_center=reference_center,
+        selected_cell_mask=selected_cell_mask,
+    )
 
     logical_x = np.asarray(grid_geometry.logical_x, dtype=np.float64)
     logical_y = np.asarray(grid_geometry.logical_y, dtype=np.float64)
@@ -246,9 +347,9 @@ def _monitor_grid_multipole_correction(
     z_points = np.asarray(grid_geometry.z_points, dtype=np.float64)
     jacobian = np.asarray(grid_geometry.jacobian, dtype=np.float64)
     density = np.asarray(rho, dtype=np.float64)
-    charge_correction = 0.0
-    dipole_correction = np.zeros(3, dtype=np.float64)
-    quadrupole_correction = np.zeros((3, 3), dtype=np.float64)
+    quadratic_charge = 0.0
+    quadratic_dipole = np.zeros(3, dtype=np.float64)
+    quadratic_quadrupole = np.zeros((3, 3), dtype=np.float64)
 
     for cell_index_array in selected_cells:
         cell_index = tuple(int(value) for value in cell_index_array)
@@ -285,25 +386,43 @@ def _monitor_grid_multipole_correction(
                         y_value=y_value,
                         z_value=z_value,
                     )
-                    delta_rho = (rho_quadratic - rho_trilinear) * jacobian_value * subcell_volume
+                    del rho_trilinear
+                    weighted_density = rho_quadratic * jacobian_value * subcell_volume
                     dx = x_value - reference_center[0]
                     dy = y_value - reference_center[1]
                     dz = z_value - reference_center[2]
                     radius_squared = dx * dx + dy * dy + dz * dz
-                    charge_correction += delta_rho
-                    dipole_correction[0] += delta_rho * dx
-                    dipole_correction[1] += delta_rho * dy
-                    dipole_correction[2] += delta_rho * dz
-                    quadrupole_correction[0, 0] += delta_rho * (3.0 * dx * dx - radius_squared)
-                    quadrupole_correction[0, 1] += delta_rho * (3.0 * dx * dy)
-                    quadrupole_correction[0, 2] += delta_rho * (3.0 * dx * dz)
-                    quadrupole_correction[1, 0] += delta_rho * (3.0 * dy * dx)
-                    quadrupole_correction[1, 1] += delta_rho * (3.0 * dy * dy - radius_squared)
-                    quadrupole_correction[1, 2] += delta_rho * (3.0 * dy * dz)
-                    quadrupole_correction[2, 0] += delta_rho * (3.0 * dz * dx)
-                    quadrupole_correction[2, 1] += delta_rho * (3.0 * dz * dy)
-                    quadrupole_correction[2, 2] += delta_rho * (3.0 * dz * dz - radius_squared)
-    return charge_correction, dipole_correction, quadrupole_correction
+                    quadratic_charge += weighted_density
+                    quadratic_dipole[0] += weighted_density * dx
+                    quadratic_dipole[1] += weighted_density * dy
+                    quadratic_dipole[2] += weighted_density * dz
+                    quadratic_quadrupole[0, 0] += weighted_density * (3.0 * dx * dx - radius_squared)
+                    quadratic_quadrupole[0, 1] += weighted_density * (3.0 * dx * dy)
+                    quadratic_quadrupole[0, 2] += weighted_density * (3.0 * dx * dz)
+                    quadratic_quadrupole[1, 0] += weighted_density * (3.0 * dy * dx)
+                    quadratic_quadrupole[1, 1] += weighted_density * (3.0 * dy * dy - radius_squared)
+                    quadratic_quadrupole[1, 2] += weighted_density * (3.0 * dy * dz)
+                    quadratic_quadrupole[2, 0] += weighted_density * (3.0 * dz * dx)
+                    quadratic_quadrupole[2, 1] += weighted_density * (3.0 * dz * dy)
+                    quadratic_quadrupole[2, 2] += weighted_density * (3.0 * dz * dz - radius_squared)
+    return (
+        quadratic_charge - nodal_charge,
+        quadratic_dipole - nodal_dipole,
+        quadratic_quadrupole - nodal_quadrupole,
+    )
+
+
+def _default_monitor_reference_center(
+    grid_geometry: MonitorGridGeometry,
+) -> tuple[float, float, float]:
+    bounds = grid_geometry.spec.box_bounds
+    # The monitor-grid builder constructs box_bounds symmetrically about the molecular
+    # geometry center, so the box midpoint is the aligned monitor-side reference center.
+    return (
+        0.5 * (bounds[0][0] + bounds[0][1]),
+        0.5 * (bounds[1][0] + bounds[1][1]),
+        0.5 * (bounds[2][0] + bounds[2][1]),
+    )
 
 
 def _compute_multipole_boundary_condition(
@@ -322,35 +441,43 @@ def _compute_multipole_boundary_condition(
         if isinstance(grid_geometry, StructuredGridGeometry):
             reference_center = grid_geometry.spec.reference_center
         else:
-            reference_center = (
-                0.5 * (grid_geometry.spec.box_bounds[0][0] + grid_geometry.spec.box_bounds[0][1]),
-                0.5 * (grid_geometry.spec.box_bounds[1][0] + grid_geometry.spec.box_bounds[1][1]),
-                0.5 * (grid_geometry.spec.box_bounds[2][0] + grid_geometry.spec.box_bounds[2][1]),
-            )
+            reference_center = _default_monitor_reference_center(grid_geometry)
 
     dx = grid_geometry.x_points - reference_center[0]
     dy = grid_geometry.y_points - reference_center[1]
     dz = grid_geometry.z_points - reference_center[2]
     radius_squared = dx * dx + dy * dy + dz * dz
     radius = np.sqrt(radius_squared, dtype=np.float64)
-    total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
-    dipole_moment = np.array(
-        [
-            integrate_field(rho * dx, grid_geometry=grid_geometry),
-            integrate_field(rho * dy, grid_geometry=grid_geometry),
-            integrate_field(rho * dz, grid_geometry=grid_geometry),
-        ],
-        dtype=np.float64,
-    )
-    quadrupole_tensor = np.array(
-        [
-            [integrate_field(rho * (3.0 * dx * dx - radius_squared), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dx * dy), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dx * dz), grid_geometry=grid_geometry)],
-            [integrate_field(rho * (3.0 * dy * dx), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dy * dy - radius_squared), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dy * dz), grid_geometry=grid_geometry)],
-            [integrate_field(rho * (3.0 * dz * dx), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dz * dy), grid_geometry=grid_geometry), integrate_field(rho * (3.0 * dz * dz - radius_squared), grid_geometry=grid_geometry)],
-        ],
-        dtype=np.float64,
-    )
     if isinstance(grid_geometry, MonitorGridGeometry):
+        total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
+        dipole_moment = np.array(
+            [
+                integrate_field(rho * dx, grid_geometry=grid_geometry),
+                integrate_field(rho * dy, grid_geometry=grid_geometry),
+                integrate_field(rho * dz, grid_geometry=grid_geometry),
+            ],
+            dtype=np.float64,
+        )
+        quadrupole_tensor = np.array(
+            [
+                [
+                    integrate_field(rho * (3.0 * dx * dx - radius_squared), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dx * dy), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dx * dz), grid_geometry=grid_geometry),
+                ],
+                [
+                    integrate_field(rho * (3.0 * dy * dx), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dy * dy - radius_squared), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dy * dz), grid_geometry=grid_geometry),
+                ],
+                [
+                    integrate_field(rho * (3.0 * dz * dx), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dz * dy), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dz * dz - radius_squared), grid_geometry=grid_geometry),
+                ],
+            ],
+            dtype=np.float64,
+        )
         charge_correction, dipole_correction, quadrupole_correction = (
             _monitor_grid_multipole_correction(
                 grid_geometry,
@@ -361,6 +488,36 @@ def _compute_multipole_boundary_condition(
         total_charge += charge_correction
         dipole_moment = dipole_moment + dipole_correction
         quadrupole_tensor = quadrupole_tensor + quadrupole_correction
+    else:
+        total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
+        dipole_moment = np.array(
+            [
+                integrate_field(rho * dx, grid_geometry=grid_geometry),
+                integrate_field(rho * dy, grid_geometry=grid_geometry),
+                integrate_field(rho * dz, grid_geometry=grid_geometry),
+            ],
+            dtype=np.float64,
+        )
+        quadrupole_tensor = np.array(
+            [
+                [
+                    integrate_field(rho * (3.0 * dx * dx - radius_squared), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dx * dy), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dx * dz), grid_geometry=grid_geometry),
+                ],
+                [
+                    integrate_field(rho * (3.0 * dy * dx), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dy * dy - radius_squared), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dy * dz), grid_geometry=grid_geometry),
+                ],
+                [
+                    integrate_field(rho * (3.0 * dz * dx), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dz * dy), grid_geometry=grid_geometry),
+                    integrate_field(rho * (3.0 * dz * dz - radius_squared), grid_geometry=grid_geometry),
+                ],
+            ],
+            dtype=np.float64,
+        )
 
     boundary_mask = _boundary_mask(grid_geometry.spec.shape)
     boundary_values = np.zeros(grid_geometry.spec.shape, dtype=np.float64)
