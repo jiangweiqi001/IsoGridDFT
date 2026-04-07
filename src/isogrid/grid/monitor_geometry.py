@@ -9,6 +9,7 @@ import numpy as np
 from isogrid.config import BenchmarkCase
 
 from .monitor_model import AtomicMonitorContribution
+from .monitor_model import MonitorCellLocalQuadrature
 from .monitor_model import GlobalMonitorField
 from .monitor_model import MonitorGridGeometry
 from .monitor_model import MonitorGridQualityReport
@@ -150,6 +151,118 @@ def _boundary_mask(shape: tuple[int, int, int]) -> np.ndarray:
     mask[:, :, 0] = True
     mask[:, :, -1] = True
     return mask
+
+
+def _subcell_midpoint_samples(
+    subcell_divisions: tuple[int, int, int],
+) -> tuple[tuple[float, float, float], ...]:
+    sx, sy, sz = subcell_divisions
+    return tuple(
+        (
+            (ix + 0.5) / sx,
+            (iy + 0.5) / sy,
+            (iz + 0.5) / sz,
+        )
+        for ix in range(sx)
+        for iy in range(sy)
+        for iz in range(sz)
+    )
+
+
+def _trilinear_sample_nodal_field(
+    field: np.ndarray,
+    *,
+    u: float,
+    v: float,
+    w: float,
+) -> np.ndarray:
+    nodal = np.asarray(field, dtype=np.float64)
+    c000 = nodal[:-1, :-1, :-1]
+    c100 = nodal[1:, :-1, :-1]
+    c010 = nodal[:-1, 1:, :-1]
+    c110 = nodal[1:, 1:, :-1]
+    c001 = nodal[:-1, :-1, 1:]
+    c101 = nodal[1:, :-1, 1:]
+    c011 = nodal[:-1, 1:, 1:]
+    c111 = nodal[1:, 1:, 1:]
+    um = 1.0 - u
+    vm = 1.0 - v
+    wm = 1.0 - w
+    return (
+        um * vm * wm * c000
+        + u * vm * wm * c100
+        + um * v * wm * c010
+        + u * v * wm * c110
+        + um * vm * w * c001
+        + u * vm * w * c101
+        + um * v * w * c011
+        + u * v * w * c111
+    )
+
+
+def build_monitor_cell_local_quadrature(
+    grid_geometry: MonitorGridGeometry,
+    *,
+    subcell_divisions: tuple[int, int, int] = (2, 2, 2),
+) -> MonitorCellLocalQuadrature:
+    """Build the explicit logical-cell quadrature used by monitor-grid moments."""
+
+    logical_x = np.asarray(grid_geometry.logical_x, dtype=np.float64)
+    logical_y = np.asarray(grid_geometry.logical_y, dtype=np.float64)
+    logical_z = np.asarray(grid_geometry.logical_z, dtype=np.float64)
+    logical_cell_volume = (
+        float(np.diff(logical_x)[0])
+        * float(np.diff(logical_y)[0])
+        * float(np.diff(logical_z)[0])
+    )
+    sx, sy, sz = subcell_divisions
+    sample_count = float(sx * sy * sz)
+    sample_points = _subcell_midpoint_samples(subcell_divisions)
+    weight_samples = []
+    for u, v, w in sample_points:
+        jacobian_sample = _trilinear_sample_nodal_field(
+            grid_geometry.jacobian,
+            u=u,
+            v=v,
+            w=w,
+        )
+        weight_samples.append(jacobian_sample * (logical_cell_volume / sample_count))
+    return MonitorCellLocalQuadrature(
+        subcell_divisions=subcell_divisions,
+        logical_cell_volume=logical_cell_volume,
+        subcell_logical_volume=logical_cell_volume / sample_count,
+        sample_points=sample_points,
+        sample_weights=np.stack(weight_samples, axis=-1),
+    )
+
+
+def evaluate_monitor_cell_local_sample_weights(
+    grid_geometry: MonitorGridGeometry,
+    quadrature: MonitorCellLocalQuadrature,
+) -> np.ndarray:
+    """Evaluate all cell-local quadrature weights on the mapped monitor grid."""
+
+    del grid_geometry
+    return np.asarray(quadrature.sample_weights, dtype=np.float64)
+
+
+def evaluate_monitor_cell_local_field_samples(
+    field: np.ndarray,
+    quadrature: MonitorCellLocalQuadrature,
+) -> np.ndarray:
+    """Evaluate one nodal field on the monitor cell-local quadrature samples."""
+
+    samples = []
+    for u, v, w in quadrature.sample_points:
+        samples.append(
+            _trilinear_sample_nodal_field(
+                field,
+                u=u,
+                v=v,
+                w=w,
+            )
+        )
+    return np.stack(samples, axis=-1)
 
 
 def _solve_weighted_harmonic_coordinates(

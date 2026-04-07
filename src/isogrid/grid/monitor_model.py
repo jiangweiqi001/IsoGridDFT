@@ -84,6 +84,17 @@ class GlobalMonitorField:
 
 
 @dataclass(frozen=True)
+class MonitorCellLocalQuadrature:
+    """Auditably explicit logical-cell quadrature on the mapped monitor grid."""
+
+    subcell_divisions: tuple[int, int, int]
+    logical_cell_volume: float
+    subcell_logical_volume: float
+    sample_points: tuple[tuple[float, float, float], ...]
+    sample_weights: np.ndarray
+
+
+@dataclass(frozen=True)
 class MonitorGridSpec:
     """Specification for a full 3D monitor-driven structured grid."""
 
