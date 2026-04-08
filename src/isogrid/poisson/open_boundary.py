@@ -506,7 +506,7 @@ def _build_monitor_boundary_construction_diagnostics(
     boundary_dy: np.ndarray,
     boundary_dz: np.ndarray,
     boundary_radius: np.ndarray,
-    boundary_value_correction: np.ndarray,
+    baseline_boundary_potential: np.ndarray,
     actual_boundary_potential: np.ndarray,
     multipole_order: int,
 ) -> OpenBoundaryBoundaryConstructionDiagnostics:
@@ -519,6 +519,10 @@ def _build_monitor_boundary_construction_diagnostics(
         boundary_dz=boundary_dz,
         boundary_radius=boundary_radius,
         multipole_order=multipole_order,
+    )
+    boundary_value_correction = np.asarray(
+        actual_boundary_potential - baseline_boundary_potential,
+        dtype=np.float64,
     )
     mismatch = np.asarray(
         actual_boundary_potential - corrected_moment_boundary,
@@ -885,17 +889,15 @@ def _compute_multipole_boundary_condition(
             boundary_radius=boundary_radius,
             multipole_order=multipole_order,
         )
-        boundary_value_correction = _monitor_grid_boundary_value_correction(
-            grid_geometry,
-            rho,
+        boundary_potential = _evaluate_boundary_potential_from_moments(
+            total_charge=total_charge,
+            dipole_moment=dipole_moment,
+            quadrupole_tensor=quadrupole_tensor,
+            boundary_dx=boundary_dx,
+            boundary_dy=boundary_dy,
+            boundary_dz=boundary_dz,
+            boundary_radius=boundary_radius,
             multipole_order=multipole_order,
-            boundary_x=grid_geometry.x_points[boundary_mask],
-            boundary_y=grid_geometry.y_points[boundary_mask],
-            boundary_z=grid_geometry.z_points[boundary_mask],
-        )
-        boundary_potential = np.asarray(
-            baseline_boundary_potential + boundary_value_correction,
-            dtype=np.float64,
         )
         boundary_diagnostics = _build_monitor_boundary_construction_diagnostics(
             baseline_total_charge=baseline_total_charge,
@@ -911,7 +913,7 @@ def _compute_multipole_boundary_condition(
             boundary_dy=boundary_dy,
             boundary_dz=boundary_dz,
             boundary_radius=boundary_radius,
-            boundary_value_correction=boundary_value_correction,
+            baseline_boundary_potential=baseline_boundary_potential,
             actual_boundary_potential=boundary_potential,
             multipole_order=multipole_order,
         )

@@ -3,6 +3,7 @@
 from .driver import FixedPotentialSolveSummary
 from .driver import H2ScfResult
 from .driver import H2ScfDryRunParameterSummary
+from .driver import MonitorGridHartreeResponseIterationDiagnostics
 from .driver import H2StaticLocalScfDryRunResult
 from .driver import ScfIterationRecord
 from .driver import SinglePointEnergyComponents
@@ -20,6 +21,7 @@ __all__ = [
     "H2ScfResult",
     "H2ScfDryRunParameterSummary",
     "H2StaticLocalScfDryRunResult",
+    "MonitorGridHartreeResponseIterationDiagnostics",
     "ScfIterationRecord",
     "SinglePointEnergyComponents",
     "SpinOccupations",

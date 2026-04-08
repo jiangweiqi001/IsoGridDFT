@@ -324,51 +324,17 @@ def test_monitor_grid_boundary_values_track_corrected_source_for_shifted_gaussia
     rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
     reference_center = (0.0, 0.0, 0.0)
 
-    baseline_total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
-    dx = grid_geometry.x_points - reference_center[0]
-    dy = grid_geometry.y_points - reference_center[1]
-    dz = grid_geometry.z_points - reference_center[2]
-    radius_squared = dx * dx + dy * dy + dz * dz
-    baseline_dipole = np.array(
-        [
-            integrate_field(rho * dx, grid_geometry=grid_geometry),
-            integrate_field(rho * dy, grid_geometry=grid_geometry),
-            integrate_field(rho * dz, grid_geometry=grid_geometry),
-        ],
-        dtype=np.float64,
-    )
-    baseline_quadrupole = np.array(
-        [
-            [
-                integrate_field(rho * (3.0 * dx * dx - radius_squared), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dx * dy), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dx * dz), grid_geometry=grid_geometry),
-            ],
-            [
-                integrate_field(rho * (3.0 * dy * dx), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dy * dy - radius_squared), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dy * dz), grid_geometry=grid_geometry),
-            ],
-            [
-                integrate_field(rho * (3.0 * dz * dx), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dz * dy), grid_geometry=grid_geometry),
-                integrate_field(rho * (3.0 * dz * dz - radius_squared), grid_geometry=grid_geometry),
-            ],
-        ],
-        dtype=np.float64,
-    )
-    corrected_boundary_reference = _boundary_values_from_moments(
-        grid_geometry=grid_geometry,
-        total_charge=baseline_total_charge,
-        dipole_moment=baseline_dipole,
-        quadrupole_tensor=baseline_quadrupole,
-        reference_center=reference_center,
-    ) + _direct_selected_region_boundary_delta(grid_geometry, rho)
-
     boundary = _compute_multipole_boundary_condition(
         grid_geometry=grid_geometry,
         rho=rho,
         multipole_order=2,
+        reference_center=reference_center,
+    )
+    corrected_boundary_reference = _boundary_values_from_moments(
+        grid_geometry=grid_geometry,
+        total_charge=boundary.total_charge,
+        dipole_moment=boundary.dipole_moment,
+        quadrupole_tensor=boundary.quadrupole_tensor,
         reference_center=reference_center,
     )
 
@@ -427,6 +393,7 @@ def test_monitor_grid_boundary_condition_exposes_construction_diagnostics() -> N
     assert diagnostics.boundary_value_correction_rms is not None
     assert diagnostics.boundary_value_correction_rms > 0.0
     assert diagnostics.corrected_moment_boundary_rms_mismatch is not None
+    assert diagnostics.corrected_moment_boundary_rms_mismatch < 1.0e-10
 
 
 def test_monitor_grid_hartree_solve_exposes_response_diagnostics() -> None:
