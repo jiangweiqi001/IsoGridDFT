@@ -23,6 +23,15 @@ def _small_grid_geometry():
     )
 
 
+def _xlarge_grid_geometry():
+    return build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(13, 13, 15),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+
+
 def test_generic_charge_spin_controller_preserves_closed_shell_symmetry() -> None:
     grid_geometry = _small_grid_geometry()
     occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
@@ -77,7 +86,8 @@ def test_generic_charge_spin_controller_recovers_charge_mixing_after_stable_step
         charge_mixing=0.06,
         spin_mixing=0.14,
         charge_cautious_steps_remaining=0,
-        stable_steps=2,
+        stable_steps=3,
+        iteration_index=3,
         last_flags=("recovering",),
     )
 
@@ -102,3 +112,34 @@ def test_generic_charge_spin_controller_recovers_charge_mixing_after_stable_step
     assert result.charge_mixing > state.charge_mixing
     assert result.state.stable_steps > state.stable_steps
     assert "charge_recovery" in result.flags
+
+
+def test_generic_charge_spin_controller_uses_grid_risk_opening_for_xlarge_singlet() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+
+    result = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(1.02 * rho_up, dtype=np.float64),
+        rho_down_output=np.asarray(0.98 * rho_down, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin(),
+        state=ScfControllerState.initial(),
+        signals=ScfControllerSignals(
+            density_residual_ratio=None,
+            hartree_share=0.01,
+            occupied_orbital_overlap_abs=None,
+            lowest_subspace_rotation_max_angle_deg=None,
+            lowest_gap_ha=None,
+        ),
+    )
+
+    assert result.charge_mixing <= 0.01
+    assert "opening_phase" in result.flags

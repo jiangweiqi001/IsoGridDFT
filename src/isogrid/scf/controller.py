@@ -44,6 +44,7 @@ class ScfControllerState:
     spin_mixing: float
     charge_cautious_steps_remaining: int
     stable_steps: int
+    iteration_index: int
     last_flags: tuple[str, ...]
 
     @classmethod
@@ -58,6 +59,7 @@ class ScfControllerState:
             spin_mixing=float(spin_mixing),
             charge_cautious_steps_remaining=0,
             stable_steps=0,
+            iteration_index=0,
             last_flags=(),
         )
 
@@ -76,6 +78,10 @@ class ScfControllerConfig:
     spin_release_rate: float
     cautious_hold_steps: int
     stable_steps_to_release: int
+    opening_steps: int
+    opening_charge_mixing: float
+    opening_charge_mixing_large_risk: float
+    opening_grid_point_threshold: int
     hartree_share_trigger: float
     residual_ratio_trigger: float
     residual_ratio_severe_trigger: float
@@ -100,6 +106,10 @@ class ScfControllerConfig:
             spin_release_rate=max(0.008, 0.05 * float(baseline_mixing)),
             cautious_hold_steps=4,
             stable_steps_to_release=4,
+            opening_steps=2,
+            opening_charge_mixing=max(0.02, 0.10 * float(baseline_mixing)),
+            opening_charge_mixing_large_risk=max(0.005, 0.025 * float(baseline_mixing)),
+            opening_grid_point_threshold=2000,
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -258,10 +268,12 @@ def _trigger_flags(
         or (hartree_dominated and residual_growing)
         or (residual_growing and (overlap_bad or rotation_bad))
         or (hartree_dominated and gap_small)
+        or (closed_shell_singlet and rotation_bad and gap_small)
         or (overlap_bad and rotation_bad)
     )
     severe = bool(
         (residual_severe and (hartree_dominated or overlap_bad or rotation_bad))
+        or (closed_shell_singlet and rotation_bad and gap_small)
         or (closed_shell_singlet and overlap_bad and rotation_bad)
     )
     return caution, severe, tuple(flags)
@@ -301,6 +313,13 @@ def propose_next_density(
     if not closed_shell_singlet:
         charge_min_mixing = max(charge_min_mixing, 0.06)
         charge_severe_mixing = max(charge_severe_mixing, 0.04)
+    grid_point_count = int(np.prod(grid_geometry.spec.shape))
+    opening_large_grid_risk = bool(
+        closed_shell_singlet and grid_point_count >= int(config.opening_grid_point_threshold)
+    )
+    opening_phase_active = bool(
+        closed_shell_singlet and int(state.iteration_index) < int(config.opening_steps)
+    )
 
     if caution:
         next_charge_mixing = charge_severe_mixing if severe else charge_min_mixing
@@ -331,6 +350,19 @@ def propose_next_density(
         if not step_flags_list:
             step_flags_list.append("stable")
         step_flags = tuple(step_flags_list)
+
+    if opening_phase_active:
+        opening_charge_cap = (
+            float(config.opening_charge_mixing_large_risk)
+            if opening_large_grid_risk
+            else float(config.opening_charge_mixing)
+        )
+        next_charge_mixing = min(float(next_charge_mixing), opening_charge_cap)
+        opening_flags = list(step_flags)
+        opening_flags.append("opening_phase")
+        if opening_large_grid_risk:
+            opening_flags.append("opening_large_grid_risk")
+        step_flags = tuple(opening_flags)
 
     rho_charge_current = build_total_density(
         rho_up=np.asarray(rho_up_current, dtype=np.float64),
@@ -378,6 +410,7 @@ def propose_next_density(
         spin_mixing=float(next_spin_mixing),
         charge_cautious_steps_remaining=int(cautious_steps_remaining),
         stable_steps=int(stable_steps),
+        iteration_index=int(state.iteration_index + 1),
         last_flags=step_flags,
     )
     return ControllerStepResult(
