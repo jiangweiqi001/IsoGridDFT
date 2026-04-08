@@ -154,3 +154,33 @@ def test_monitor_grid_scf_dry_run_generic_controller_records_channel_histories()
     assert len(result.controller_spin_mixing_history) == result.iteration_count
     assert any(signal.hartree_share is not None for signal in result.controller_signals_history)
     assert any(result.controller_state_flags_history)
+
+
+def test_monitor_grid_scf_dry_run_records_active_subspace_history_for_singlet() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(9, 9, 11),
+        box_half_extents=(6.0, 6.0, 8.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+
+    result = run_h2_monitor_grid_scf_dry_run(
+        "singlet",
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        max_iterations=2,
+        mixing=0.2,
+        density_tolerance=1.0e-2,
+        energy_tolerance=1.0e-4,
+        eigensolver_tolerance=1.0e-2,
+        eigensolver_ncv=8,
+        controller_name="generic_charge_spin_preconditioned",
+    )
+
+    assert result.active_subspace_enabled is True
+    assert result.active_subspace_size == 2
+    assert len(result.active_subspace_diagnostics_history) == result.iteration_count
+    assert any(
+        snapshot.best_in_subspace_occupied_overlap_abs is not None
+        for snapshot in result.active_subspace_diagnostics_history
+    )

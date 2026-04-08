@@ -16,6 +16,10 @@ from isogrid.ks import FixedPotentialEigensolverResult
 from isogrid.ks import FixedPotentialStaticLocalOperatorContext
 from isogrid.ks import prepare_fixed_potential_static_local_operator
 from isogrid.ks import solve_fixed_potential_static_local_eigenproblem
+from isogrid.scf.active_subspace import ActiveSubspaceConfig
+from isogrid.scf.active_subspace import ActiveSubspaceState
+from isogrid.scf.active_subspace import initialize_active_subspace
+from isogrid.scf.active_subspace import update_active_subspace
 from isogrid.ks import weighted_overlap_matrix
 from isogrid.scf import H2StaticLocalScfDryRunResult
 from isogrid.scf import run_h2_monitor_grid_scf_dry_run
@@ -282,6 +286,12 @@ def _baseline_track_solves(
         count=count,
     )
     tracked_reference_orbital = np.asarray(initial_guess[:1], dtype=np.float64)
+    active_subspace_config = (
+        ActiveSubspaceConfig(enabled=True, subspace_size=2, target_occupied_count=1)
+        if _is_h2_closed_shell_singlet(occupations) and count >= 2
+        else None
+    )
+    active_subspace_state: ActiveSubspaceState | None = None
     for index, context in enumerate(contexts):
         if index > 0:
             initial_guess = np.asarray(solves[-1].orbitals[:count], dtype=np.float64)
@@ -293,11 +303,34 @@ def _baseline_track_solves(
         )
         solves.append(solve)
         if _is_h2_closed_shell_singlet(occupations):
-            tracked_occupied = _select_closed_shell_singlet_tracked_occupied_orbital(
-                solve.orbitals,
-                reference_orbital=tracked_reference_orbital,
-                grid_geometry=grid_geometry,
-            )
+            if active_subspace_config is not None:
+                selection = (
+                    initialize_active_subspace(
+                        raw_subspace_orbitals=np.asarray(
+                            solve.orbitals[: active_subspace_config.subspace_size],
+                            dtype=np.float64,
+                        ),
+                        grid_geometry=grid_geometry,
+                        config=active_subspace_config,
+                    )
+                    if active_subspace_state is None
+                    else update_active_subspace(
+                        raw_subspace_orbitals=np.asarray(
+                            solve.orbitals[: active_subspace_config.subspace_size],
+                            dtype=np.float64,
+                        ),
+                        state=active_subspace_state,
+                        grid_geometry=grid_geometry,
+                    )
+                )
+                active_subspace_state = selection.state
+                tracked_occupied = np.asarray(selection.occupied_orbitals, dtype=np.float64)
+            else:
+                tracked_occupied = _select_closed_shell_singlet_tracked_occupied_orbital(
+                    solve.orbitals,
+                    reference_orbital=tracked_reference_orbital,
+                    grid_geometry=grid_geometry,
+                )
             tracked_reference_orbital = np.asarray(tracked_occupied, dtype=np.float64)
         else:
             tracked_occupied = np.asarray(
@@ -427,11 +460,38 @@ def _build_route_result(
             initial_guess_orbitals=np.asarray(previous_baseline_solve.orbitals[:track_count], dtype=np.float64),
         )
         if _is_h2_closed_shell_singlet(occupations):
-            route_tracked_occupied = _select_closed_shell_singlet_tracked_occupied_orbital(
-                route_solve.orbitals,
-                reference_orbital=previous_baseline_tracked_occupied,
-                grid_geometry=current_context.grid_geometry,
-            )
+            active_subspace_size = min(2, track_count, int(route_solve.orbitals.shape[0]))
+            if active_subspace_size >= 2:
+                reference_state = ActiveSubspaceState(
+                    config=ActiveSubspaceConfig(
+                        enabled=True,
+                        subspace_size=active_subspace_size,
+                        target_occupied_count=1,
+                    ),
+                    reference_subspace_orbitals=np.asarray(
+                        previous_baseline_solve.orbitals[:active_subspace_size],
+                        dtype=np.float64,
+                    ),
+                    reference_occupied_orbitals=np.asarray(
+                        previous_baseline_tracked_occupied[:1],
+                        dtype=np.float64,
+                    ),
+                )
+                selection = update_active_subspace(
+                    raw_subspace_orbitals=np.asarray(
+                        route_solve.orbitals[:active_subspace_size],
+                        dtype=np.float64,
+                    ),
+                    state=reference_state,
+                    grid_geometry=current_context.grid_geometry,
+                )
+                route_tracked_occupied = np.asarray(selection.occupied_orbitals, dtype=np.float64)
+            else:
+                route_tracked_occupied = _select_closed_shell_singlet_tracked_occupied_orbital(
+                    route_solve.orbitals,
+                    reference_orbital=previous_baseline_tracked_occupied,
+                    grid_geometry=current_context.grid_geometry,
+                )
         else:
             route_tracked_occupied = np.asarray(
                 route_solve.orbitals[: occupations.n_alpha],

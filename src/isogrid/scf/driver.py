@@ -43,6 +43,11 @@ from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.grid import build_default_h2_grid_geometry
 from isogrid.grid import build_h2_local_patch_development_monitor_grid
+from isogrid.scf.active_subspace import ActiveSubspaceConfig
+from isogrid.scf.active_subspace import ActiveSubspaceSelectionResult
+from isogrid.scf.active_subspace import ActiveSubspaceState
+from isogrid.scf.active_subspace import initialize_active_subspace
+from isogrid.scf.active_subspace import update_active_subspace
 from isogrid.scf.controller import ScfControllerConfig
 from isogrid.scf.controller import ScfControllerSignals
 from isogrid.scf.controller import ScfControllerState
@@ -309,6 +314,22 @@ class MonitorGridHartreeResponseIterationDiagnostics:
 
 
 @dataclass(frozen=True)
+class MonitorGridActiveSubspaceIterationDiagnostics:
+    """Compact active-subspace snapshot for one singlet SCF step."""
+
+    iteration: int
+    subspace_size: int
+    target_occupied_count: int
+    raw_occupied_overlap_abs: float | None
+    best_in_subspace_occupied_overlap_abs: float | None
+    internal_rotation_angle_deg: float | None
+    projector_drift_frobenius_norm: float | None
+    subspace_rotation_max_angle_deg: float | None
+    lowest_gap_ha: float | None
+    verdict: str
+
+
+@dataclass(frozen=True)
 class H2StaticLocalScfDryRunResult:
     """Result of the first H2 A-grid static-local SCF dry-run."""
 
@@ -489,6 +510,10 @@ class H2StaticLocalScfDryRunResult:
     controller_charge_mixing_history: tuple[float, ...] = ()
     controller_spin_mixing_history: tuple[float, ...] = ()
     controller_state_flags_history: tuple[tuple[str, ...], ...] = ()
+    active_subspace_enabled: bool = False
+    active_subspace_size: int | None = None
+    active_subspace_target_occupied_count: int | None = None
+    active_subspace_diagnostics_history: tuple[MonitorGridActiveSubspaceIterationDiagnostics, ...] = ()
 
 
 def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
@@ -1561,6 +1586,27 @@ def _controller_orbital_response_signals(
     max_angle_deg = float(np.degrees(np.arccos(min_singular)))
     current_gap = float(current_solve.eigenvalues[1] - current_solve.eigenvalues[0])
     return occupied_overlap_abs, max_angle_deg, current_gap
+
+
+def _active_subspace_diagnostics_snapshot(
+    *,
+    iteration: int,
+    selection: ActiveSubspaceSelectionResult,
+    config: ActiveSubspaceConfig,
+    lowest_gap_ha: float | None,
+) -> MonitorGridActiveSubspaceIterationDiagnostics:
+    return MonitorGridActiveSubspaceIterationDiagnostics(
+        iteration=int(iteration),
+        subspace_size=int(config.subspace_size),
+        target_occupied_count=int(config.target_occupied_count),
+        raw_occupied_overlap_abs=selection.raw_occupied_overlap_abs,
+        best_in_subspace_occupied_overlap_abs=selection.best_in_subspace_occupied_overlap_abs,
+        internal_rotation_angle_deg=selection.internal_rotation_angle_deg,
+        projector_drift_frobenius_norm=selection.projector_drift_frobenius_norm,
+        subspace_rotation_max_angle_deg=selection.subspace_rotation_max_angle_deg,
+        lowest_gap_ha=lowest_gap_ha,
+        verdict=str(selection.verdict),
+    )
 
 
 def _estimate_singlet_hartree_tail_channel_shares(
@@ -3162,7 +3208,18 @@ def run_h2_monitor_grid_scf_dry_run(
         grid_geometry=grid_geometry,
     )
     closed_shell_singlet_tracking_enabled = _is_h2_closed_shell_singlet(occupations)
-    singlet_solver_track_count = _closed_shell_singlet_tracking_solve_count(occupations)
+    active_subspace_config = (
+        ActiveSubspaceConfig.local_only_h2_singlet_default()
+        if closed_shell_singlet_tracking_enabled
+        else None
+    )
+    active_subspace_enabled = bool(
+        active_subspace_config is not None and active_subspace_config.enabled
+    )
+    singlet_solver_track_count = max(
+        _closed_shell_singlet_tracking_solve_count(occupations),
+        int(active_subspace_config.subspace_size) if active_subspace_enabled else 0,
+    )
     controller_config = (
         ScfControllerConfig.generic_charge_spin(baseline_mixing=mixing)
         if normalized_controller_name == "generic_charge_spin"
@@ -3180,11 +3237,6 @@ def run_h2_monitor_grid_scf_dry_run(
         else None
     )
     solve_guess_up = np.asarray(guess_up, dtype=np.float64)
-    singlet_tracked_reference_orbital = (
-        np.asarray(guess_up[:1], dtype=np.float64)
-        if closed_shell_singlet_tracking_enabled
-        else None
-    )
     if (
         closed_shell_singlet_tracking_enabled
         and solve_guess_up.shape[0] < singlet_solver_track_count
@@ -3240,6 +3292,9 @@ def run_h2_monitor_grid_scf_dry_run(
     controller_charge_mixing_history: list[float] = []
     controller_spin_mixing_history: list[float] = []
     controller_state_flags_history: list[tuple[str, ...]] = []
+    active_subspace_diagnostics_history: list[
+        MonitorGridActiveSubspaceIterationDiagnostics
+    ] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -3263,6 +3318,7 @@ def run_h2_monitor_grid_scf_dry_run(
     ] = []
     previous_controller_solve_up: FixedPotentialEigensolverResult | None = None
     previous_controller_occupied_up: np.ndarray | None = None
+    active_subspace_state: ActiveSubspaceState | None = None
     hartree_solve_times: list[float] = []
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
@@ -3401,6 +3457,7 @@ def run_h2_monitor_grid_scf_dry_run(
         iteration_start = perf_counter()
         solve_up = None
         solve_down = None
+        active_subspace_selection: ActiveSubspaceSelectionResult | None = None
         up_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         down_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         up_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
@@ -3493,16 +3550,35 @@ def run_h2_monitor_grid_scf_dry_run(
                 profile_jax_internals=profile_eigensolver_internals,
             )
             if closed_shell_singlet_tracking_enabled:
-                if singlet_tracked_reference_orbital is None:
-                    singlet_tracked_reference_orbital = np.asarray(
-                        guess_up[:1],
+                if active_subspace_enabled and active_subspace_config is not None:
+                    raw_active_subspace = np.asarray(
+                        solve_up.orbitals[: active_subspace_config.subspace_size],
                         dtype=np.float64,
                     )
-                orbitals_up = _select_closed_shell_singlet_tracked_occupied_orbital(
-                    solve_up.orbitals,
-                    reference_orbital=singlet_tracked_reference_orbital,
-                    grid_geometry=grid_geometry,
-                )
+                    active_subspace_selection = (
+                        initialize_active_subspace(
+                            raw_subspace_orbitals=raw_active_subspace,
+                            grid_geometry=grid_geometry,
+                            config=active_subspace_config,
+                        )
+                        if active_subspace_state is None
+                        else update_active_subspace(
+                            raw_subspace_orbitals=raw_active_subspace,
+                            state=active_subspace_state,
+                            grid_geometry=grid_geometry,
+                        )
+                    )
+                    active_subspace_state = active_subspace_selection.state
+                    orbitals_up = np.asarray(
+                        active_subspace_selection.occupied_orbitals,
+                        dtype=np.float64,
+                    )
+                else:
+                    orbitals_up = _select_closed_shell_singlet_tracked_occupied_orbital(
+                        solve_up.orbitals,
+                        reference_orbital=np.asarray(guess_up[:1], dtype=np.float64),
+                        grid_geometry=grid_geometry,
+                    )
             else:
                 orbitals_up = solve_up.orbitals
         else:
@@ -3842,6 +3918,19 @@ def run_h2_monitor_grid_scf_dry_run(
             controller_spin_mixing_history.append(float(controller_step.spin_mixing))
             controller_state_flags_history.append(tuple(controller_step.flags))
         controller_signals_history.append(controller_signals)
+        if (
+            active_subspace_enabled
+            and active_subspace_selection is not None
+            and active_subspace_config is not None
+        ):
+            active_subspace_diagnostics_history.append(
+                _active_subspace_diagnostics_snapshot(
+                    iteration=iteration,
+                    selection=active_subspace_selection,
+                    config=active_subspace_config,
+                    lowest_gap_ha=lowest_gap_ha,
+                )
+            )
         if (
             enable_cycle_breaker
             and _is_h2_closed_shell_singlet(occupations)
@@ -4807,6 +4896,16 @@ def run_h2_monitor_grid_scf_dry_run(
             tuple(str(flag) for flag in flags)
             for flags in controller_state_flags_history
         ),
+        active_subspace_enabled=bool(active_subspace_enabled),
+        active_subspace_size=(
+            None if active_subspace_config is None else int(active_subspace_config.subspace_size)
+        ),
+        active_subspace_target_occupied_count=(
+            None
+            if active_subspace_config is None
+            else int(active_subspace_config.target_occupied_count)
+        ),
+        active_subspace_diagnostics_history=tuple(active_subspace_diagnostics_history),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),
