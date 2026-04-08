@@ -43,6 +43,10 @@ from isogrid.grid import MonitorGridGeometry
 from isogrid.grid import StructuredGridGeometry
 from isogrid.grid import build_default_h2_grid_geometry
 from isogrid.grid import build_h2_local_patch_development_monitor_grid
+from isogrid.scf.controller import ScfControllerConfig
+from isogrid.scf.controller import ScfControllerSignals
+from isogrid.scf.controller import ScfControllerState
+from isogrid.scf.controller import propose_next_density
 from isogrid.ks import FixedPotentialEigensolverResult
 from isogrid.ks import FixedPotentialStaticLocalOperatorContext
 from isogrid.ks import FixedPotentialStaticLocalPreparationProfile
@@ -480,6 +484,11 @@ class H2StaticLocalScfDryRunResult:
     hartree_tail_guard_hartree_share_history: tuple[float | None, ...] = ()
     hartree_tail_guard_residual_ratio_history: tuple[float | None, ...] = ()
     hartree_tail_guard_projected_ratio_history: tuple[float | None, ...] = ()
+    controller_name: str = "baseline_linear"
+    controller_signals_history: tuple[ScfControllerSignals, ...] = ()
+    controller_charge_mixing_history: tuple[float, ...] = ()
+    controller_spin_mixing_history: tuple[float, ...] = ()
+    controller_state_flags_history: tuple[tuple[str, ...], ...] = ()
 
 
 def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
@@ -734,6 +743,82 @@ def _is_closed_shell_singlet(occupations: SpinOccupations) -> bool:
         and occupations.n_alpha > 0
         and occupations.n_alpha == occupations.n_beta
     )
+
+
+def _closed_shell_singlet_tracking_solve_count(occupations: SpinOccupations) -> int:
+    """Return the solve size needed to track the singlet occupied direction."""
+
+    if _is_h2_closed_shell_singlet(occupations):
+        return 2
+    return max(int(occupations.n_alpha), 1)
+
+
+def _select_closed_shell_singlet_tracked_occupied_orbital(
+    orbitals: np.ndarray,
+    *,
+    reference_orbital: np.ndarray,
+    grid_geometry: GridGeometryLike,
+) -> np.ndarray:
+    """Pick the continuity-preserving occupied direction inside the lowest-2 subspace."""
+
+    orbital_block = validate_orbital_block(
+        orbitals,
+        grid_geometry=grid_geometry,
+        name="orbitals",
+    )
+    if orbital_block.shape[0] == 0:
+        raise ValueError("At least one orbital is required for singlet tracking.")
+    if orbital_block.shape[0] == 1:
+        tracked = np.asarray(orbital_block[:1], dtype=np.float64)
+    else:
+        track_block = np.asarray(orbital_block[:2], dtype=np.float64)
+        reference_block = validate_orbital_block(
+            reference_orbital,
+            grid_geometry=grid_geometry,
+            name="reference_orbital",
+        )
+        overlaps = np.asarray(
+            weighted_overlap_matrix(
+                track_block,
+                grid_geometry=grid_geometry,
+                other=reference_block[:1],
+            )[:, 0],
+            dtype=np.float64,
+        )
+        projected = np.tensordot(overlaps, track_block, axes=(0, 0))
+        projected_block = np.asarray([np.real_if_close(projected)], dtype=np.float64)
+        projected_norm = float(
+            np.real_if_close(
+                weighted_overlap_matrix(
+                    projected_block,
+                    grid_geometry=grid_geometry,
+                    other=projected_block,
+                )[0, 0]
+            )
+        )
+        if projected_norm <= 1.0e-14:
+            tracked = np.asarray(
+                track_block[int(np.argmax(np.abs(overlaps))) : int(np.argmax(np.abs(overlaps))) + 1],
+                dtype=np.float64,
+            )
+        else:
+            tracked = weighted_orthonormalize_orbitals(
+                projected_block,
+                grid_geometry=grid_geometry,
+                require_full_rank=True,
+            )
+    overlap = float(
+        np.real_if_close(
+            weighted_overlap_matrix(
+                tracked,
+                grid_geometry=grid_geometry,
+                other=reference_orbital[:1],
+            )[0, 0]
+        )
+    )
+    if overlap < 0.0:
+        tracked = np.asarray(-tracked, dtype=np.float64)
+    return np.asarray(tracked[:1], dtype=np.float64)
 
 
 def evaluate_ion_ion_repulsion(
@@ -1426,6 +1511,58 @@ def _weighted_field_norm(
     return float(np.sqrt(max(value, 0.0)))
 
 
+def _previous_density_residual_ratio(
+    *,
+    history: list[ScfIterationRecord],
+    current_density_residual: float,
+) -> float | None:
+    if not history:
+        return None
+    previous_residual = float(history[-1].density_residual)
+    if previous_residual <= 1.0e-16:
+        return None
+    return float(current_density_residual / previous_residual)
+
+
+def _controller_orbital_response_signals(
+    *,
+    previous_solve: FixedPotentialEigensolverResult | None,
+    current_solve: FixedPotentialEigensolverResult | None,
+    current_occupied_orbitals: np.ndarray | None,
+    previous_occupied_orbitals: np.ndarray | None,
+    grid_geometry: GridGeometryLike,
+) -> tuple[float | None, float | None, float | None]:
+    if previous_occupied_orbitals is None or current_occupied_orbitals is None:
+        return None, None, None
+    occupied_overlap_abs = float(
+        abs(
+            weighted_overlap_matrix(
+                np.asarray(current_occupied_orbitals[:1], dtype=np.float64),
+                grid_geometry=grid_geometry,
+                other=np.asarray(previous_occupied_orbitals[:1], dtype=np.float64),
+            )[0, 0]
+        )
+    )
+    if (
+        previous_solve is None
+        or current_solve is None
+        or previous_solve.orbitals.shape[0] < 2
+        or current_solve.orbitals.shape[0] < 2
+    ):
+        return occupied_overlap_abs, None, None
+    overlap = weighted_overlap_matrix(
+        np.asarray(current_solve.orbitals[:2], dtype=np.float64),
+        grid_geometry=grid_geometry,
+        other=np.asarray(previous_solve.orbitals[:2], dtype=np.float64),
+    )
+    singular_values = np.linalg.svd(np.asarray(overlap, dtype=np.float64), compute_uv=False)
+    singular_values = np.clip(np.asarray(singular_values, dtype=np.float64), 0.0, 1.0)
+    min_singular = float(np.min(singular_values))
+    max_angle_deg = float(np.degrees(np.arccos(min_singular)))
+    current_gap = float(current_solve.eigenvalues[1] - current_solve.eigenvalues[0])
+    return occupied_overlap_abs, max_angle_deg, current_gap
+
+
 def _estimate_singlet_hartree_tail_channel_shares(
     *,
     input_context: FixedPotentialStaticLocalOperatorContext | None,
@@ -1472,6 +1609,85 @@ def _estimate_singlet_hartree_tail_channel_shares(
     )
 
 
+def _closed_shell_singlet_hartree_aware_mixing_factor(
+    *,
+    baseline_mixing: float,
+    hartree_share: float | None,
+    previous_residual_ratio: float | None,
+) -> float:
+    effective_mixing = float(0.60 * baseline_mixing)
+    if hartree_share is not None and np.isfinite(hartree_share):
+        hartree_excess = float(np.clip((hartree_share - 0.55) / 0.30, 0.0, 1.0))
+        effective_mixing *= 1.0 - 0.45 * hartree_excess
+    if previous_residual_ratio is not None and np.isfinite(previous_residual_ratio):
+        residual_excess = float(
+            np.clip((previous_residual_ratio - 0.90) / 0.15, 0.0, 1.0)
+        )
+        effective_mixing *= 1.0 - 0.65 * residual_excess
+    return float(np.clip(effective_mixing, min(0.08, baseline_mixing), baseline_mixing))
+
+
+def _apply_closed_shell_singlet_hartree_aware_baseline_mixing(
+    *,
+    occupations: SpinOccupations,
+    rho_up_current: np.ndarray,
+    rho_down_current: np.ndarray,
+    rho_up_output: np.ndarray,
+    rho_down_output: np.ndarray,
+    grid_geometry: GridGeometryLike,
+    baseline_mixing: float,
+    hartree_share: float | None,
+    previous_residual_ratio: float | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    if not _is_h2_closed_shell_singlet(occupations):
+        return (
+            _renormalize_density(
+                (1.0 - baseline_mixing) * rho_up_current + baseline_mixing * rho_up_output,
+                occupations.n_alpha,
+                grid_geometry=grid_geometry,
+            ),
+            _renormalize_density(
+                (1.0 - baseline_mixing) * rho_down_current + baseline_mixing * rho_down_output,
+                occupations.n_beta,
+                grid_geometry=grid_geometry,
+            ),
+        )
+
+    effective_mixing = _closed_shell_singlet_hartree_aware_mixing_factor(
+        baseline_mixing=baseline_mixing,
+        hartree_share=hartree_share,
+        previous_residual_ratio=previous_residual_ratio,
+    )
+    rho_total_current = build_total_density(
+        rho_up=np.asarray(rho_up_current, dtype=np.float64),
+        rho_down=np.asarray(rho_down_current, dtype=np.float64),
+        grid_geometry=grid_geometry,
+    )
+    rho_total_output = build_total_density(
+        rho_up=np.asarray(rho_up_output, dtype=np.float64),
+        rho_down=np.asarray(rho_down_output, dtype=np.float64),
+        grid_geometry=grid_geometry,
+    )
+    rho_total_mixed = _renormalize_density(
+        (1.0 - effective_mixing) * rho_total_current + effective_mixing * rho_total_output,
+        occupations.total_electrons,
+        grid_geometry=grid_geometry,
+    )
+    half_total_density = np.asarray(0.5 * rho_total_mixed, dtype=np.float64)
+    return (
+        _renormalize_density(
+            half_total_density,
+            occupations.n_alpha,
+            grid_geometry=grid_geometry,
+        ),
+        _renormalize_density(
+            half_total_density,
+            occupations.n_beta,
+            grid_geometry=grid_geometry,
+        ),
+    )
+
+
 def _apply_singlet_hartree_tail_mitigation(
     *,
     occupations: SpinOccupations,
@@ -1492,7 +1708,7 @@ def _apply_singlet_hartree_tail_mitigation(
     projected_ratio_trigger: float,
     hartree_share_trigger: float,
 ) -> tuple[np.ndarray, np.ndarray, bool, float | None, float | None, float | None]:
-    if not enabled or not _is_h2_closed_shell_singlet(occupations):
+    if not _is_h2_closed_shell_singlet(occupations):
         return (
             rho_up_candidate,
             rho_down_candidate,
@@ -1505,11 +1721,19 @@ def _apply_singlet_hartree_tail_mitigation(
         input_context=input_operator_context,
         output_context=output_energy_context,
     )
-    previous_residual_ratio = None
-    if history:
-        previous_residual = float(history[-1].density_residual)
-        if previous_residual > 1.0e-16:
-            previous_residual_ratio = float(current_density_residual / previous_residual)
+    previous_residual_ratio = _previous_density_residual_ratio(
+        history=history,
+        current_density_residual=current_density_residual,
+    )
+    if not enabled:
+        return (
+            rho_up_candidate,
+            rho_down_candidate,
+            False,
+            hartree_share,
+            previous_residual_ratio,
+            projected_residual_ratio,
+        )
     hartree_dominated = (
         hartree_share is not None
         and np.isfinite(hartree_share)
@@ -1577,20 +1801,26 @@ def _apply_hartree_tail_guard(
     projected_ratio_trigger: float,
     hartree_share_trigger: float,
 ) -> tuple[np.ndarray | None, bool, float | None, float | None, float | None]:
-    if not enabled or not _is_closed_shell_singlet(occupations):
+    if not _is_closed_shell_singlet(occupations):
         return (None, False, None, None, None)
+    previous_residual_ratio = _previous_density_residual_ratio(
+        history=history,
+        current_density_residual=current_density_residual,
+    )
     if input_operator_context is None or output_energy_context is None:
-        return (None, False, None, None, projected_residual_ratio)
-
+        return (None, False, None, previous_residual_ratio, projected_residual_ratio)
     hartree_share, _, _ = _estimate_singlet_hartree_tail_channel_shares(
         input_context=input_operator_context,
         output_context=output_energy_context,
     )
-    previous_residual_ratio = None
-    if history:
-        previous_residual = float(history[-1].density_residual)
-        if previous_residual > 1.0e-16:
-            previous_residual_ratio = float(current_density_residual / previous_residual)
+    if not enabled:
+        return (
+            None,
+            False,
+            hartree_share,
+            previous_residual_ratio,
+            projected_residual_ratio,
+        )
 
     hartree_dominated = (
         hartree_share is not None
@@ -2619,7 +2849,6 @@ def run_h2_minimal_scf(
                 ),
             )
         )
-
         final_orbitals_up = orbitals_up
         final_orbitals_down = orbitals_down
         final_eigenvalues_up = (
@@ -2690,6 +2919,7 @@ def run_h2_monitor_grid_scf_dry_run(
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
     monitor_boundary_construction_mode: str = "corrected_moments",
+    controller_name: str = "baseline_linear",
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -2863,6 +3093,12 @@ def run_h2_monitor_grid_scf_dry_run(
         raise ValueError("broyden_damping must satisfy 0 < broyden_damping <= 1.")
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
+    normalized_controller_name = controller_name.strip().lower()
+    if normalized_controller_name not in {"baseline_linear", "generic_charge_spin"}:
+        raise ValueError(
+            "controller_name must be `baseline_linear` or `generic_charge_spin`; "
+            f"received `{controller_name}`."
+        )
     normalized_hartree_backend = hartree_backend.strip().lower()
     if normalized_hartree_backend not in {"python", "jax"}:
         raise ValueError(
@@ -2920,6 +3156,34 @@ def run_h2_monitor_grid_scf_dry_run(
         case=case,
         grid_geometry=grid_geometry,
     )
+    closed_shell_singlet_tracking_enabled = _is_h2_closed_shell_singlet(occupations)
+    singlet_solver_track_count = _closed_shell_singlet_tracking_solve_count(occupations)
+    controller_config = (
+        ScfControllerConfig.generic_charge_spin(baseline_mixing=mixing)
+        if normalized_controller_name == "generic_charge_spin"
+        else None
+    )
+    controller_state = (
+        ScfControllerState.initial(charge_mixing=mixing, spin_mixing=mixing)
+        if controller_config is not None
+        else None
+    )
+    solve_guess_up = np.asarray(guess_up, dtype=np.float64)
+    singlet_tracked_reference_orbital = (
+        np.asarray(guess_up[:1], dtype=np.float64)
+        if closed_shell_singlet_tracking_enabled
+        else None
+    )
+    if (
+        closed_shell_singlet_tracking_enabled
+        and solve_guess_up.shape[0] < singlet_solver_track_count
+    ):
+        solve_guess_up = np.asarray(
+            _build_h2_trial_orbitals(case=case, grid_geometry=grid_geometry)[
+                :singlet_solver_track_count
+            ],
+            dtype=np.float64,
+        )
 
     history: list[ScfIterationRecord] = []
     previous_energy_total: float | None = None
@@ -2961,6 +3225,10 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_tail_guard_hartree_share_history: list[float | None] = []
     hartree_tail_guard_residual_ratio_history: list[float | None] = []
     hartree_tail_guard_projected_ratio_history: list[float | None] = []
+    controller_signals_history: list[ScfControllerSignals] = []
+    controller_charge_mixing_history: list[float] = []
+    controller_spin_mixing_history: list[float] = []
+    controller_state_flags_history: list[tuple[str, ...]] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -2982,6 +3250,8 @@ def run_h2_monitor_grid_scf_dry_run(
     hartree_response_diagnostics_history: list[
         MonitorGridHartreeResponseIterationDiagnostics
     ] = []
+    previous_controller_solve_up: FixedPotentialEigensolverResult | None = None
+    previous_controller_occupied_up: np.ndarray | None = None
     hartree_solve_times: list[float] = []
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
@@ -3129,6 +3399,11 @@ def run_h2_monitor_grid_scf_dry_run(
 
         eigensolver_start = perf_counter()
         if occupations.n_alpha > 0:
+            solve_up_orbital_count = (
+                singlet_solver_track_count
+                if closed_shell_singlet_tracking_enabled
+                else occupations.n_alpha
+            )
             if use_step_local_static_local_reuse:
                 up_operator_context, up_preparation_profile = (
                     prepare_fixed_potential_static_local_operator_profiled(
@@ -3185,9 +3460,9 @@ def run_h2_monitor_grid_scf_dry_run(
                 rho_up=rho_up,
                 rho_down=rho_down,
                 spin_channel="up",
-                k=occupations.n_alpha,
+                k=solve_up_orbital_count,
                 case=case,
-                initial_guess_orbitals=guess_up,
+                initial_guess_orbitals=solve_guess_up,
                 tolerance=eigensolver_tolerance,
                 ncv=eigensolver_ncv,
                 use_monitor_patch=True,
@@ -3206,7 +3481,19 @@ def run_h2_monitor_grid_scf_dry_run(
                 monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                 profile_jax_internals=profile_eigensolver_internals,
             )
-            orbitals_up = solve_up.orbitals
+            if closed_shell_singlet_tracking_enabled:
+                if singlet_tracked_reference_orbital is None:
+                    singlet_tracked_reference_orbital = np.asarray(
+                        guess_up[:1],
+                        dtype=np.float64,
+                    )
+                orbitals_up = _select_closed_shell_singlet_tracked_occupied_orbital(
+                    solve_up.orbitals,
+                    reference_orbital=singlet_tracked_reference_orbital,
+                    grid_geometry=grid_geometry,
+                )
+            else:
+                orbitals_up = solve_up.orbitals
         else:
             orbitals_up = _empty_orbital_block(grid_geometry)
 
@@ -3322,6 +3609,11 @@ def run_h2_monitor_grid_scf_dry_run(
             float(eigensolver_elapsed - iteration_static_local_prepare_elapsed),
         )
         eigensolver_wall_time += eigensolver_core_elapsed
+        singlet_feedback_input_context = up_operator_context
+        if singlet_feedback_input_context is None and solve_up is not None:
+            operator_context = solve_up.operator_context
+            if isinstance(operator_context, FixedPotentialStaticLocalOperatorContext):
+                singlet_feedback_input_context = operator_context
 
         density_update_start = perf_counter()
         rho_up_out = _renormalize_density(
@@ -3358,7 +3650,10 @@ def run_h2_monitor_grid_scf_dry_run(
 
         energy_evaluation_start = perf_counter()
         energy_context: FixedPotentialStaticLocalOperatorContext | None = None
-        if use_step_local_static_local_reuse:
+        should_prepare_output_context = (
+            use_step_local_static_local_reuse or closed_shell_singlet_tracking_enabled
+        )
+        if should_prepare_output_context:
             energy_spin_channel = (
                 "up"
                 if occupations.n_alpha > 0
@@ -3475,17 +3770,67 @@ def run_h2_monitor_grid_scf_dry_run(
             rho_down_out=rho_down_out,
         )
         latest_anderson_projected_ratio: float | None = None
+        baseline_hartree_share, _, _ = _estimate_singlet_hartree_tail_channel_shares(
+            input_context=singlet_feedback_input_context,
+            output_context=energy_context,
+        )
+        baseline_residual_ratio = _previous_density_residual_ratio(
+            history=history,
+            current_density_residual=float(density_residual),
+        )
+        (
+            occupied_overlap_abs,
+            lowest_subspace_rotation_max_angle_deg,
+            lowest_gap_ha,
+        ) = _controller_orbital_response_signals(
+            previous_solve=previous_controller_solve_up,
+            current_solve=solve_up,
+            current_occupied_orbitals=orbitals_up if occupations.n_alpha > 0 else None,
+            previous_occupied_orbitals=previous_controller_occupied_up,
+            grid_geometry=grid_geometry,
+        )
+        controller_signals = ScfControllerSignals(
+            density_residual_ratio=baseline_residual_ratio,
+            hartree_share=baseline_hartree_share,
+            occupied_orbital_overlap_abs=occupied_overlap_abs,
+            lowest_subspace_rotation_max_angle_deg=lowest_subspace_rotation_max_angle_deg,
+            lowest_gap_ha=lowest_gap_ha,
+        )
 
-        rho_up_mixed = _renormalize_density(
-            (1.0 - mixing) * rho_up + mixing * rho_up_out,
-            occupations.n_alpha,
-            grid_geometry=grid_geometry,
-        )
-        rho_down_mixed = _renormalize_density(
-            (1.0 - mixing) * rho_down + mixing * rho_down_out,
-            occupations.n_beta,
-            grid_geometry=grid_geometry,
-        )
+        if controller_config is None or controller_state is None:
+            rho_up_mixed, rho_down_mixed = _apply_closed_shell_singlet_hartree_aware_baseline_mixing(
+                occupations=occupations,
+                rho_up_current=rho_up,
+                rho_down_current=rho_down,
+                rho_up_output=rho_up_out,
+                rho_down_output=rho_down_out,
+                grid_geometry=grid_geometry,
+                baseline_mixing=mixing,
+                hartree_share=baseline_hartree_share,
+                previous_residual_ratio=baseline_residual_ratio,
+            )
+            controller_charge_mixing_history.append(float(mixing))
+            controller_spin_mixing_history.append(float(mixing))
+            controller_state_flags_history.append(("baseline_linear",))
+        else:
+            controller_step = propose_next_density(
+                occupations=occupations,
+                rho_up_current=rho_up,
+                rho_down_current=rho_down,
+                rho_up_output=rho_up_out,
+                rho_down_output=rho_down_out,
+                grid_geometry=grid_geometry,
+                config=controller_config,
+                state=controller_state,
+                signals=controller_signals,
+            )
+            rho_up_mixed = np.asarray(controller_step.rho_up_next, dtype=np.float64)
+            rho_down_mixed = np.asarray(controller_step.rho_down_next, dtype=np.float64)
+            controller_state = controller_step.state
+            controller_charge_mixing_history.append(float(controller_step.charge_mixing))
+            controller_spin_mixing_history.append(float(controller_step.spin_mixing))
+            controller_state_flags_history.append(tuple(controller_step.flags))
+        controller_signals_history.append(controller_signals)
         if (
             enable_cycle_breaker
             and _is_h2_closed_shell_singlet(occupations)
@@ -3671,8 +4016,8 @@ def run_h2_monitor_grid_scf_dry_run(
             rho_down_candidate=rho_down_mixed,
             current_density_residual=float(density_residual),
             projected_residual_ratio=latest_anderson_projected_ratio,
-            input_operator_context=up_operator_context,
-            output_energy_context=energy_context if use_step_local_static_local_reuse else None,
+            input_operator_context=singlet_feedback_input_context,
+            output_energy_context=energy_context,
             enabled=enable_singlet_hartree_tail_mitigation,
             mitigation_weight=singlet_hartree_tail_mitigation_weight,
             residual_ratio_trigger=singlet_hartree_tail_residual_ratio_trigger,
@@ -3726,8 +4071,8 @@ def run_h2_monitor_grid_scf_dry_run(
             history=history,
             current_density_residual=float(density_residual),
             projected_residual_ratio=latest_anderson_projected_ratio,
-            input_operator_context=up_operator_context,
-            output_energy_context=energy_context if use_step_local_static_local_reuse else None,
+            input_operator_context=singlet_feedback_input_context,
+            output_energy_context=energy_context,
             enabled=enable_hartree_tail_guard,
             guard_strategy=normalized_hartree_tail_guard_strategy,
             guard_alpha=hartree_tail_guard_alpha,
@@ -3954,13 +4299,27 @@ def run_h2_monitor_grid_scf_dry_run(
                 density_residual=float(density_residual),
                 energy=energy,
                 energy_change=None if energy_change is None else float(energy_change),
-                solve_up=_build_solve_summary(solve_up, "up", occupations.n_alpha),
+                solve_up=_build_solve_summary(
+                    solve_up,
+                    "up",
+                    0 if solve_up is None else int(solve_up.orbitals.shape[0]),
+                ),
                 solve_down=(
-                    _build_solve_summary(solve_up, "down", occupations.n_beta)
+                    _build_solve_summary(
+                        solve_up,
+                        "down",
+                        0 if solve_up is None else int(solve_up.orbitals.shape[0]),
+                    )
                     if occupations.n_beta > 0 and _is_h2_closed_shell_singlet(occupations)
                     else _build_solve_summary(solve_down, "down", occupations.n_beta)
                 ),
             )
+        )
+        previous_controller_solve_up = solve_up
+        previous_controller_occupied_up = (
+            np.asarray(orbitals_up[:1], dtype=np.float64)
+            if occupations.n_alpha > 0
+            else None
         )
 
         final_orbitals_up = orbitals_up
@@ -4065,8 +4424,18 @@ def run_h2_monitor_grid_scf_dry_run(
 
         rho_up = rho_up_mixed
         rho_down = rho_down_mixed
+        solve_guess_up = (
+            np.asarray(
+                solve_up.orbitals[:singlet_solver_track_count],
+                dtype=np.float64,
+            )
+            if closed_shell_singlet_tracking_enabled and solve_up is not None
+            else orbitals_up
+        )
         guess_up = orbitals_up
         guess_down = orbitals_down
+        if closed_shell_singlet_tracking_enabled:
+            singlet_tracked_reference_orbital = np.asarray(orbitals_up[:1], dtype=np.float64)
         previous_energy_total = energy.total
 
     lowest_eigenvalue = None
@@ -4414,6 +4783,18 @@ def run_h2_monitor_grid_scf_dry_run(
         hartree_tail_guard_projected_ratio_history=tuple(
             None if value is None else float(value)
             for value in hartree_tail_guard_projected_ratio_history
+        ),
+        controller_name=str(normalized_controller_name),
+        controller_signals_history=tuple(controller_signals_history),
+        controller_charge_mixing_history=tuple(
+            float(value) for value in controller_charge_mixing_history
+        ),
+        controller_spin_mixing_history=tuple(
+            float(value) for value in controller_spin_mixing_history
+        ),
+        controller_state_flags_history=tuple(
+            tuple(str(flag) for flag in flags)
+            for flags in controller_state_flags_history
         ),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
