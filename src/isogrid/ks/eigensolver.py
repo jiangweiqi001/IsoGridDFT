@@ -371,6 +371,7 @@ def _resolve_hartree_potential(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> tuple[np.ndarray, OpenBoundaryPoissonResult | None]:
     if hartree_potential is None:
         poisson_result = solve_hartree_potential(
@@ -381,6 +382,7 @@ def _resolve_hartree_potential(
             cg_impl=jax_hartree_cg_impl,
             cg_preconditioner=jax_hartree_cg_preconditioner,
             line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
+            monitor_boundary_construction_mode=monitor_boundary_construction_mode,
         )
         return poisson_result.potential, poisson_result
     if isinstance(hartree_potential, OpenBoundaryPoissonResult):
@@ -586,6 +588,7 @@ def prepare_fixed_potential_static_local_operator_profiled(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> tuple[
     FixedPotentialStaticLocalOperatorContext,
     FixedPotentialStaticLocalPreparationProfile,
@@ -631,6 +634,7 @@ def prepare_fixed_potential_static_local_operator_profiled(
         jax_hartree_cg_impl=jax_hartree_cg_impl,
         jax_hartree_cg_preconditioner=jax_hartree_cg_preconditioner,
         jax_hartree_line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
+        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
     )
     hartree_elapsed = time.perf_counter() - hartree_start
     xc_start = time.perf_counter()
@@ -694,6 +698,7 @@ def prepare_fixed_potential_static_local_operator(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> FixedPotentialStaticLocalOperatorContext:
     """Freeze the static local chain `T + V_loc + V_H + V_xc` on one grid."""
 
@@ -716,6 +721,7 @@ def prepare_fixed_potential_static_local_operator(
         jax_hartree_cg_impl=jax_hartree_cg_impl,
         jax_hartree_cg_preconditioner=jax_hartree_cg_preconditioner,
         jax_hartree_line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
+        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
     )
     return context
 
@@ -1203,6 +1209,7 @@ def solve_fixed_potential_static_local_eigenproblem(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
     solver_backend: str = "auto",
     profile_jax_internals: bool = False,
 ) -> FixedPotentialEigensolverResult:
@@ -1238,6 +1245,7 @@ def solve_fixed_potential_static_local_eigenproblem(
                 jax_hartree_cg_impl=jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=jax_hartree_cg_preconditioner,
                 jax_hartree_line_preconditioner_impl=jax_hartree_line_preconditioner_impl,
+                monitor_boundary_construction_mode=monitor_boundary_construction_mode,
             )
         )
     normalized_solver_backend = _normalize_fixed_potential_solver_backend(solver_backend)

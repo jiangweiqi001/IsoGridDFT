@@ -35,6 +35,10 @@ _JACOBI_DAMPING = 0.8
 _JACOBI_CHECK_INTERVAL = 25
 _MONITOR_MOMENT_RECONSTRUCTION_JACOBIAN_QUANTILE = 0.9
 _MONITOR_MOMENT_RECONSTRUCTION_SUBCELL_DIVISIONS = (2, 2, 2)
+_VALID_MONITOR_BOUNDARY_CONSTRUCTION_MODES = {
+    "corrected_moments",
+    "legacy_split",
+}
 GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
@@ -774,17 +778,34 @@ def _default_monitor_reference_center(
     )
 
 
+def _normalize_monitor_boundary_construction_mode(
+    monitor_boundary_construction_mode: str,
+) -> str:
+    normalized = monitor_boundary_construction_mode.strip().lower()
+    if normalized not in _VALID_MONITOR_BOUNDARY_CONSTRUCTION_MODES:
+        raise ValueError(
+            "monitor_boundary_construction_mode must be "
+            "`corrected_moments` or `legacy_split`; "
+            f"received `{monitor_boundary_construction_mode}`."
+        )
+    return normalized
+
+
 def _compute_multipole_boundary_condition(
     grid_geometry: GridGeometryLike,
     rho: np.ndarray,
     multipole_order: int = 2,
     reference_center: tuple[float, float, float] | None = None,
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> OpenBoundaryMultipoleBoundary:
     if multipole_order not in (0, 1, 2):
         raise ValueError(
             "The current open-boundary multipole boundary supports only orders 0, 1, and 2; "
             f"received {multipole_order}."
         )
+    normalized_monitor_boundary_construction_mode = (
+        _normalize_monitor_boundary_construction_mode(monitor_boundary_construction_mode)
+    )
 
     if reference_center is None:
         if isinstance(grid_geometry, StructuredGridGeometry):
@@ -889,7 +910,7 @@ def _compute_multipole_boundary_condition(
             boundary_radius=boundary_radius,
             multipole_order=multipole_order,
         )
-        boundary_potential = _evaluate_boundary_potential_from_moments(
+        corrected_boundary_potential = _evaluate_boundary_potential_from_moments(
             total_charge=total_charge,
             dipole_moment=dipole_moment,
             quadrupole_tensor=quadrupole_tensor,
@@ -899,6 +920,21 @@ def _compute_multipole_boundary_condition(
             boundary_radius=boundary_radius,
             multipole_order=multipole_order,
         )
+        if normalized_monitor_boundary_construction_mode == "legacy_split":
+            boundary_value_correction = _monitor_grid_boundary_value_correction(
+                grid_geometry,
+                rho,
+                multipole_order=multipole_order,
+                boundary_x=grid_geometry.x_points[boundary_mask],
+                boundary_y=grid_geometry.y_points[boundary_mask],
+                boundary_z=grid_geometry.z_points[boundary_mask],
+            )
+            boundary_potential = np.asarray(
+                baseline_boundary_potential + boundary_value_correction,
+                dtype=np.float64,
+            )
+        else:
+            boundary_potential = corrected_boundary_potential
         boundary_diagnostics = _build_monitor_boundary_construction_diagnostics(
             baseline_total_charge=baseline_total_charge,
             baseline_dipole_moment=baseline_dipole_moment,
@@ -934,6 +970,11 @@ def _compute_multipole_boundary_condition(
         "Finite-domain Dirichlet boundary values from a free-space multipole expansion "
         f"truncated at order {multipole_order} about the grid reference center."
     )
+    if isinstance(grid_geometry, MonitorGridGeometry):
+        description = (
+            f"{description} Monitor boundary construction mode: "
+            f"{normalized_monitor_boundary_construction_mode}."
+        )
     return OpenBoundaryMultipoleBoundary(
         reference_center=reference_center,
         multipole_order=multipole_order,
@@ -1071,12 +1112,14 @@ def _solve_open_boundary_poisson_monitor(
     tolerance: float,
     max_iterations: int,
     solver: str,
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> OpenBoundaryPoissonResult:
     density = validate_orbital_field(rho, grid_geometry=grid_geometry, name="rho").astype(np.float64)
     boundary_condition = _compute_multipole_boundary_condition(
         grid_geometry=grid_geometry,
         rho=density,
         multipole_order=multipole_order,
+        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
     )
     boundary_mask = _boundary_mask(grid_geometry.spec.shape)
     interior_mask = ~boundary_mask
@@ -1340,6 +1383,7 @@ def solve_open_boundary_poisson(
     tolerance: float = 1.0e-8,
     max_iterations: int = 400,
     solver: str = "auto",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> OpenBoundaryPoissonResult:
     """Solve the first-stage finite-domain Poisson problem with open-boundary data."""
 
@@ -1357,6 +1401,7 @@ def solve_open_boundary_poisson(
             tolerance=tolerance,
             max_iterations=max_iterations,
             solver=solver,
+            monitor_boundary_construction_mode=monitor_boundary_construction_mode,
         )
     return _solve_open_boundary_poisson_legacy(
         grid_geometry=grid_geometry,

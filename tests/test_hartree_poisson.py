@@ -396,6 +396,43 @@ def test_monitor_grid_boundary_condition_exposes_construction_diagnostics() -> N
     assert diagnostics.corrected_moment_boundary_rms_mismatch < 1.0e-10
 
 
+def test_monitor_grid_boundary_condition_supports_legacy_split_replay() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + (grid_geometry.z_points - 1.5) ** 2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+
+    corrected = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=2,
+        monitor_boundary_construction_mode="corrected_moments",
+    )
+    legacy = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=2,
+        monitor_boundary_construction_mode="legacy_split",
+    )
+
+    assert corrected.diagnostics is not None
+    assert legacy.diagnostics is not None
+    assert corrected.diagnostics.corrected_moment_boundary_rms_mismatch < 1.0e-10
+    assert legacy.diagnostics.corrected_moment_boundary_rms_mismatch > 1.0e-7
+    assert legacy.diagnostics.boundary_value_correction_rms > 0.0
+
+
 def test_monitor_grid_hartree_solve_exposes_response_diagnostics() -> None:
     grid_geometry = build_monitor_grid_for_case(
         H2_BENCHMARK_CASE,

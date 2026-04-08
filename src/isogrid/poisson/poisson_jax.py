@@ -1154,6 +1154,7 @@ def solve_open_boundary_poisson_monitor_jax(
     cg_impl: str = "baseline",
     cg_preconditioner: str = "none",
     line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> tuple[OpenBoundaryPoissonResult, MonitorPoissonJaxSolveDiagnostics]:
     """Solve the monitor-grid open-boundary Poisson problem with JAX CG."""
 
@@ -1173,6 +1174,7 @@ def solve_open_boundary_poisson_monitor_jax(
         grid_geometry=grid_geometry,
         rho=density,
         multipole_order=multipole_order,
+        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
     )
     boundary_elapsed = perf_counter() - boundary_start
     build_start = perf_counter()

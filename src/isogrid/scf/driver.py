@@ -2689,6 +2689,7 @@ def run_h2_monitor_grid_scf_dry_run(
     jax_hartree_cg_impl: str = "baseline",
     jax_hartree_cg_preconditioner: str = "none",
     jax_hartree_line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -3035,6 +3036,7 @@ def run_h2_monitor_grid_scf_dry_run(
             jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
             jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
             jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+            monitor_boundary_construction_mode=monitor_boundary_construction_mode,
         )
         static_local_prepare_wall_time += initial_profile.total_wall_time_seconds
         hartree_solve_wall_time += initial_profile.hartree_resolve_wall_time_seconds
@@ -3145,6 +3147,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                         jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                         jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                     )
                 )
                 static_local_prepare_wall_time += up_preparation_profile.total_wall_time_seconds
@@ -3200,6 +3203,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                 jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                 profile_jax_internals=profile_eigensolver_internals,
             )
             orbitals_up = solve_up.orbitals
@@ -3227,6 +3231,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                         jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                         jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                     )
                 )
                 static_local_prepare_wall_time += down_preparation_profile.total_wall_time_seconds
@@ -3282,6 +3287,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                 jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                 jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                 profile_jax_internals=profile_eigensolver_internals,
             )
             orbitals_down = solve_down.orbitals
@@ -3374,6 +3380,7 @@ def run_h2_monitor_grid_scf_dry_run(
                     jax_hartree_cg_impl=normalized_jax_hartree_cg_impl,
                     jax_hartree_cg_preconditioner=normalized_jax_hartree_cg_preconditioner,
                     jax_hartree_line_preconditioner_impl=normalized_jax_hartree_line_preconditioner_impl,
+                    monitor_boundary_construction_mode=monitor_boundary_construction_mode,
                 )
             )
             static_local_prepare_wall_time += energy_preparation_profile.total_wall_time_seconds

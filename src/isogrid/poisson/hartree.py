@@ -56,6 +56,7 @@ def solve_hartree_potential(
     cg_impl: str = "baseline",
     cg_preconditioner: str = "none",
     line_preconditioner_impl: str = "baseline",
+    monitor_boundary_construction_mode: str = "corrected_moments",
 ) -> OpenBoundaryPoissonResult:
     """Solve the first-stage Hartree potential from a total electron density."""
 
@@ -83,6 +84,7 @@ def solve_hartree_potential(
             cg_impl=cg_impl,
             cg_preconditioner=cg_preconditioner,
             line_preconditioner_impl=line_preconditioner_impl,
+            monitor_boundary_construction_mode=monitor_boundary_construction_mode,
         )
         return poisson_result
     return solve_open_boundary_poisson(
@@ -92,6 +94,7 @@ def solve_hartree_potential(
         tolerance=tolerance,
         max_iterations=max_iterations,
         solver=solver,
+        monitor_boundary_construction_mode=monitor_boundary_construction_mode,
     )
 
 
