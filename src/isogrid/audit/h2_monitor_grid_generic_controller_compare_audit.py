@@ -100,13 +100,16 @@ def _route_summary(
         controller_name=controller_name,
     )
     singlet_targeted = targeted.singlet.targeted_pairs
+    strong_bad_pair_gap_threshold = 0.10
     singlet_max_targeted_density_gap = (
         0.0
         if not singlet_targeted
         else max(pair.baseline_minus_freeze_hartree_density_residual for pair in singlet_targeted)
     )
     singlet_has_late_targeted_bad_pair = any(
-        pair.pair_iterations[0] >= 4 for pair in singlet_targeted
+        pair.pair_iterations[0] >= 4
+        and pair.baseline_minus_freeze_hartree_density_residual >= strong_bad_pair_gap_threshold
+        for pair in singlet_targeted
     )
     singlet_max_hartree_share = _max_or_none(
         tuple(signal.hartree_share for signal in singlet.controller_signals_history)

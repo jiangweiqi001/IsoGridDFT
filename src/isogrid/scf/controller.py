@@ -38,7 +38,12 @@ class ScfControllerSignals:
 
 @dataclass(frozen=True)
 class ScfControllerState:
-    """Persistent controller state carried across SCF iterations."""
+    """Persistent controller state carried across SCF iterations.
+
+    `iteration_index` is used by the opening policy to keep the first few
+    closed-shell singlet steps on larger grids more conservative before the
+    regular Hartree-aware recovery logic takes over.
+    """
 
     charge_mixing: float
     spin_mixing: float
@@ -46,6 +51,7 @@ class ScfControllerState:
     stable_steps: int
     iteration_index: int
     last_flags: tuple[str, ...]
+    previous_hartree_share: float | None = None
 
     @classmethod
     def initial(
@@ -61,12 +67,19 @@ class ScfControllerState:
             stable_steps=0,
             iteration_index=0,
             last_flags=(),
+            previous_hartree_share=None,
         )
 
 
 @dataclass(frozen=True)
 class ScfControllerConfig:
-    """Static controller configuration for one SCF route."""
+    """Static controller configuration for one SCF route.
+
+    The opening-policy fields are deliberately lightweight. They are not a full
+    size-aware dielectric model; they only cap early-step charge mixing on
+    larger closed-shell singlet monitor grids where step-1 precursor signals
+    can still look deceptively mild.
+    """
 
     name: str
     baseline_charge_mixing: float
@@ -82,6 +95,11 @@ class ScfControllerConfig:
     opening_charge_mixing: float
     opening_charge_mixing_large_risk: float
     opening_grid_point_threshold: int
+    preconditioned_grid_point_boost_threshold: int
+    recovery_pause_hartree_share: float
+    recovery_pause_hartree_rise: float
+    preconditioned_high_frequency_mixing: float
+    preconditioned_smoothing_passes: int
     hartree_share_trigger: float
     residual_ratio_trigger: float
     residual_ratio_severe_trigger: float
@@ -110,6 +128,45 @@ class ScfControllerConfig:
             opening_charge_mixing=max(0.02, 0.10 * float(baseline_mixing)),
             opening_charge_mixing_large_risk=max(0.005, 0.025 * float(baseline_mixing)),
             opening_grid_point_threshold=2000,
+            preconditioned_grid_point_boost_threshold=0,
+            recovery_pause_hartree_share=0.20,
+            recovery_pause_hartree_rise=0.10,
+            preconditioned_high_frequency_mixing=0.0,
+            preconditioned_smoothing_passes=0,
+            hartree_share_trigger=0.60,
+            residual_ratio_trigger=0.98,
+            residual_ratio_severe_trigger=1.05,
+            occupied_overlap_trigger=0.25,
+            subspace_rotation_trigger_deg=70.0,
+            lowest_gap_trigger_ha=0.08,
+        )
+
+    @classmethod
+    def generic_charge_spin_preconditioned(
+        cls,
+        *,
+        baseline_mixing: float = 0.2,
+    ) -> ScfControllerConfig:
+        return cls(
+            name="generic_charge_spin_preconditioned",
+            baseline_charge_mixing=float(baseline_mixing),
+            baseline_spin_mixing=float(baseline_mixing),
+            min_charge_mixing=max(0.02, 0.10 * float(baseline_mixing)),
+            min_spin_mixing=max(0.10, 0.75 * float(baseline_mixing)),
+            severe_charge_mixing=max(0.005, 0.025 * float(baseline_mixing)),
+            charge_release_rate=max(0.005, 0.05 * float(baseline_mixing)),
+            spin_release_rate=max(0.008, 0.05 * float(baseline_mixing)),
+            cautious_hold_steps=4,
+            stable_steps_to_release=4,
+            opening_steps=2,
+            opening_charge_mixing=max(0.02, 0.10 * float(baseline_mixing)),
+            opening_charge_mixing_large_risk=max(0.005, 0.025 * float(baseline_mixing)),
+            opening_grid_point_threshold=2000,
+            preconditioned_grid_point_boost_threshold=3000,
+            recovery_pause_hartree_share=0.20,
+            recovery_pause_hartree_rise=0.10,
+            preconditioned_high_frequency_mixing=max(0.03, 0.15 * float(baseline_mixing)),
+            preconditioned_smoothing_passes=3,
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -170,6 +227,55 @@ def _weighted_field_norm(
             )
         )
     )
+
+
+def _smooth_axis_edge(field: np.ndarray, axis: int) -> np.ndarray:
+    pad_width = [(0, 0)] * field.ndim
+    pad_width[axis] = (1, 1)
+    padded = np.pad(np.asarray(field, dtype=np.float64), pad_width, mode="edge")
+    center_slices = [slice(None)] * field.ndim
+    center_slices[axis] = slice(1, -1)
+    minus_slices = list(center_slices)
+    plus_slices = list(center_slices)
+    minus_slices[axis] = slice(0, -2)
+    plus_slices[axis] = slice(2, None)
+    return np.asarray(
+        0.25 * padded[tuple(minus_slices)]
+        + 0.50 * padded[tuple(center_slices)]
+        + 0.25 * padded[tuple(plus_slices)],
+        dtype=np.float64,
+    )
+
+
+def _smooth_charge_residual(
+    field: np.ndarray,
+    *,
+    smoothing_passes: int,
+) -> np.ndarray:
+    smoothed = np.asarray(field, dtype=np.float64)
+    for _ in range(max(int(smoothing_passes), 0)):
+        for axis in range(smoothed.ndim):
+            smoothed = _smooth_axis_edge(smoothed, axis)
+    return smoothed
+
+
+def _density_support_weight(
+    rho_charge_current: np.ndarray,
+) -> np.ndarray:
+    """Return a smooth 0..1 molecular-support weight for charge preconditioning.
+
+    The weight is intentionally simple: dense molecular regions get values near
+    one, while the surrounding vacuum remains near zero. This gives the charge
+    controller a cheap real-space proxy for "where the molecule can respond",
+    without introducing any H2-specific logic.
+    """
+
+    density = np.maximum(np.asarray(rho_charge_current, dtype=np.float64), 0.0)
+    peak_density = float(np.max(density))
+    if not np.isfinite(peak_density) or peak_density <= 0.0:
+        return np.zeros_like(density)
+    normalized_density = np.clip(density / peak_density, 0.0, 1.0)
+    return np.asarray(np.sqrt(normalized_density), dtype=np.float64)
 
 
 def _is_closed_shell_singlet(occupations) -> bool:
@@ -291,7 +397,16 @@ def propose_next_density(
     state: ScfControllerState,
     signals: ScfControllerSignals,
 ) -> ControllerStepResult:
-    """Return the next density proposal using a reusable charge/spin controller."""
+    """Return the next density proposal using a reusable charge/spin controller.
+
+    The controller runs in two stages:
+
+    1. an optional opening phase for the first few closed-shell singlet steps
+       on larger grids, where charge mixing is capped even before the usual
+       Hartree/share precursor signals become reliable
+    2. the regular Hartree-aware control branch, which reacts to residual-ratio,
+       Hartree-share, overlap, rotation, and gap diagnostics
+    """
 
     channel_residuals = _channel_residuals(
         rho_up_current=rho_up_current,
@@ -320,6 +435,24 @@ def propose_next_density(
     opening_phase_active = bool(
         closed_shell_singlet and int(state.iteration_index) < int(config.opening_steps)
     )
+    current_hartree_share = (
+        float(signals.hartree_share)
+        if signals.hartree_share is not None and np.isfinite(signals.hartree_share)
+        else None
+    )
+    previous_hartree_share = (
+        float(state.previous_hartree_share)
+        if state.previous_hartree_share is not None and np.isfinite(state.previous_hartree_share)
+        else None
+    )
+    recovery_pause_due_to_hartree_trend = bool(
+        closed_shell_singlet
+        and current_hartree_share is not None
+        and previous_hartree_share is not None
+        and current_hartree_share >= float(config.recovery_pause_hartree_share)
+        and current_hartree_share
+        >= previous_hartree_share + float(config.recovery_pause_hartree_rise)
+    )
 
     if caution:
         next_charge_mixing = charge_severe_mixing if severe else charge_min_mixing
@@ -335,6 +468,8 @@ def propose_next_density(
         step_flags_list = list(flags)
         if cautious_steps_remaining > 0:
             step_flags_list.append("charge_hold")
+        elif recovery_pause_due_to_hartree_trend:
+            step_flags_list.append("charge_recovery_paused")
         elif stable_steps >= int(config.stable_steps_to_release):
             if next_charge_mixing < config.baseline_charge_mixing:
                 next_charge_mixing = min(
@@ -352,6 +487,10 @@ def propose_next_density(
         step_flags = tuple(step_flags_list)
 
     if opening_phase_active:
+        # Larger monitor-grid singlet cases can blow up on 1->2 before the usual
+        # precursor signals have fully developed, so the opening policy caps
+        # charge mixing first and lets the regular Hartree-aware branch react
+        # afterwards.
         opening_charge_cap = (
             float(config.opening_charge_mixing_large_risk)
             if opening_large_grid_risk
@@ -377,9 +516,64 @@ def propose_next_density(
     rho_spin_current = np.asarray(rho_up_current - rho_down_current, dtype=np.float64)
     rho_spin_output = np.asarray(rho_up_output - rho_down_output, dtype=np.float64)
 
+    if config.name == "generic_charge_spin_preconditioned":
+        smoothed_charge_residual = _smooth_charge_residual(
+            channel_residuals.charge_residual,
+            smoothing_passes=config.preconditioned_smoothing_passes,
+        )
+        allow_high_frequency_boost = bool(
+            not opening_phase_active
+            and not caution
+            and current_hartree_share is not None
+            and current_hartree_share < float(config.recovery_pause_hartree_share)
+            and (
+                int(config.preconditioned_grid_point_boost_threshold) <= 0
+                or grid_point_count <= int(config.preconditioned_grid_point_boost_threshold)
+            )
+            and not recovery_pause_due_to_hartree_trend
+            and "hartree_dominated" not in step_flags
+            and "overlap_drop" not in step_flags
+            and "subspace_rotation" not in step_flags
+            and "small_gap" not in step_flags
+            and "charge_recovery_paused" not in step_flags
+        )
+        if allow_high_frequency_boost:
+            peak_charge_mixing = float(
+                min(
+                    config.baseline_charge_mixing,
+                    max(
+                        next_charge_mixing,
+                        config.preconditioned_high_frequency_mixing,
+                    ),
+                )
+            )
+            support_weight = _density_support_weight(rho_charge_current)
+            effective_charge_residual = np.asarray(
+                (1.0 - support_weight) * smoothed_charge_residual
+                + support_weight * channel_residuals.charge_residual,
+                dtype=np.float64,
+            )
+            effective_charge_mixing = np.asarray(
+                next_charge_mixing
+                + support_weight * (peak_charge_mixing - next_charge_mixing),
+                dtype=np.float64,
+            )
+            rho_charge_trial = np.asarray(
+                rho_charge_current + effective_charge_mixing * effective_charge_residual,
+                dtype=np.float64,
+            )
+        else:
+            rho_charge_trial = np.asarray(
+                rho_charge_current + next_charge_mixing * channel_residuals.charge_residual,
+                dtype=np.float64,
+            )
+    else:
+        rho_charge_trial = (
+            (1.0 - next_charge_mixing) * rho_charge_current
+            + next_charge_mixing * rho_charge_output
+        )
     rho_charge_next = _renormalize_density(
-        (1.0 - next_charge_mixing) * rho_charge_current
-        + next_charge_mixing * rho_charge_output,
+        rho_charge_trial,
         target_electrons=float(occupations.total_electrons),
         grid_geometry=grid_geometry,
     )
@@ -412,6 +606,7 @@ def propose_next_density(
         stable_steps=int(stable_steps),
         iteration_index=int(state.iteration_index + 1),
         last_flags=step_flags,
+        previous_hartree_share=current_hartree_share,
     )
     return ControllerStepResult(
         rho_up_next=np.asarray(rho_up_next, dtype=np.float64),

@@ -69,6 +69,8 @@ The current triplet-only JAX Hartree follow-up is now even narrower: the stronge
 
 In parallel, the current frozen A-grid local-only mainline is also being checked on H2 singlet specifically. The immediate focus is now a single-route acceptance rerun on top of the latest JAX mainline using the current productionish Anderson mixer, because the key open question is no longer which toy mixer variant to try next but whether H2 singlet can pass at all once the surrounding JAX eigensolver and hot-path infrastructure are substantially cleaner. Nonlocal still remains absent from that path.
 
+The current SCF follow-up has now also grown a reusable `charge/spin` feedback-controller branch inside the local-only monitor-grid dry-run route. That controller is still experimental and default-off from any production claim, but it is no longer H2-singlet-only glue: it now exposes route-level controller histories, a generic Hartree-aware `charge`/`spin` decomposition, and a first grid-risk-aware opening policy for the first `1-2` SCF steps on larger monitor grids.
+
 What is present today:
 
 - a minimal `src/isogrid/` package skeleton
@@ -82,6 +84,7 @@ What is present today:
 - a first JAX runtime layer plus a first batch of JAX hot kernels for weighted reductions, monitor-grid Poisson, and the local-only A-grid Hamiltonian apply, while keeping the audit and fallback layers intact
 - a JAX-native fixed-potential eigensolver path for the current A-grid local-only route, with SciPy retained only as fallback / audit
 - a first very rough H2 A-grid SCF hot-path profiling audit for checking whether that same JAX eigensolver handoff improves end-to-end triplet dry-run timing
+- a reusable `charge/spin` SCF controller module for the local-only H2 monitor-grid dry-run route, including early-step opening-policy support for larger monitor grids
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
@@ -121,6 +124,7 @@ They currently cover:
 - a dedicated H2 singlet stability audit for checking whether the current A-grid two-cycle can be suppressed by a very small conservative mixing change and a minimal DIIS prototype, without adding a larger SCF stabilization framework
 - a very rough H2 A-grid SCF hot-path audit for checking whether the current JAX eigensolver block handoff actually improves end-to-end triplet dry-run timing and where the remaining SCF bottlenecks sit
 - a triplet-only H2 A-grid SCF profiling audit for checking whether step-local reuse of Poisson/Hartree and local-only energy-evaluation inputs reduces repeated work inside one SCF step, whether the opt-in JAX Hartree backend lowers the remaining Poisson/Hartree hotspot, whether repeated JAX Poisson solves are actually reusing compiled operator kernels, and whether stronger-but-still-small PCG prototypes can lower the remaining Hartree iteration count enough to matter end-to-end
+- a lightweight generic-controller comparison audit for the local-only H2 monitor-grid route, including targeted bad-pair summaries on `baseline_linear` vs `generic_charge_spin`
 - a lightweight recorded H2 regression baseline for future PySCF error comparisons
 
 These scripts are intended to support the first formal H2 closed loop, not to replace the future real-space solver.
@@ -178,6 +182,7 @@ The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dr
 
 - H2 triplet dry-run is already convergent on the local static chain
 - H2 singlet is currently under an experimental, default-off, pattern-triggered structural stabilizer audit on top of the productionish Anderson route, with the current focus on a stronger Hartree-tail freeze-style guard rather than more mixer-family comparisons
+- the local-only dry-run route now also exposes an experimental `generic_charge_spin` controller branch that can suppress the strongest early singlet Hartree-feedback bad pairs on `small / large / xlarge` monitor-grid smoke cases, but this is still a lightweight audit result rather than a production-SCF acceptance claim
 - nonlocal ionic action is still not migrated onto the A-grid path
 
 ## Minimal Setup
@@ -215,5 +220,23 @@ python -m isogrid.audit.h2_monitor_grid_k2_subspace_audit
 python -m isogrid.audit.h2_monitor_grid_diis_scf_audit
 python -m isogrid.audit.h2_jax_scf_hotpath_audit
 python -m isogrid.audit.h2_jax_triplet_hartree_energy_audit
+python -m isogrid.audit.h2_monitor_grid_generic_controller_compare_audit
 ```
+
+## Generic Controller Note
+
+The current `generic_charge_spin` controller is available only on the local-only H2 monitor-grid dry-run route. It should be read as an experimental SCF-control prototype rather than as a formal solver acceptance result.
+
+What is currently supported:
+
+- `baseline_linear` vs `generic_charge_spin` comparison on the H2 monitor-grid dry-run path
+- route-level controller histories in the SCF result object
+- an opening-policy cap on early-step `charge` mixing for larger closed-shell singlet monitor-grid cases
+
+What is not yet claimed:
+
+- full-physics (`nonlocal`) reintegration
+- production default-mainline use
+- long-run SCF convergence on the full H2 acceptance path
+- transferability beyond the current local-only H2 audit envelope
 

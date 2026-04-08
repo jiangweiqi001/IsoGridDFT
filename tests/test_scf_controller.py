@@ -89,6 +89,7 @@ def test_generic_charge_spin_controller_recovers_charge_mixing_after_stable_step
         stable_steps=3,
         iteration_index=3,
         last_flags=("recovering",),
+        previous_hartree_share=0.18,
     )
 
     result = propose_next_density(
@@ -143,3 +144,156 @@ def test_generic_charge_spin_controller_uses_grid_risk_opening_for_xlarge_single
 
     assert result.charge_mixing <= 0.01
     assert "opening_phase" in result.flags
+
+
+def test_generic_charge_spin_controller_pauses_recovery_when_hartree_share_rises() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+    state = ScfControllerState(
+        charge_mixing=0.015,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=4,
+        iteration_index=9,
+        last_flags=("charge_recovery",),
+        previous_hartree_share=0.09,
+    )
+
+    result = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(1.001 * rho_up, dtype=np.float64),
+        rho_down_output=np.asarray(0.999 * rho_down, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin(),
+        state=state,
+        signals=ScfControllerSignals(
+            density_residual_ratio=0.976,
+            hartree_share=0.31,
+            occupied_orbital_overlap_abs=0.9994,
+            lowest_subspace_rotation_max_angle_deg=1.95,
+            lowest_gap_ha=0.18,
+        ),
+    )
+
+    assert result.charge_mixing <= state.charge_mixing
+    assert "charge_recovery" not in result.flags
+
+
+def test_preconditioned_controller_boosts_local_charge_update_without_breaking_symmetry() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+    bump = np.zeros_like(rho_up)
+    center = tuple(length // 2 for length in bump.shape)
+    bump[center] = 0.05 * float(np.max(rho_up))
+    state = ScfControllerState(
+        charge_mixing=0.005,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=4,
+        iteration_index=8,
+        last_flags=("stable",),
+        previous_hartree_share=0.02,
+    )
+    signals = ScfControllerSignals(
+        density_residual_ratio=0.99,
+        hartree_share=0.03,
+        occupied_orbital_overlap_abs=0.999,
+        lowest_subspace_rotation_max_angle_deg=0.5,
+        lowest_gap_ha=0.2,
+    )
+
+    generic = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin(),
+        state=state,
+        signals=signals,
+    )
+    preconditioned = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=state,
+        signals=signals,
+    )
+
+    generic_step = np.linalg.norm(generic.rho_up_next - rho_up)
+    preconditioned_step = np.linalg.norm(preconditioned.rho_up_next - rho_up)
+
+    assert np.allclose(preconditioned.rho_up_next, preconditioned.rho_down_next)
+    assert preconditioned_step > generic_step
+
+
+def test_preconditioned_controller_disables_local_boost_when_hartree_dominated() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+    bump = np.zeros_like(rho_up)
+    center = tuple(length // 2 for length in bump.shape)
+    bump[center] = 0.05 * float(np.max(rho_up))
+    state = ScfControllerState(
+        charge_mixing=0.015,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=4,
+        iteration_index=5,
+        last_flags=("charge_recovery_paused",),
+        previous_hartree_share=0.75,
+    )
+    signals = ScfControllerSignals(
+        density_residual_ratio=0.92,
+        hartree_share=0.84,
+        occupied_orbital_overlap_abs=0.99,
+        lowest_subspace_rotation_max_angle_deg=5.0,
+        lowest_gap_ha=0.20,
+    )
+
+    generic = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin(),
+        state=state,
+        signals=signals,
+    )
+    preconditioned = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=state,
+        signals=signals,
+    )
+
+    assert np.allclose(preconditioned.rho_up_next, generic.rho_up_next)
+    assert np.allclose(preconditioned.rho_down_next, generic.rho_down_next)

@@ -125,7 +125,13 @@ Builds Kohn-Sham operators and solves frozen-potential eigenproblems:
 
 ### `src/isogrid/scf`
 
-Contains the narrow H2-oriented SCF drivers and dry-run logic. This package is intentionally not a general SCF framework yet.
+Contains the narrow H2-oriented SCF drivers and dry-run logic. This package is intentionally not a general SCF framework yet, but it now also carries the first reusable `charge/spin-channel` controller prototype in `isogrid.scf.controller`.
+
+That controller currently does three things on the local-only monitor-grid route:
+
+- decomposes feedback into `charge` and `spin` channels rather than mixing `rho_up/rho_down` directly
+- records route-level controller signals (`hartree_share`, residual ratio, low-subspace continuity metrics)
+- applies an early-step opening-policy cap on `charge` mixing for larger closed-shell singlet monitor-grid cases before handing control back to the regular Hartree-aware branch
 
 ### `src/isogrid/audit`
 
@@ -134,6 +140,7 @@ Collects the repository's scientific validation scripts. This package is large b
 - PySCF reference and basis audits
 - H2 geometry / kinetic / Poisson / Hartree audits
 - monitor-grid fixed-potential and SCF dry-runs
+- generic-controller comparison and targeted bad-pair audits for the local-only monitor-grid SCF path
 - JAX migration and performance audits
 - regression baselines for accepted intermediate states
 

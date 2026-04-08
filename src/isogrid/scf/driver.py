@@ -3094,9 +3094,14 @@ def run_h2_monitor_grid_scf_dry_run(
     if density_tolerance <= 0.0 or energy_tolerance <= 0.0 or eigensolver_tolerance <= 0.0:
         raise ValueError("SCF tolerances must be positive.")
     normalized_controller_name = controller_name.strip().lower()
-    if normalized_controller_name not in {"baseline_linear", "generic_charge_spin"}:
+    if normalized_controller_name not in {
+        "baseline_linear",
+        "generic_charge_spin",
+        "generic_charge_spin_preconditioned",
+    }:
         raise ValueError(
-            "controller_name must be `baseline_linear` or `generic_charge_spin`; "
+            "controller_name must be `baseline_linear`, `generic_charge_spin`, "
+            "or `generic_charge_spin_preconditioned`; "
             f"received `{controller_name}`."
         )
     normalized_hartree_backend = hartree_backend.strip().lower()
@@ -3161,7 +3166,13 @@ def run_h2_monitor_grid_scf_dry_run(
     controller_config = (
         ScfControllerConfig.generic_charge_spin(baseline_mixing=mixing)
         if normalized_controller_name == "generic_charge_spin"
-        else None
+        else (
+            ScfControllerConfig.generic_charge_spin_preconditioned(
+                baseline_mixing=mixing
+            )
+            if normalized_controller_name == "generic_charge_spin_preconditioned"
+            else None
+        )
     )
     controller_state = (
         ScfControllerState.initial(charge_mixing=mixing, spin_mixing=mixing)
