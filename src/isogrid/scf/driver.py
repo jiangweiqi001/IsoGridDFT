@@ -59,6 +59,7 @@ from isogrid.ops import validate_orbital_field
 from isogrid.ops import weighted_l2_norm
 from isogrid.ops.kinetic import apply_monitor_grid_kinetic_operator_trial_boundary_fix
 from isogrid.poisson import evaluate_hartree_energy
+from isogrid.poisson import OpenBoundaryPoissonResult
 from isogrid.poisson import solve_hartree_potential
 from isogrid.pseudo import evaluate_local_ionic_potential
 from isogrid.pseudo import evaluate_monitor_grid_local_ionic_potential_with_patch
@@ -274,6 +275,36 @@ class StaticLocalEnergyEvaluationProfile:
 
 
 @dataclass(frozen=True)
+class MonitorGridHartreeResponseIterationDiagnostics:
+    """Compact Hartree boundary/response snapshot for one monitor-grid SCF step."""
+
+    iteration: int
+    hartree_backend: str
+    solver_method: str
+    solver_iterations: int
+    solver_residual_max: float
+    boundary_value_rms: float | None
+    boundary_value_max_abs: float | None
+    boundary_source_laplacian_rms: float | None
+    boundary_source_laplacian_max_abs: float | None
+    rhs_l2_norm: float | None
+    rhs_max_abs: float | None
+    interior_potential_rms: float | None
+    interior_potential_max_abs: float | None
+    interior_poisson_residual_l2_norm: float | None
+    interior_poisson_residual_max_abs: float | None
+    baseline_total_charge: float | None
+    corrected_total_charge: float | None
+    charge_correction: float | None
+    dipole_correction_norm: float | None
+    quadrupole_correction_norm: float | None
+    boundary_value_correction_rms: float | None
+    boundary_value_correction_max_abs: float | None
+    corrected_moment_boundary_rms_mismatch: float | None
+    corrected_moment_boundary_max_abs_mismatch: float | None
+
+
+@dataclass(frozen=True)
 class H2StaticLocalScfDryRunResult:
     """Result of the first H2 A-grid static-local SCF dry-run."""
 
@@ -430,6 +461,7 @@ class H2StaticLocalScfDryRunResult:
     energy_evaluation_iteration_wall_time_seconds: tuple[float, ...]
     density_update_iteration_wall_time_seconds: tuple[float, ...]
     bookkeeping_iteration_wall_time_seconds: tuple[float, ...]
+    hartree_response_diagnostics_history: tuple[MonitorGridHartreeResponseIterationDiagnostics, ...]
     hartree_tail_guard_enabled: bool = False
     hartree_tail_guard_name: str | None = None
     hartree_tail_guard_strategy: str | None = None
@@ -1115,6 +1147,150 @@ def _record_last_jax_hartree_solve_diagnostics(
         preconditioner_other_overhead_times.append(
             float(diagnostics.preconditioner_other_overhead_wall_time_seconds)
         )
+
+
+def _build_monitor_grid_hartree_response_iteration_diagnostics(
+    *,
+    iteration: int,
+    hartree_backend: str,
+    poisson_result: OpenBoundaryPoissonResult | None,
+) -> MonitorGridHartreeResponseIterationDiagnostics:
+    if poisson_result is None:
+        return MonitorGridHartreeResponseIterationDiagnostics(
+            iteration=int(iteration),
+            hartree_backend=hartree_backend,
+            solver_method="unavailable",
+            solver_iterations=0,
+            solver_residual_max=float("nan"),
+            boundary_value_rms=None,
+            boundary_value_max_abs=None,
+            boundary_source_laplacian_rms=None,
+            boundary_source_laplacian_max_abs=None,
+            rhs_l2_norm=None,
+            rhs_max_abs=None,
+            interior_potential_rms=None,
+            interior_potential_max_abs=None,
+            interior_poisson_residual_l2_norm=None,
+            interior_poisson_residual_max_abs=None,
+            baseline_total_charge=None,
+            corrected_total_charge=None,
+            charge_correction=None,
+            dipole_correction_norm=None,
+            quadrupole_correction_norm=None,
+            boundary_value_correction_rms=None,
+            boundary_value_correction_max_abs=None,
+            corrected_moment_boundary_rms_mismatch=None,
+            corrected_moment_boundary_max_abs_mismatch=None,
+        )
+    boundary_diagnostics = poisson_result.boundary_condition.diagnostics
+    response_diagnostics = poisson_result.response_diagnostics
+    corrected_total_charge = float(poisson_result.boundary_condition.total_charge)
+    baseline_total_charge = (
+        None
+        if boundary_diagnostics is None
+        else float(boundary_diagnostics.baseline_total_charge)
+    )
+    charge_correction = (
+        None
+        if boundary_diagnostics is None
+        else float(boundary_diagnostics.correction_total_charge)
+    )
+    dipole_correction_norm = (
+        None
+        if boundary_diagnostics is None
+        else float(
+            np.linalg.norm(
+                np.asarray(boundary_diagnostics.correction_dipole_moment, dtype=np.float64)
+            )
+        )
+    )
+    quadrupole_correction_norm = (
+        None
+        if boundary_diagnostics is None
+        else float(
+            np.linalg.norm(
+                np.asarray(boundary_diagnostics.correction_quadrupole_tensor, dtype=np.float64)
+            )
+        )
+    )
+    return MonitorGridHartreeResponseIterationDiagnostics(
+        iteration=int(iteration),
+        hartree_backend=hartree_backend,
+        solver_method=poisson_result.solver_method,
+        solver_iterations=int(poisson_result.solver_iterations),
+        solver_residual_max=float(poisson_result.residual_max),
+        boundary_value_rms=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.boundary_value_rms)
+        ),
+        boundary_value_max_abs=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.boundary_value_max_abs)
+        ),
+        boundary_source_laplacian_rms=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.boundary_source_laplacian_rms)
+        ),
+        boundary_source_laplacian_max_abs=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.boundary_source_laplacian_max_abs)
+        ),
+        rhs_l2_norm=(
+            None if response_diagnostics is None else float(response_diagnostics.rhs_l2_norm)
+        ),
+        rhs_max_abs=(
+            None if response_diagnostics is None else float(response_diagnostics.rhs_max_abs)
+        ),
+        interior_potential_rms=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.interior_potential_rms)
+        ),
+        interior_potential_max_abs=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.interior_potential_max_abs)
+        ),
+        interior_poisson_residual_l2_norm=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.interior_poisson_residual_l2_norm)
+        ),
+        interior_poisson_residual_max_abs=(
+            None
+            if response_diagnostics is None
+            else float(response_diagnostics.interior_poisson_residual_max_abs)
+        ),
+        baseline_total_charge=baseline_total_charge,
+        corrected_total_charge=corrected_total_charge,
+        charge_correction=charge_correction,
+        dipole_correction_norm=dipole_correction_norm,
+        quadrupole_correction_norm=quadrupole_correction_norm,
+        boundary_value_correction_rms=(
+            None
+            if boundary_diagnostics is None
+            else float(boundary_diagnostics.boundary_value_correction_rms)
+        ),
+        boundary_value_correction_max_abs=(
+            None
+            if boundary_diagnostics is None
+            else float(boundary_diagnostics.boundary_value_correction_max_abs)
+        ),
+        corrected_moment_boundary_rms_mismatch=(
+            None
+            if boundary_diagnostics is None
+            else float(boundary_diagnostics.corrected_moment_boundary_rms_mismatch)
+        ),
+        corrected_moment_boundary_max_abs_mismatch=(
+            None
+            if boundary_diagnostics is None
+            else float(boundary_diagnostics.corrected_moment_boundary_max_abs_mismatch)
+        ),
+    )
 
 
 def _density_residual_fields(
@@ -2802,6 +2978,9 @@ def run_h2_monitor_grid_scf_dry_run(
     iteration_energy_evaluation_times: list[float] = []
     iteration_density_update_times: list[float] = []
     iteration_bookkeeping_times: list[float] = []
+    hartree_response_diagnostics_history: list[
+        MonitorGridHartreeResponseIterationDiagnostics
+    ] = []
     hartree_solve_times: list[float] = []
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
@@ -3733,6 +3912,29 @@ def run_h2_monitor_grid_scf_dry_run(
             if hartree_tail_guard_projected_ratio is None
             else float(hartree_tail_guard_projected_ratio)
         )
+        hartree_response_diagnostics_history.append(
+            _build_monitor_grid_hartree_response_iteration_diagnostics(
+                iteration=iteration,
+                hartree_backend=normalized_hartree_backend,
+                poisson_result=(
+                    up_operator_context.hartree_poisson_result
+                    if up_operator_context is not None
+                    else getattr(
+                        solve_up.operator_context,
+                        "hartree_poisson_result",
+                        None,
+                    )
+                    if solve_up is not None
+                    else getattr(
+                        solve_down.operator_context,
+                        "hartree_poisson_result",
+                        None,
+                    )
+                    if solve_down is not None
+                    else None
+                ),
+            )
+        )
         history.append(
             ScfIterationRecord(
                 iteration=iteration,
@@ -4348,4 +4550,5 @@ def run_h2_monitor_grid_scf_dry_run(
         energy_evaluation_iteration_wall_time_seconds=tuple(iteration_energy_evaluation_times),
         density_update_iteration_wall_time_seconds=tuple(iteration_density_update_times),
         bookkeeping_iteration_wall_time_seconds=tuple(iteration_bookkeeping_times),
+        hartree_response_diagnostics_history=tuple(hartree_response_diagnostics_history),
     )

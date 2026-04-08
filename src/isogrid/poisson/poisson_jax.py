@@ -25,6 +25,7 @@ from isogrid.ops.kinetic_jax import build_monitor_grid_laplacian_operator_jax
 from .hartree import validate_density_field
 from .open_boundary import _FOUR_PI
 from .open_boundary import _boundary_mask
+from .open_boundary import _build_monitor_poisson_response_diagnostics
 from .open_boundary import _compute_multipole_boundary_condition
 from .open_boundary import OpenBoundaryPoissonResult
 
@@ -1251,6 +1252,14 @@ def solve_open_boundary_poisson_monitor_jax(
     full_interior = np.asarray(scatter(jnp.asarray(interior_solution, dtype=jnp.float64)), dtype=np.float64)
     potential = np.array(boundary_condition.boundary_values, copy=True)
     potential[interior_mask] = full_interior[interior_mask]
+    response_diagnostics = _build_monitor_poisson_response_diagnostics(
+        density=density,
+        potential=potential,
+        boundary_condition=boundary_condition,
+        boundary_field=boundary_field,
+        rhs=rhs_full,
+        grid_geometry=grid_geometry,
+    )
     total_elapsed = perf_counter() - solve_start
     diagnostics = MonitorPoissonJaxSolveDiagnostics(
         solver_method=diagnostics.solver_method,
@@ -1306,6 +1315,7 @@ def solve_open_boundary_poisson_monitor_jax(
             "free-space multipole boundary model as the NumPy/SciPy route, but using "
             "a JAX CG interior solve."
         ),
+        response_diagnostics=response_diagnostics,
     )
     return result, diagnostics
 

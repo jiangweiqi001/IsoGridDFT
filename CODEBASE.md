@@ -7,6 +7,183 @@ Conventions:
 - Function/class descriptions prefer docstrings when present.
 - Test descriptions prefer docstrings; otherwise they are derived from the test name.
 
+## Repository Overview
+
+IsoGridDFT is a research prototype for isolated-molecule Kohn-Sham DFT on structured adaptive real-space grids. The codebase is still shaped around one narrow benchmark loop:
+
+- molecule and runtime configuration
+- structured grid construction
+- GTH pseudopotentials and LSDA terms
+- open-boundary Poisson / Hartree
+- static or SCF Kohn-Sham solves
+- H2-focused audits against PySCF and internal regressions
+
+The repository is not laid out like a finished end-user package. It is closer to:
+
+- `src/isogrid/config`: benchmark cases and runtime configuration
+- `src/isogrid/grid`: legacy and monitor-grid geometry generation, metrics, and mapping
+- `src/isogrid/pseudo`: GTH local and nonlocal pseudopotential data and operators
+- `src/isogrid/ops`: low-level kinetic and reduction kernels
+- `src/isogrid/poisson`: open-boundary Poisson and Hartree assembly
+- `src/isogrid/xc`: LSDA exchange-correlation
+- `src/isogrid/ks`: static/local Hamiltonian assembly and eigensolver code
+- `src/isogrid/scf`: narrow H2-oriented SCF drivers and dry-run paths
+- `src/isogrid/audit`: audit scripts, regression baselines, and PySCF comparison entry points
+- `tests`: mostly smoke/regression tests that pin individual audit entry points or module-level math
+
+## Main Execution Paths
+
+### Legacy structured-grid path
+
+This is the older baseline route built around the simpler structured-grid geometry stack:
+
+1. configuration and benchmark defaults from `isogrid.config`
+2. grid construction from `isogrid.grid.geometry` / `isogrid.grid.mapping`
+3. local operators from `isogrid.ops`, `isogrid.pseudo.local`, `isogrid.poisson`, and `isogrid.xc`
+4. static Hamiltonian assembly in `isogrid.ks`
+5. optional SCF orchestration in `isogrid.scf.driver`
+6. audits in `isogrid.audit`
+
+This path still matters because many regressions compare monitor-grid behavior against the legacy route.
+
+### Monitor/A-grid path
+
+This is the active adaptive-grid line:
+
+1. `isogrid.grid.monitor_builder` assembles monitor-grid specifications from a benchmark case
+2. `isogrid.grid.monitor_geometry` builds the reference box, evaluates the monitor field, runs the weighted harmonic mapping solve, and derives geometry metrics
+3. `isogrid.poisson.open_boundary` builds monitor-grid moments and open-boundary values, including the current corrected-source logic
+4. `isogrid.ks.local_hamiltonian`, `isogrid.ks.hamiltonian_local_jax`, and `isogrid.ks.eigensolver[_jax]` consume the geometry for frozen-potential or SCF calculations
+5. `isogrid.scf.driver` wires the local-only H2 dry-run and minimal SCF loops together
+
+The monitor-grid route is the main experimental line, and most recent Hartree / geometry debugging work lives around this path.
+
+### Audit and regression path
+
+The repository uses audits as first-class interfaces. Most "real" entry points are in `src/isogrid/audit/`:
+
+- PySCF reference generators and convergence checks
+- geometry / kinetic / Poisson / Hartree diagnosis
+- A-grid fixed-potential and SCF dry-run checks
+- JAX hot-path and reintegration checks
+
+Many tests in `tests/` are thin wrappers that keep specific audit entry points finite, stable, and comparable to recorded baselines.
+
+## Package Guide
+
+### `src/isogrid/config`
+
+Defines benchmark cases, molecule/spin/runtime models, and JAX/runtime defaults. This package is where "what system are we solving?" is represented.
+
+### `src/isogrid/grid`
+
+Defines the spatial discretization itself:
+
+- legacy structured-grid specs and coordinate mappings
+- monitor-grid specs and quality reports
+- monitor-field evaluation
+- weighted harmonic coordinate generation
+- metric, Jacobian, and cell-volume derivation
+- explicit cell-local quadrature helpers used by audits and by monitor-grid electrostatics work
+
+This package is the main source of geometry errors that later propagate into Poisson, moments, and SCF behavior.
+
+### `src/isogrid/pseudo`
+
+Stores GTH pseudopotential parameters and applies local/nonlocal ionic terms. This package is intentionally narrow and limited to the stage-1 element set.
+
+### `src/isogrid/ops`
+
+Contains low-level numerical operators that are shared by the Hamiltonian and Poisson code:
+
+- weighted reductions
+- kinetic operators in reference and JAX forms
+
+### `src/isogrid/poisson`
+
+Handles electrostatics:
+
+- open-boundary Poisson assembly
+- multipole boundary construction
+- monitor-grid corrected moments and boundary-value corrections
+- Hartree energy evaluation
+
+The most recent validated production fixes in this repository currently live here.
+
+### `src/isogrid/xc`
+
+Contains LSDA-only exchange-correlation support for the current prototype.
+
+### `src/isogrid/ks`
+
+Builds Kohn-Sham operators and solves frozen-potential eigenproblems:
+
+- local/static Hamiltonian assembly
+- JAX local-Hamiltonian apply
+- Python and JAX eigensolver paths
+- JAX cache helpers
+
+### `src/isogrid/scf`
+
+Contains the narrow H2-oriented SCF drivers and dry-run logic. This package is intentionally not a general SCF framework yet.
+
+### `src/isogrid/audit`
+
+Collects the repository's scientific validation scripts. This package is large because the project relies on explicit diagnosis rather than silent numerical changes. Important subfamilies include:
+
+- PySCF reference and basis audits
+- H2 geometry / kinetic / Poisson / Hartree audits
+- monitor-grid fixed-potential and SCF dry-runs
+- JAX migration and performance audits
+- regression baselines for accepted intermediate states
+
+## Key Data Objects
+
+Several dataclass-heavy modules define the vocabulary used throughout the codebase:
+
+- `isogrid.config.model`
+  - molecules, atoms, spin states, benchmark cases
+- `isogrid.grid.model`
+  - legacy structured-grid specifications
+- `isogrid.grid.monitor_model`
+  - monitor-field contributions, monitor-grid specs, explicit cell-local quadrature, monitor-grid geometry, and quality reports
+- `isogrid.pseudo.model`
+  - GTH local and nonlocal parameter containers
+- `isogrid.poisson.open_boundary`
+  - boundary condition and Poisson result bundles
+- `isogrid.scf.driver`
+  - SCF iteration/result summaries and dry-run profiles
+
+These model modules are useful starting points when trying to understand what each subsystem expects as input and returns as output.
+
+## Test Layout
+
+The test suite is mostly organized by subsystem:
+
+- import/package sanity:
+  - `tests/test_imports.py`
+- grid and geometry math:
+  - `tests/test_grid_geometry.py`
+  - `tests/test_monitor_geometry.py`
+  - `tests/test_monitor_grid.py`
+- pseudopotential and Hamiltonian units:
+  - `tests/test_gth_local_potential.py`
+  - `tests/test_local_hamiltonian.py`
+  - `tests/test_static_ks_hamiltonian.py`
+  - `tests/test_fixed_potential_eigensolver.py`
+- Poisson / Hartree / boundary behavior:
+  - `tests/test_hartree_poisson.py`
+  - `tests/test_h2_hartree_*`
+- audit wrappers:
+  - most `tests/test_h2_*_audit.py` files run one named audit entry point and pin finite outputs or lightweight regression summaries
+
+When reading the repository, treat tests less as classic isolated unit tests and more as a mix of:
+
+- small operator sanity checks
+- audit smoke tests
+- regression locks for narrow benchmark slices
+- guard rails around previously diagnosed failures
+
 ## Root Files
 
 - [README.md](README.md): Project overview, current status, milestones, and run commands.

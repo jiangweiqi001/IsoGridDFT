@@ -39,6 +39,38 @@ GridGeometryLike = StructuredGridGeometry | MonitorGridGeometry
 
 
 @dataclass(frozen=True)
+class OpenBoundaryBoundaryConstructionDiagnostics:
+    """Monitor-grid diagnostics for the open-boundary boundary construction."""
+
+    baseline_total_charge: float
+    baseline_dipole_moment: np.ndarray
+    baseline_quadrupole_tensor: np.ndarray
+    correction_total_charge: float
+    correction_dipole_moment: np.ndarray
+    correction_quadrupole_tensor: np.ndarray
+    boundary_value_correction_rms: float
+    boundary_value_correction_max_abs: float
+    corrected_moment_boundary_rms_mismatch: float
+    corrected_moment_boundary_max_abs_mismatch: float
+
+
+@dataclass(frozen=True)
+class OpenBoundaryPoissonResponseDiagnostics:
+    """Monitor-grid diagnostics for the Poisson/Hartree response layer."""
+
+    boundary_value_rms: float
+    boundary_value_max_abs: float
+    boundary_source_laplacian_rms: float
+    boundary_source_laplacian_max_abs: float
+    rhs_l2_norm: float
+    rhs_max_abs: float
+    interior_potential_rms: float
+    interior_potential_max_abs: float
+    interior_poisson_residual_l2_norm: float
+    interior_poisson_residual_max_abs: float
+
+
+@dataclass(frozen=True)
 class OpenBoundaryMultipoleBoundary:
     """First-stage free-space boundary approximation data for Poisson."""
 
@@ -49,6 +81,7 @@ class OpenBoundaryMultipoleBoundary:
     quadrupole_tensor: np.ndarray
     boundary_values: np.ndarray
     description: str
+    diagnostics: OpenBoundaryBoundaryConstructionDiagnostics | None = None
 
 
 @dataclass(frozen=True)
@@ -62,6 +95,14 @@ class OpenBoundaryPoissonResult:
     solver_iterations: int
     residual_max: float
     description: str
+    response_diagnostics: OpenBoundaryPoissonResponseDiagnostics | None = None
+
+
+def _rms_norm(values: np.ndarray) -> float:
+    array = np.asarray(values, dtype=np.float64)
+    if array.size == 0:
+        return 0.0
+    return float(np.sqrt(np.mean(array * array, dtype=np.float64)))
 
 
 def _logical_spacing(logical_coordinates: np.ndarray, axis_label: str) -> float:
@@ -450,6 +491,63 @@ def _evaluate_boundary_potential_from_moments(
     return boundary_potential
 
 
+def _build_monitor_boundary_construction_diagnostics(
+    *,
+    baseline_total_charge: float,
+    baseline_dipole_moment: np.ndarray,
+    baseline_quadrupole_tensor: np.ndarray,
+    correction_total_charge: float,
+    correction_dipole_moment: np.ndarray,
+    correction_quadrupole_tensor: np.ndarray,
+    total_charge: float,
+    dipole_moment: np.ndarray,
+    quadrupole_tensor: np.ndarray,
+    boundary_dx: np.ndarray,
+    boundary_dy: np.ndarray,
+    boundary_dz: np.ndarray,
+    boundary_radius: np.ndarray,
+    boundary_value_correction: np.ndarray,
+    actual_boundary_potential: np.ndarray,
+    multipole_order: int,
+) -> OpenBoundaryBoundaryConstructionDiagnostics:
+    corrected_moment_boundary = _evaluate_boundary_potential_from_moments(
+        total_charge=total_charge,
+        dipole_moment=dipole_moment,
+        quadrupole_tensor=quadrupole_tensor,
+        boundary_dx=boundary_dx,
+        boundary_dy=boundary_dy,
+        boundary_dz=boundary_dz,
+        boundary_radius=boundary_radius,
+        multipole_order=multipole_order,
+    )
+    mismatch = np.asarray(
+        actual_boundary_potential - corrected_moment_boundary,
+        dtype=np.float64,
+    )
+    return OpenBoundaryBoundaryConstructionDiagnostics(
+        baseline_total_charge=float(baseline_total_charge),
+        baseline_dipole_moment=np.asarray(baseline_dipole_moment, dtype=np.float64),
+        baseline_quadrupole_tensor=np.asarray(
+            baseline_quadrupole_tensor,
+            dtype=np.float64,
+        ),
+        correction_total_charge=float(correction_total_charge),
+        correction_dipole_moment=np.asarray(correction_dipole_moment, dtype=np.float64),
+        correction_quadrupole_tensor=np.asarray(
+            correction_quadrupole_tensor,
+            dtype=np.float64,
+        ),
+        boundary_value_correction_rms=_rms_norm(boundary_value_correction),
+        boundary_value_correction_max_abs=float(
+            np.max(np.abs(boundary_value_correction), initial=0.0)
+        ),
+        corrected_moment_boundary_rms_mismatch=_rms_norm(mismatch),
+        corrected_moment_boundary_max_abs_mismatch=float(
+            np.max(np.abs(mismatch), initial=0.0)
+        ),
+    )
+
+
 def _monitor_grid_boundary_value_correction(
     grid_geometry: MonitorGridGeometry,
     rho: np.ndarray,
@@ -613,6 +711,52 @@ def _monitor_grid_boundary_value_correction(
     )
 
 
+def _build_monitor_poisson_response_diagnostics(
+    *,
+    density: np.ndarray,
+    potential: np.ndarray,
+    boundary_condition: OpenBoundaryMultipoleBoundary,
+    boundary_field: np.ndarray,
+    rhs: np.ndarray,
+    grid_geometry: MonitorGridGeometry,
+) -> OpenBoundaryPoissonResponseDiagnostics:
+    boundary_mask = _boundary_mask(grid_geometry.spec.shape)
+    interior_mask = ~boundary_mask
+    boundary_source = np.asarray(
+        apply_monitor_grid_laplacian_operator(boundary_field, grid_geometry=grid_geometry),
+        dtype=np.float64,
+    )
+    poisson_residual = np.asarray(
+        -apply_monitor_grid_laplacian_operator(potential, grid_geometry=grid_geometry)
+        - _FOUR_PI * density,
+        dtype=np.float64,
+    )
+    boundary_values = np.asarray(
+        boundary_condition.boundary_values[boundary_mask],
+        dtype=np.float64,
+    )
+    interior_rhs = np.asarray(rhs[interior_mask], dtype=np.float64)
+    interior_solution = np.asarray(potential[interior_mask], dtype=np.float64)
+    interior_boundary_source = np.asarray(boundary_source[interior_mask], dtype=np.float64)
+    interior_residual = np.asarray(poisson_residual[interior_mask], dtype=np.float64)
+    return OpenBoundaryPoissonResponseDiagnostics(
+        boundary_value_rms=_rms_norm(boundary_values),
+        boundary_value_max_abs=float(np.max(np.abs(boundary_values), initial=0.0)),
+        boundary_source_laplacian_rms=_rms_norm(interior_boundary_source),
+        boundary_source_laplacian_max_abs=float(
+            np.max(np.abs(interior_boundary_source), initial=0.0)
+        ),
+        rhs_l2_norm=float(np.linalg.norm(interior_rhs)),
+        rhs_max_abs=float(np.max(np.abs(interior_rhs), initial=0.0)),
+        interior_potential_rms=_rms_norm(interior_solution),
+        interior_potential_max_abs=float(np.max(np.abs(interior_solution), initial=0.0)),
+        interior_poisson_residual_l2_norm=float(np.linalg.norm(interior_residual)),
+        interior_poisson_residual_max_abs=float(
+            np.max(np.abs(interior_residual), initial=0.0)
+        ),
+    )
+
+
 def _default_monitor_reference_center(
     grid_geometry: MonitorGridGeometry,
 ) -> tuple[float, float, float]:
@@ -649,6 +793,7 @@ def _compute_multipole_boundary_condition(
     dz = grid_geometry.z_points - reference_center[2]
     radius_squared = dx * dx + dy * dy + dz * dz
     radius = np.sqrt(radius_squared, dtype=np.float64)
+    boundary_diagnostics: OpenBoundaryBoundaryConstructionDiagnostics | None = None
     if isinstance(grid_geometry, MonitorGridGeometry):
         baseline_total_charge = float(integrate_field(rho, grid_geometry=grid_geometry))
         baseline_dipole_moment = np.array(
@@ -730,7 +875,7 @@ def _compute_multipole_boundary_condition(
     boundary_dy = dy[boundary_mask]
     boundary_dz = dz[boundary_mask]
     if isinstance(grid_geometry, MonitorGridGeometry):
-        boundary_potential = _evaluate_boundary_potential_from_moments(
+        baseline_boundary_potential = _evaluate_boundary_potential_from_moments(
             total_charge=baseline_total_charge,
             dipole_moment=baseline_dipole_moment,
             quadrupole_tensor=baseline_quadrupole_tensor,
@@ -740,13 +885,35 @@ def _compute_multipole_boundary_condition(
             boundary_radius=boundary_radius,
             multipole_order=multipole_order,
         )
-        boundary_potential = boundary_potential + _monitor_grid_boundary_value_correction(
+        boundary_value_correction = _monitor_grid_boundary_value_correction(
             grid_geometry,
             rho,
             multipole_order=multipole_order,
             boundary_x=grid_geometry.x_points[boundary_mask],
             boundary_y=grid_geometry.y_points[boundary_mask],
             boundary_z=grid_geometry.z_points[boundary_mask],
+        )
+        boundary_potential = np.asarray(
+            baseline_boundary_potential + boundary_value_correction,
+            dtype=np.float64,
+        )
+        boundary_diagnostics = _build_monitor_boundary_construction_diagnostics(
+            baseline_total_charge=baseline_total_charge,
+            baseline_dipole_moment=baseline_dipole_moment,
+            baseline_quadrupole_tensor=baseline_quadrupole_tensor,
+            correction_total_charge=charge_correction,
+            correction_dipole_moment=dipole_correction,
+            correction_quadrupole_tensor=quadrupole_correction,
+            total_charge=total_charge,
+            dipole_moment=dipole_moment,
+            quadrupole_tensor=quadrupole_tensor,
+            boundary_dx=boundary_dx,
+            boundary_dy=boundary_dy,
+            boundary_dz=boundary_dz,
+            boundary_radius=boundary_radius,
+            boundary_value_correction=boundary_value_correction,
+            actual_boundary_potential=boundary_potential,
+            multipole_order=multipole_order,
         )
     else:
         boundary_potential = _evaluate_boundary_potential_from_moments(
@@ -773,6 +940,7 @@ def _compute_multipole_boundary_condition(
         quadrupole_tensor=quadrupole_tensor,
         boundary_values=boundary_values,
         description=description,
+        diagnostics=boundary_diagnostics,
     )
 
 
@@ -959,6 +1127,14 @@ def _solve_open_boundary_poisson_monitor(
 
     potential = np.array(boundary_condition.boundary_values, copy=True)
     potential[interior_mask] = interior_solution[interior_mask]
+    response_diagnostics = _build_monitor_poisson_response_diagnostics(
+        density=density,
+        potential=potential,
+        boundary_condition=boundary_condition,
+        boundary_field=boundary_field,
+        rhs=rhs,
+        grid_geometry=grid_geometry,
+    )
     description = (
         "Finite-domain Poisson solve on the monitor-driven A-grid with free-space "
         "multipole Dirichlet boundary data. This is the first formal A-grid "
@@ -972,6 +1148,7 @@ def _solve_open_boundary_poisson_monitor(
         solver_iterations=iteration_count,
         residual_max=residual_max,
         description=description,
+        response_diagnostics=response_diagnostics,
     )
 
 

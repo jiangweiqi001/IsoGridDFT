@@ -387,6 +387,76 @@ def test_monitor_grid_boundary_values_track_corrected_source_for_shifted_gaussia
     assert rms_error < 1.0e-5
 
 
+def test_monitor_grid_boundary_condition_exposes_construction_diagnostics() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + (grid_geometry.z_points - 1.5) ** 2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+
+    boundary = _compute_multipole_boundary_condition(
+        grid_geometry=grid_geometry,
+        rho=rho,
+        multipole_order=2,
+    )
+
+    diagnostics = boundary.diagnostics
+    assert diagnostics is not None
+    assert np.isclose(
+        diagnostics.baseline_total_charge + diagnostics.correction_total_charge,
+        boundary.total_charge,
+    )
+    assert np.allclose(
+        diagnostics.baseline_dipole_moment + diagnostics.correction_dipole_moment,
+        boundary.dipole_moment,
+    )
+    assert np.allclose(
+        diagnostics.baseline_quadrupole_tensor + diagnostics.correction_quadrupole_tensor,
+        boundary.quadrupole_tensor,
+    )
+    assert diagnostics.boundary_value_correction_rms is not None
+    assert diagnostics.boundary_value_correction_rms > 0.0
+    assert diagnostics.corrected_moment_boundary_rms_mismatch is not None
+
+
+def test_monitor_grid_hartree_solve_exposes_response_diagnostics() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(19, 19, 23),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    rho = np.exp(
+        -0.5
+        * (
+            grid_geometry.x_points**2
+            + grid_geometry.y_points**2
+            + (grid_geometry.z_points - 1.5) ** 2
+        )
+    )
+    rho = 2.0 * rho / np.sum(rho * grid_geometry.cell_volumes, dtype=np.float64)
+
+    result = solve_hartree_potential(grid_geometry=grid_geometry, rho=rho)
+
+    diagnostics = result.response_diagnostics
+    assert diagnostics is not None
+    assert diagnostics.boundary_value_rms > 0.0
+    assert diagnostics.boundary_source_laplacian_rms > 0.0
+    assert diagnostics.rhs_l2_norm > 0.0
+    assert diagnostics.interior_poisson_residual_max_abs >= 0.0
+    assert diagnostics.interior_poisson_residual_l2_norm >= 0.0
+
+
 def test_monitor_grid_nodal_region_moments_recover_full_nodal_moments_for_all_cells() -> None:
     grid_geometry = build_monitor_grid_for_case(
         H2_BENCHMARK_CASE,
