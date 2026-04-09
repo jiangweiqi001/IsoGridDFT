@@ -182,6 +182,7 @@ def _shared_source_result(
     grid_geometry: MonitorGridGeometry,
     source_iteration_count: int,
     controller_name: str,
+    singlet_experimental_route_name: str = "none",
 ) -> H2StaticLocalScfDryRunResult:
     return run_h2_monitor_grid_scf_dry_run(
         spin_label,
@@ -197,6 +198,7 @@ def _shared_source_result(
         hartree_backend="python",
         monitor_boundary_construction_mode="corrected_moments",
         controller_name=controller_name,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
 
 

@@ -52,6 +52,12 @@ from isogrid.scf.controller import ScfControllerConfig
 from isogrid.scf.controller import ScfControllerSignals
 from isogrid.scf.controller import ScfControllerState
 from isogrid.scf.controller import propose_next_density
+from isogrid.scf.projector_route import ProjectorRouteConfig
+from isogrid.scf.projector_route import ProjectorRouteSelectionResult
+from isogrid.scf.projector_route import ProjectorRouteState
+from isogrid.scf.projector_route import initialize_projector_route
+from isogrid.scf.projector_route import rebuild_density_from_projector_route
+from isogrid.scf.projector_route import update_projector_route
 from isogrid.ks import FixedPotentialEigensolverResult
 from isogrid.ks import FixedPotentialStaticLocalOperatorContext
 from isogrid.ks import FixedPotentialStaticLocalPreparationProfile
@@ -330,6 +336,24 @@ class MonitorGridActiveSubspaceIterationDiagnostics:
 
 
 @dataclass(frozen=True)
+class MonitorGridProjectorRouteIterationDiagnostics:
+    """Compact projector-route snapshot for one singlet SCF step."""
+
+    iteration: int
+    route_name: str
+    active_subspace_size: int
+    target_projector_rank: int
+    raw_occupied_overlap_abs: float | None
+    best_in_subspace_occupied_overlap_abs: float | None
+    internal_rotation_angle_deg: float | None
+    projector_drift_frobenius_norm: float | None
+    projector_response_frobenius_norm: float | None
+    subspace_rotation_max_angle_deg: float | None
+    lowest_gap_ha: float | None
+    verdict: str
+
+
+@dataclass(frozen=True)
 class H2StaticLocalScfDryRunResult:
     """Result of the first H2 A-grid static-local SCF dry-run."""
 
@@ -510,10 +534,17 @@ class H2StaticLocalScfDryRunResult:
     controller_charge_mixing_history: tuple[float, ...] = ()
     controller_spin_mixing_history: tuple[float, ...] = ()
     controller_state_flags_history: tuple[tuple[str, ...], ...] = ()
+    controller_charge_unbounded_trial_history: tuple[np.ndarray | None, ...] = ()
+    controller_charge_trial_history: tuple[np.ndarray | None, ...] = ()
+    controller_charge_preclip_next_history: tuple[np.ndarray | None, ...] = ()
+    controller_charge_postclip_next_history: tuple[np.ndarray | None, ...] = ()
     active_subspace_enabled: bool = False
     active_subspace_size: int | None = None
     active_subspace_target_occupied_count: int | None = None
     active_subspace_diagnostics_history: tuple[MonitorGridActiveSubspaceIterationDiagnostics, ...] = ()
+    projector_route_enabled: bool = False
+    projector_route_name: str | None = None
+    projector_route_diagnostics_history: tuple[MonitorGridProjectorRouteIterationDiagnostics, ...] = ()
 
 
 def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
@@ -1603,6 +1634,29 @@ def _active_subspace_diagnostics_snapshot(
         best_in_subspace_occupied_overlap_abs=selection.best_in_subspace_occupied_overlap_abs,
         internal_rotation_angle_deg=selection.internal_rotation_angle_deg,
         projector_drift_frobenius_norm=selection.projector_drift_frobenius_norm,
+        subspace_rotation_max_angle_deg=selection.subspace_rotation_max_angle_deg,
+        lowest_gap_ha=lowest_gap_ha,
+        verdict=str(selection.verdict),
+    )
+
+
+def _projector_route_diagnostics_snapshot(
+    *,
+    iteration: int,
+    selection: ProjectorRouteSelectionResult,
+    config: ProjectorRouteConfig,
+    lowest_gap_ha: float | None,
+) -> MonitorGridProjectorRouteIterationDiagnostics:
+    return MonitorGridProjectorRouteIterationDiagnostics(
+        iteration=int(iteration),
+        route_name=str(config.experimental_route_name),
+        active_subspace_size=int(config.active_subspace_size),
+        target_projector_rank=int(config.target_projector_rank),
+        raw_occupied_overlap_abs=selection.raw_occupied_overlap_abs,
+        best_in_subspace_occupied_overlap_abs=selection.best_in_subspace_occupied_overlap_abs,
+        internal_rotation_angle_deg=selection.internal_rotation_angle_deg,
+        projector_drift_frobenius_norm=selection.projector_drift_frobenius_norm,
+        projector_response_frobenius_norm=selection.projector_response_frobenius_norm,
         subspace_rotation_max_angle_deg=selection.subspace_rotation_max_angle_deg,
         lowest_gap_ha=lowest_gap_ha,
         verdict=str(selection.verdict),
@@ -2966,6 +3020,7 @@ def run_h2_monitor_grid_scf_dry_run(
     jax_hartree_line_preconditioner_impl: str = "baseline",
     monitor_boundary_construction_mode: str = "corrected_moments",
     controller_name: str = "baseline_linear",
+    singlet_experimental_route_name: str = "none",
     use_jax_block_kernels: bool = False,
     use_step_local_static_local_reuse: bool = False,
     enable_cycle_breaker: bool = False,
@@ -3150,6 +3205,14 @@ def run_h2_monitor_grid_scf_dry_run(
             "or `generic_charge_spin_preconditioned`; "
             f"received `{controller_name}`."
         )
+    normalized_singlet_experimental_route_name = (
+        singlet_experimental_route_name.strip().lower()
+    )
+    if normalized_singlet_experimental_route_name not in {"none", "projector_mixing"}:
+        raise ValueError(
+            "singlet_experimental_route_name must be `none` or `projector_mixing`; "
+            f"received `{singlet_experimental_route_name}`."
+        )
     normalized_hartree_backend = hartree_backend.strip().lower()
     if normalized_hartree_backend not in {"python", "jax"}:
         raise ValueError(
@@ -3219,6 +3282,22 @@ def run_h2_monitor_grid_scf_dry_run(
     singlet_solver_track_count = max(
         _closed_shell_singlet_tracking_solve_count(occupations),
         int(active_subspace_config.subspace_size) if active_subspace_enabled else 0,
+    )
+    projector_route_enabled = bool(
+        closed_shell_singlet_tracking_enabled
+        and normalized_singlet_experimental_route_name == "projector_mixing"
+    )
+    if (
+        normalized_singlet_experimental_route_name != "none"
+        and not closed_shell_singlet_tracking_enabled
+    ):
+        raise ValueError(
+            "singlet_experimental_route_name currently supports only the local-only H2 closed-shell singlet path."
+        )
+    projector_route_config = (
+        ProjectorRouteConfig.local_only_h2_singlet_default(projector_mixing=mixing)
+        if projector_route_enabled
+        else None
     )
     controller_config = (
         ScfControllerConfig.generic_charge_spin(baseline_mixing=mixing)
@@ -3292,8 +3371,15 @@ def run_h2_monitor_grid_scf_dry_run(
     controller_charge_mixing_history: list[float] = []
     controller_spin_mixing_history: list[float] = []
     controller_state_flags_history: list[tuple[str, ...]] = []
+    controller_charge_unbounded_trial_history: list[np.ndarray | None] = []
+    controller_charge_trial_history: list[np.ndarray | None] = []
+    controller_charge_preclip_next_history: list[np.ndarray | None] = []
+    controller_charge_postclip_next_history: list[np.ndarray | None] = []
     active_subspace_diagnostics_history: list[
         MonitorGridActiveSubspaceIterationDiagnostics
+    ] = []
+    projector_route_diagnostics_history: list[
+        MonitorGridProjectorRouteIterationDiagnostics
     ] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
@@ -3319,6 +3405,7 @@ def run_h2_monitor_grid_scf_dry_run(
     previous_controller_solve_up: FixedPotentialEigensolverResult | None = None
     previous_controller_occupied_up: np.ndarray | None = None
     active_subspace_state: ActiveSubspaceState | None = None
+    projector_route_state: ProjectorRouteState | None = None
     hartree_solve_times: list[float] = []
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
@@ -3458,6 +3545,7 @@ def run_h2_monitor_grid_scf_dry_run(
         solve_up = None
         solve_down = None
         active_subspace_selection: ActiveSubspaceSelectionResult | None = None
+        projector_route_selection: ProjectorRouteSelectionResult | None = None
         up_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         down_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         up_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
@@ -3555,24 +3643,48 @@ def run_h2_monitor_grid_scf_dry_run(
                         solve_up.orbitals[: active_subspace_config.subspace_size],
                         dtype=np.float64,
                     )
-                    active_subspace_selection = (
-                        initialize_active_subspace(
-                            raw_subspace_orbitals=raw_active_subspace,
-                            grid_geometry=grid_geometry,
-                            config=active_subspace_config,
+                    if projector_route_enabled and projector_route_config is not None:
+                        projector_route_selection = (
+                            initialize_projector_route(
+                                raw_subspace_orbitals=raw_active_subspace,
+                                grid_geometry=grid_geometry,
+                                config=projector_route_config,
+                            )
+                            if projector_route_state is None
+                            else update_projector_route(
+                                raw_subspace_orbitals=raw_active_subspace,
+                                state=projector_route_state,
+                                grid_geometry=grid_geometry,
+                            )
                         )
-                        if active_subspace_state is None
-                        else update_active_subspace(
-                            raw_subspace_orbitals=raw_active_subspace,
-                            state=active_subspace_state,
-                            grid_geometry=grid_geometry,
+                        projector_route_state = projector_route_selection.state
+                        active_subspace_selection = (
+                            projector_route_selection.active_subspace_selection
                         )
-                    )
-                    active_subspace_state = active_subspace_selection.state
-                    orbitals_up = np.asarray(
-                        active_subspace_selection.occupied_orbitals,
-                        dtype=np.float64,
-                    )
+                        active_subspace_state = active_subspace_selection.state
+                        orbitals_up = np.asarray(
+                            projector_route_selection.occupied_orbitals,
+                            dtype=np.float64,
+                        )
+                    else:
+                        active_subspace_selection = (
+                            initialize_active_subspace(
+                                raw_subspace_orbitals=raw_active_subspace,
+                                grid_geometry=grid_geometry,
+                                config=active_subspace_config,
+                            )
+                            if active_subspace_state is None
+                            else update_active_subspace(
+                                raw_subspace_orbitals=raw_active_subspace,
+                                state=active_subspace_state,
+                                grid_geometry=grid_geometry,
+                            )
+                        )
+                        active_subspace_state = active_subspace_selection.state
+                        orbitals_up = np.asarray(
+                            active_subspace_selection.occupied_orbitals,
+                            dtype=np.float64,
+                        )
                 else:
                     orbitals_up = _select_closed_shell_singlet_tracked_occupied_orbital(
                         solve_up.orbitals,
@@ -3703,24 +3815,35 @@ def run_h2_monitor_grid_scf_dry_run(
                 singlet_feedback_input_context = operator_context
 
         density_update_start = perf_counter()
-        rho_up_out = _renormalize_density(
-            _build_density_from_occupied_orbitals(
-                orbitals_up,
-                occupations.occupations_up,
+        if (
+            projector_route_enabled
+            and projector_route_selection is not None
+            and closed_shell_singlet_tracking_enabled
+        ):
+            rho_up_out, rho_down_out = rebuild_density_from_projector_route(
+                selection=projector_route_selection,
+                occupations=occupations,
                 grid_geometry=grid_geometry,
-            ),
-            occupations.n_alpha,
-            grid_geometry=grid_geometry,
-        )
-        rho_down_out = _renormalize_density(
-            _build_density_from_occupied_orbitals(
-                orbitals_down,
-                occupations.occupations_down,
+            )
+        else:
+            rho_up_out = _renormalize_density(
+                _build_density_from_occupied_orbitals(
+                    orbitals_up,
+                    occupations.occupations_up,
+                    grid_geometry=grid_geometry,
+                ),
+                occupations.n_alpha,
                 grid_geometry=grid_geometry,
-            ),
-            occupations.n_beta,
-            grid_geometry=grid_geometry,
-        )
+            )
+            rho_down_out = _renormalize_density(
+                _build_density_from_occupied_orbitals(
+                    orbitals_down,
+                    occupations.occupations_down,
+                    grid_geometry=grid_geometry,
+                ),
+                occupations.n_beta,
+                grid_geometry=grid_geometry,
+            )
 
         _check_density_electron_count(rho_up_out, occupations.n_alpha, grid_geometry, "rho_up_out")
         _check_density_electron_count(rho_down_out, occupations.n_beta, grid_geometry, "rho_down_out")
@@ -3899,6 +4022,10 @@ def run_h2_monitor_grid_scf_dry_run(
             controller_charge_mixing_history.append(float(mixing))
             controller_spin_mixing_history.append(float(mixing))
             controller_state_flags_history.append(("baseline_linear",))
+            controller_charge_unbounded_trial_history.append(None)
+            controller_charge_trial_history.append(None)
+            controller_charge_preclip_next_history.append(None)
+            controller_charge_postclip_next_history.append(None)
         else:
             controller_step = propose_next_density(
                 occupations=occupations,
@@ -3917,6 +4044,18 @@ def run_h2_monitor_grid_scf_dry_run(
             controller_charge_mixing_history.append(float(controller_step.charge_mixing))
             controller_spin_mixing_history.append(float(controller_step.spin_mixing))
             controller_state_flags_history.append(tuple(controller_step.flags))
+            controller_charge_unbounded_trial_history.append(
+                np.asarray(controller_step.rho_charge_unbounded_trial, dtype=np.float64)
+            )
+            controller_charge_trial_history.append(
+                np.asarray(controller_step.rho_charge_trial, dtype=np.float64)
+            )
+            controller_charge_preclip_next_history.append(
+                np.asarray(controller_step.rho_charge_preclip_next, dtype=np.float64)
+            )
+            controller_charge_postclip_next_history.append(
+                np.asarray(controller_step.rho_charge_postclip_next, dtype=np.float64)
+            )
         controller_signals_history.append(controller_signals)
         if (
             active_subspace_enabled
@@ -3928,6 +4067,19 @@ def run_h2_monitor_grid_scf_dry_run(
                     iteration=iteration,
                     selection=active_subspace_selection,
                     config=active_subspace_config,
+                    lowest_gap_ha=lowest_gap_ha,
+                )
+            )
+        if (
+            projector_route_enabled
+            and projector_route_selection is not None
+            and projector_route_config is not None
+        ):
+            projector_route_diagnostics_history.append(
+                _projector_route_diagnostics_snapshot(
+                    iteration=iteration,
+                    selection=projector_route_selection,
+                    config=projector_route_config,
                     lowest_gap_ha=lowest_gap_ha,
                 )
             )
@@ -4896,6 +5048,22 @@ def run_h2_monitor_grid_scf_dry_run(
             tuple(str(flag) for flag in flags)
             for flags in controller_state_flags_history
         ),
+        controller_charge_unbounded_trial_history=tuple(
+            None if value is None else np.asarray(value, dtype=np.float64)
+            for value in controller_charge_unbounded_trial_history
+        ),
+        controller_charge_trial_history=tuple(
+            None if value is None else np.asarray(value, dtype=np.float64)
+            for value in controller_charge_trial_history
+        ),
+        controller_charge_preclip_next_history=tuple(
+            None if value is None else np.asarray(value, dtype=np.float64)
+            for value in controller_charge_preclip_next_history
+        ),
+        controller_charge_postclip_next_history=tuple(
+            None if value is None else np.asarray(value, dtype=np.float64)
+            for value in controller_charge_postclip_next_history
+        ),
         active_subspace_enabled=bool(active_subspace_enabled),
         active_subspace_size=(
             None if active_subspace_config is None else int(active_subspace_config.subspace_size)
@@ -4906,6 +5074,13 @@ def run_h2_monitor_grid_scf_dry_run(
             else int(active_subspace_config.target_occupied_count)
         ),
         active_subspace_diagnostics_history=tuple(active_subspace_diagnostics_history),
+        projector_route_enabled=bool(projector_route_enabled),
+        projector_route_name=(
+            None
+            if projector_route_config is None
+            else str(projector_route_config.experimental_route_name)
+        ),
+        projector_route_diagnostics_history=tuple(projector_route_diagnostics_history),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),

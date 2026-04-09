@@ -184,3 +184,34 @@ def test_monitor_grid_scf_dry_run_records_active_subspace_history_for_singlet() 
         snapshot.best_in_subspace_occupied_overlap_abs is not None
         for snapshot in result.active_subspace_diagnostics_history
     )
+
+
+def test_monitor_grid_scf_dry_run_records_projector_route_history_for_experimental_singlet_route() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(9, 9, 11),
+        box_half_extents=(6.0, 6.0, 8.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+
+    result = run_h2_monitor_grid_scf_dry_run(
+        "singlet",
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        max_iterations=2,
+        mixing=0.2,
+        density_tolerance=1.0e-2,
+        energy_tolerance=1.0e-4,
+        eigensolver_tolerance=1.0e-2,
+        eigensolver_ncv=8,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="projector_mixing",
+    )
+
+    assert result.projector_route_enabled is True
+    assert result.projector_route_name == "projector_mixing"
+    assert len(result.projector_route_diagnostics_history) == result.iteration_count
+    assert any(
+        snapshot.projector_response_frobenius_norm is not None
+        for snapshot in result.projector_route_diagnostics_history
+    )

@@ -110,6 +110,8 @@ class ScfControllerConfig:
     modal_persistent_grid_point_threshold: int
     low_rank_modal_ratio_floor: float
     low_rank_modal_ratio_ceiling: float
+    low_rank_mode_count: int
+    low_rank_secondary_min_explained_fraction: float
     hartree_share_trigger: float
     residual_ratio_trigger: float
     residual_ratio_severe_trigger: float
@@ -151,6 +153,8 @@ class ScfControllerConfig:
             modal_persistent_grid_point_threshold=0,
             low_rank_modal_ratio_floor=1.0,
             low_rank_modal_ratio_ceiling=1.0,
+            low_rank_mode_count=1,
+            low_rank_secondary_min_explained_fraction=1.1,
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -193,6 +197,8 @@ class ScfControllerConfig:
             modal_persistent_grid_point_threshold=3500,
             low_rank_modal_ratio_floor=0.85,
             low_rank_modal_ratio_ceiling=0.995,
+            low_rank_mode_count=2,
+            low_rank_secondary_min_explained_fraction=0.10,
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -218,6 +224,16 @@ class ControllerStepResult:
     rho_charge_trial: np.ndarray
     rho_charge_preclip_next: np.ndarray
     rho_charge_postclip_next: np.ndarray
+
+
+@dataclass(frozen=True)
+class PreconditionedBaseChargeTrialComponents:
+    """Base charge-trial pieces before any low-rank correction is added."""
+
+    smoothed_charge_residual: np.ndarray
+    effective_charge_residual: np.ndarray
+    effective_charge_mixing: np.ndarray
+    rho_charge_trial: np.ndarray
 
 
 def _renormalize_density(
@@ -339,6 +355,71 @@ def _append_recent_charge_residual(
     return updated
 
 
+def _prepare_low_rank_charge_variable(
+    *,
+    history: tuple[np.ndarray, ...],
+    current_residual: np.ndarray,
+    smoothing_passes: int,
+) -> tuple[tuple[np.ndarray, ...], np.ndarray]:
+    prepared_history = tuple(
+        _smooth_charge_residual(np.asarray(field, dtype=np.float64), smoothing_passes=smoothing_passes)
+        for field in history
+    )
+    prepared_current = _smooth_charge_residual(
+        np.asarray(current_residual, dtype=np.float64),
+        smoothing_passes=smoothing_passes,
+    )
+    return prepared_history, prepared_current
+
+
+def _build_preconditioned_base_charge_trial(
+    *,
+    rho_charge_current: np.ndarray,
+    charge_residual: np.ndarray,
+    next_charge_mixing: float,
+    config: ScfControllerConfig,
+    grid_geometry: GridGeometryLike,
+) -> PreconditionedBaseChargeTrialComponents:
+    """Construct the preconditioned base charge trial before low-rank correction.
+
+    The base operator now treats the smoothed charge residual as the primary
+    variable and reserves low-rank corrections for the slow-mode refinement.
+    """
+
+    smoothed_charge_residual = _smooth_charge_residual(
+        charge_residual,
+        smoothing_passes=config.preconditioned_smoothing_passes,
+    )
+    grid_preconditioner_scale = _grid_preconditioner_scale(
+        grid_point_count=int(np.prod(grid_geometry.spec.shape)),
+        reference_grid_point_count=int(config.preconditioned_grid_point_boost_threshold),
+    )
+    peak_charge_mixing = float(
+        min(
+            config.baseline_charge_mixing,
+            max(next_charge_mixing, config.preconditioned_high_frequency_mixing),
+        )
+    )
+    support_weight = _density_support_weight(rho_charge_current)
+    effective_charge_residual = np.asarray(smoothed_charge_residual, dtype=np.float64)
+    effective_charge_mixing = np.asarray(
+        next_charge_mixing
+        + (grid_preconditioner_scale * support_weight) * (peak_charge_mixing - next_charge_mixing),
+        dtype=np.float64,
+    )
+    rho_charge_trial = np.asarray(
+        np.asarray(rho_charge_current, dtype=np.float64)
+        + effective_charge_mixing * effective_charge_residual,
+        dtype=np.float64,
+    )
+    return PreconditionedBaseChargeTrialComponents(
+        smoothed_charge_residual=np.asarray(smoothed_charge_residual, dtype=np.float64),
+        effective_charge_residual=effective_charge_residual,
+        effective_charge_mixing=effective_charge_mixing,
+        rho_charge_trial=rho_charge_trial,
+    )
+
+
 def _weighted_inner(
     field_a: np.ndarray,
     field_b: np.ndarray,
@@ -358,8 +439,26 @@ def _principal_residual_mode(
     history: tuple[np.ndarray, ...],
     grid_geometry: GridGeometryLike,
 ) -> tuple[np.ndarray, float] | None:
-    if len(history) < 2:
+    dominant_modes = _dominant_residual_modes(
+        history=history,
+        grid_geometry=grid_geometry,
+        max_modes=1,
+    )
+    if not dominant_modes:
         return None
+    return dominant_modes[0]
+
+
+def _dominant_residual_modes(
+    *,
+    history: tuple[np.ndarray, ...],
+    grid_geometry: GridGeometryLike,
+    max_modes: int,
+) -> tuple[tuple[np.ndarray, float], ...]:
+    if len(history) < 2:
+        return ()
+    if int(max_modes) <= 0:
+        return ()
     sqrt_weights = np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64)).reshape(-1)
     matrix = np.stack(
         [np.asarray(field, dtype=np.float64).reshape(-1) * sqrt_weights for field in history],
@@ -368,18 +467,24 @@ def _principal_residual_mode(
     _, singular_values, right_vectors = np.linalg.svd(matrix, full_matrices=False)
     total_energy = float(np.sum(singular_values**2, dtype=np.float64))
     if total_energy <= 1.0e-16:
-        return None
-    mode_weighted = np.asarray(right_vectors[0], dtype=np.float64).reshape(grid_geometry.spec.shape)
-    mode = np.asarray(
-        mode_weighted / np.maximum(np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64)), 1.0e-30),
-        dtype=np.float64,
-    )
-    norm = _weighted_field_norm(mode, grid_geometry=grid_geometry)
-    if norm <= 1.0e-16:
-        return None
-    mode = mode / norm
-    explained_fraction = float((singular_values[0] ** 2) / total_energy)
-    return mode, explained_fraction
+        return ()
+    modes: list[tuple[np.ndarray, float]] = []
+    max_count = min(int(max_modes), int(right_vectors.shape[0]))
+    sqrt_cell_volumes = np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64))
+    for index in range(max_count):
+        mode_weighted = np.asarray(right_vectors[index], dtype=np.float64).reshape(
+            grid_geometry.spec.shape
+        )
+        mode = np.asarray(
+            mode_weighted / np.maximum(sqrt_cell_volumes, 1.0e-30),
+            dtype=np.float64,
+        )
+        norm = _weighted_field_norm(mode, grid_geometry=grid_geometry)
+        if norm <= 1.0e-16:
+            continue
+        explained_fraction = float((singular_values[index] ** 2) / total_energy)
+        modes.append((mode / norm, explained_fraction))
+    return tuple(modes)
 
 
 def _modal_history_is_persistent(
@@ -422,6 +527,25 @@ def _modal_contraction_ratio(
     if not ratios:
         return None
     return float(np.median(np.asarray(ratios, dtype=np.float64)))
+
+
+def _accepted_low_rank_modes(
+    *,
+    dominant_modes: tuple[tuple[np.ndarray, float], ...],
+    config: ScfControllerConfig,
+) -> tuple[tuple[np.ndarray, float], ...]:
+    if not dominant_modes:
+        return ()
+    accepted: list[tuple[np.ndarray, float]] = []
+    primary_mode, primary_fraction = dominant_modes[0]
+    if primary_fraction < float(config.modal_min_explained_fraction):
+        return ()
+    accepted.append((primary_mode, primary_fraction))
+    secondary_floor = float(config.low_rank_secondary_min_explained_fraction)
+    for mode, explained_fraction in dominant_modes[1 : int(config.low_rank_mode_count)]:
+        if explained_fraction >= secondary_floor:
+            accepted.append((mode, explained_fraction))
+    return tuple(accepted)
 
 
 def _limit_charge_trial_to_nonnegative(
@@ -692,10 +816,6 @@ def propose_next_density(
 
     rho_charge_unbounded_trial = None
     if config.name == "generic_charge_spin_preconditioned":
-        smoothed_charge_residual = _smooth_charge_residual(
-            channel_residuals.charge_residual,
-            smoothing_passes=config.preconditioned_smoothing_passes,
-        )
         allow_high_frequency_boost = bool(
             not opening_phase_active
             and not caution
@@ -712,57 +832,39 @@ def propose_next_density(
             and "charge_recovery_paused" not in step_flags
         )
         if allow_high_frequency_boost:
-            grid_preconditioner_scale = _grid_preconditioner_scale(
-                grid_point_count=grid_point_count,
-                reference_grid_point_count=int(
-                    config.preconditioned_grid_point_boost_threshold
-                ),
-            )
-            peak_charge_mixing = float(
-                min(
-                    config.baseline_charge_mixing,
-                    max(
-                        next_charge_mixing,
-                        config.preconditioned_high_frequency_mixing,
-                    ),
-                )
-            )
-            support_weight = _density_support_weight(rho_charge_current)
-            effective_charge_residual = np.asarray(
-                (1.0 - grid_preconditioner_scale * support_weight)
-                * smoothed_charge_residual
-                + (grid_preconditioner_scale * support_weight)
-                * channel_residuals.charge_residual,
-                dtype=np.float64,
-            )
-            effective_charge_mixing = np.asarray(
-                next_charge_mixing
-                + (grid_preconditioner_scale * support_weight)
-                * (peak_charge_mixing - next_charge_mixing),
-                dtype=np.float64,
-            )
-            rho_charge_trial = np.asarray(
-                rho_charge_current + effective_charge_mixing * effective_charge_residual,
-                dtype=np.float64,
-            )
-            modal_mode_result = _principal_residual_mode(
-                history=updated_recent_charge_history,
+            base_charge_trial = _build_preconditioned_base_charge_trial(
+                rho_charge_current=rho_charge_current,
+                charge_residual=channel_residuals.charge_residual,
+                next_charge_mixing=float(next_charge_mixing),
+                config=config,
                 grid_geometry=grid_geometry,
             )
-            if (
-                modal_mode_result is not None
-                and modal_mode_result[1] >= float(config.modal_min_explained_fraction)
-            ):
-                modal_mode, _ = modal_mode_result
+            rho_charge_trial = np.asarray(base_charge_trial.rho_charge_trial, dtype=np.float64)
+            low_rank_history, low_rank_current_residual = _prepare_low_rank_charge_variable(
+                history=updated_recent_charge_history,
+                current_residual=channel_residuals.charge_residual,
+                smoothing_passes=config.preconditioned_smoothing_passes,
+            )
+            dominant_modes = _dominant_residual_modes(
+                history=low_rank_history,
+                grid_geometry=grid_geometry,
+                max_modes=int(config.low_rank_mode_count),
+            )
+            accepted_modes = _accepted_low_rank_modes(
+                dominant_modes=dominant_modes,
+                config=config,
+            )
+            if accepted_modes:
+                modal_mode, _ = accepted_modes[0]
                 modal_boost_mixing = float(config.modal_boost_mixing)
                 if _modal_history_is_persistent(
-                    history=updated_recent_charge_history,
+                    history=low_rank_history,
                     mode=modal_mode,
                     grid_geometry=grid_geometry,
                     min_history=int(config.modal_persistent_min_history),
                 ) and grid_point_count >= int(config.modal_persistent_grid_point_threshold):
                     modal_ratio = _modal_contraction_ratio(
-                        history=updated_recent_charge_history,
+                        history=low_rank_history,
                         mode=modal_mode,
                         grid_geometry=grid_geometry,
                     )
@@ -786,17 +888,23 @@ def propose_next_density(
                         step_flags = tuple(
                             step_flags + ("modal_persistent", "low_rank_modal_preconditioner")
                         )
-                modal_coefficient = _weighted_inner(
-                    channel_residuals.charge_residual,
-                    modal_mode,
-                    grid_geometry=grid_geometry,
-                )
-                modal_boost = np.asarray(
-                    modal_boost_mixing * modal_coefficient * modal_mode,
-                    dtype=np.float64,
-                )
-                rho_charge_trial = np.asarray(rho_charge_trial + modal_boost, dtype=np.float64)
+                low_rank_boost = np.zeros_like(rho_charge_trial)
+                for mode, _ in accepted_modes:
+                    modal_coefficient = _weighted_inner(
+                        low_rank_current_residual,
+                        mode,
+                        grid_geometry=grid_geometry,
+                    )
+                    low_rank_boost = np.asarray(
+                        low_rank_boost + modal_boost_mixing * modal_coefficient * mode,
+                        dtype=np.float64,
+                    )
+                rho_charge_trial = np.asarray(rho_charge_trial + low_rank_boost, dtype=np.float64)
                 step_flags = tuple(step_flags + ("modal_boost",))
+                if len(accepted_modes) >= 2:
+                    step_flags = tuple(step_flags + ("rank2_modal_boost", "low_rank_subspace_preconditioner"))
+                if len(accepted_modes) >= 3:
+                    step_flags = tuple(step_flags + ("rank3_subspace_boost",))
         else:
             rho_charge_trial = np.asarray(
                 rho_charge_current + next_charge_mixing * channel_residuals.charge_residual,
