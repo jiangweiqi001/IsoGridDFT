@@ -52,6 +52,7 @@ class ScfControllerState:
     iteration_index: int
     last_flags: tuple[str, ...]
     previous_hartree_share: float | None = None
+    recent_charge_residual_history: tuple[np.ndarray, ...] = ()
 
     @classmethod
     def initial(
@@ -68,6 +69,7 @@ class ScfControllerState:
             iteration_index=0,
             last_flags=(),
             previous_hartree_share=None,
+            recent_charge_residual_history=(),
         )
 
 
@@ -100,6 +102,9 @@ class ScfControllerConfig:
     recovery_pause_hartree_rise: float
     preconditioned_high_frequency_mixing: float
     preconditioned_smoothing_passes: int
+    modal_history_length: int
+    modal_min_explained_fraction: float
+    modal_boost_mixing: float
     hartree_share_trigger: float
     residual_ratio_trigger: float
     residual_ratio_severe_trigger: float
@@ -133,6 +138,9 @@ class ScfControllerConfig:
             recovery_pause_hartree_rise=0.10,
             preconditioned_high_frequency_mixing=0.0,
             preconditioned_smoothing_passes=0,
+            modal_history_length=0,
+            modal_min_explained_fraction=1.1,
+            modal_boost_mixing=0.0,
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -167,6 +175,9 @@ class ScfControllerConfig:
             recovery_pause_hartree_rise=0.10,
             preconditioned_high_frequency_mixing=max(0.03, 0.15 * float(baseline_mixing)),
             preconditioned_smoothing_passes=3,
+            modal_history_length=4,
+            modal_min_explained_fraction=0.90,
+            modal_boost_mixing=max(0.03, 0.20 * float(baseline_mixing)),
             hartree_share_trigger=0.60,
             residual_ratio_trigger=0.98,
             residual_ratio_severe_trigger=1.05,
@@ -276,6 +287,80 @@ def _density_support_weight(
         return np.zeros_like(density)
     normalized_density = np.clip(density / peak_density, 0.0, 1.0)
     return np.asarray(np.sqrt(normalized_density), dtype=np.float64)
+
+
+def _grid_preconditioner_scale(
+    *,
+    grid_point_count: int,
+    reference_grid_point_count: int,
+) -> float:
+    if reference_grid_point_count <= 0:
+        return 1.0
+    return float(
+        min(
+            1.0,
+            float(reference_grid_point_count) / max(float(grid_point_count), 1.0),
+        )
+    )
+
+
+def _append_recent_charge_residual(
+    history: tuple[np.ndarray, ...],
+    residual: np.ndarray,
+    *,
+    max_length: int,
+) -> tuple[np.ndarray, ...]:
+    if max_length <= 0:
+        return ()
+    updated = tuple(np.asarray(field, dtype=np.float64) for field in history) + (
+        np.asarray(residual, dtype=np.float64),
+    )
+    if len(updated) > max_length:
+        updated = updated[-max_length:]
+    return updated
+
+
+def _weighted_inner(
+    field_a: np.ndarray,
+    field_b: np.ndarray,
+    *,
+    grid_geometry: GridGeometryLike,
+) -> float:
+    return float(
+        integrate_field(
+            np.asarray(field_a, dtype=np.float64) * np.asarray(field_b, dtype=np.float64),
+            grid_geometry=grid_geometry,
+        )
+    )
+
+
+def _principal_residual_mode(
+    *,
+    history: tuple[np.ndarray, ...],
+    grid_geometry: GridGeometryLike,
+) -> tuple[np.ndarray, float] | None:
+    if len(history) < 2:
+        return None
+    sqrt_weights = np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64)).reshape(-1)
+    matrix = np.stack(
+        [np.asarray(field, dtype=np.float64).reshape(-1) * sqrt_weights for field in history],
+        axis=0,
+    )
+    _, singular_values, right_vectors = np.linalg.svd(matrix, full_matrices=False)
+    total_energy = float(np.sum(singular_values**2, dtype=np.float64))
+    if total_energy <= 1.0e-16:
+        return None
+    mode_weighted = np.asarray(right_vectors[0], dtype=np.float64).reshape(grid_geometry.spec.shape)
+    mode = np.asarray(
+        mode_weighted / np.maximum(np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64)), 1.0e-30),
+        dtype=np.float64,
+    )
+    norm = _weighted_field_norm(mode, grid_geometry=grid_geometry)
+    if norm <= 1.0e-16:
+        return None
+    mode = mode / norm
+    explained_fraction = float((singular_values[0] ** 2) / total_energy)
+    return mode, explained_fraction
 
 
 def _is_closed_shell_singlet(occupations) -> bool:
@@ -515,6 +600,11 @@ def propose_next_density(
     )
     rho_spin_current = np.asarray(rho_up_current - rho_down_current, dtype=np.float64)
     rho_spin_output = np.asarray(rho_up_output - rho_down_output, dtype=np.float64)
+    updated_recent_charge_history = _append_recent_charge_residual(
+        state.recent_charge_residual_history,
+        channel_residuals.charge_residual,
+        max_length=int(config.modal_history_length),
+    )
 
     if config.name == "generic_charge_spin_preconditioned":
         smoothed_charge_residual = _smooth_charge_residual(
@@ -524,12 +614,11 @@ def propose_next_density(
         allow_high_frequency_boost = bool(
             not opening_phase_active
             and not caution
+            and int(state.iteration_index)
+            >= int(config.opening_steps + config.stable_steps_to_release)
+            and int(stable_steps) >= int(config.stable_steps_to_release)
             and current_hartree_share is not None
             and current_hartree_share < float(config.recovery_pause_hartree_share)
-            and (
-                int(config.preconditioned_grid_point_boost_threshold) <= 0
-                or grid_point_count <= int(config.preconditioned_grid_point_boost_threshold)
-            )
             and not recovery_pause_due_to_hartree_trend
             and "hartree_dominated" not in step_flags
             and "overlap_drop" not in step_flags
@@ -538,6 +627,12 @@ def propose_next_density(
             and "charge_recovery_paused" not in step_flags
         )
         if allow_high_frequency_boost:
+            grid_preconditioner_scale = _grid_preconditioner_scale(
+                grid_point_count=grid_point_count,
+                reference_grid_point_count=int(
+                    config.preconditioned_grid_point_boost_threshold
+                ),
+            )
             peak_charge_mixing = float(
                 min(
                     config.baseline_charge_mixing,
@@ -549,19 +644,42 @@ def propose_next_density(
             )
             support_weight = _density_support_weight(rho_charge_current)
             effective_charge_residual = np.asarray(
-                (1.0 - support_weight) * smoothed_charge_residual
-                + support_weight * channel_residuals.charge_residual,
+                (1.0 - grid_preconditioner_scale * support_weight)
+                * smoothed_charge_residual
+                + (grid_preconditioner_scale * support_weight)
+                * channel_residuals.charge_residual,
                 dtype=np.float64,
             )
             effective_charge_mixing = np.asarray(
                 next_charge_mixing
-                + support_weight * (peak_charge_mixing - next_charge_mixing),
+                + (grid_preconditioner_scale * support_weight)
+                * (peak_charge_mixing - next_charge_mixing),
                 dtype=np.float64,
             )
             rho_charge_trial = np.asarray(
                 rho_charge_current + effective_charge_mixing * effective_charge_residual,
                 dtype=np.float64,
             )
+            modal_mode_result = _principal_residual_mode(
+                history=updated_recent_charge_history,
+                grid_geometry=grid_geometry,
+            )
+            if (
+                modal_mode_result is not None
+                and modal_mode_result[1] >= float(config.modal_min_explained_fraction)
+            ):
+                modal_mode, _ = modal_mode_result
+                modal_coefficient = _weighted_inner(
+                    channel_residuals.charge_residual,
+                    modal_mode,
+                    grid_geometry=grid_geometry,
+                )
+                modal_boost = np.asarray(
+                    float(config.modal_boost_mixing) * modal_coefficient * modal_mode,
+                    dtype=np.float64,
+                )
+                rho_charge_trial = np.asarray(rho_charge_trial + modal_boost, dtype=np.float64)
+                step_flags = tuple(step_flags + ("modal_boost",))
         else:
             rho_charge_trial = np.asarray(
                 rho_charge_current + next_charge_mixing * channel_residuals.charge_residual,
@@ -607,6 +725,7 @@ def propose_next_density(
         iteration_index=int(state.iteration_index + 1),
         last_flags=step_flags,
         previous_hartree_share=current_hartree_share,
+        recent_charge_residual_history=updated_recent_charge_history,
     )
     return ControllerStepResult(
         rho_up_next=np.asarray(rho_up_next, dtype=np.float64),

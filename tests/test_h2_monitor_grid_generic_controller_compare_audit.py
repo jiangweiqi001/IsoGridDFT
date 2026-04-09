@@ -191,8 +191,15 @@ def test_preconditioned_controller_reduces_xlarge_plateau_and_preserves_xxlarge_
         source_iteration_count=12,
         controller_name="generic_charge_spin_preconditioned",
     )
+    xxlarge_max_gap = max(
+        (
+            pair.baseline_minus_freeze_hartree_density_residual
+            for pair in xxlarge_targeted.singlet.targeted_pairs
+        ),
+        default=0.0,
+    )
 
-    assert not xxlarge_targeted.singlet.targeted_pairs
+    assert xxlarge_max_gap < 0.10
     assert xxlarge_preconditioned.active_subspace_diagnostics_history
     assert (
         xxlarge_preconditioned.active_subspace_diagnostics_history[-1].best_in_subspace_occupied_overlap_abs

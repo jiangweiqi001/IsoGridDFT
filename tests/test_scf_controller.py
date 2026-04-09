@@ -297,3 +297,138 @@ def test_preconditioned_controller_disables_local_boost_when_hartree_dominated()
 
     assert np.allclose(preconditioned.rho_up_next, generic.rho_up_next)
     assert np.allclose(preconditioned.rho_down_next, generic.rho_down_next)
+
+
+def test_preconditioned_controller_adds_modal_boost_on_persistent_charge_mode() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+    bump = np.zeros_like(rho_up)
+    center = tuple(length // 2 for length in bump.shape)
+    bump[center] = 0.04 * float(np.max(rho_up))
+    modal_history = tuple(np.asarray(scale * bump, dtype=np.float64) for scale in (1.0, 0.98, 0.96))
+    state_without_history = ScfControllerState(
+        charge_mixing=0.015,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=5,
+        iteration_index=9,
+        last_flags=("charge_recovery",),
+        previous_hartree_share=0.03,
+    )
+    state_with_history = ScfControllerState(
+        charge_mixing=0.015,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=5,
+        iteration_index=9,
+        last_flags=("charge_recovery",),
+        previous_hartree_share=0.03,
+        recent_charge_residual_history=modal_history,
+    )
+    signals = ScfControllerSignals(
+        density_residual_ratio=0.985,
+        hartree_share=0.04,
+        occupied_orbital_overlap_abs=0.999,
+        lowest_subspace_rotation_max_angle_deg=0.4,
+        lowest_gap_ha=0.22,
+    )
+
+    without_history = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=state_without_history,
+        signals=signals,
+    )
+    with_history = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=state_with_history,
+        signals=signals,
+    )
+
+    without_history_step = np.linalg.norm(without_history.rho_up_next - rho_up)
+    with_history_step = np.linalg.norm(with_history.rho_up_next - rho_up)
+
+    assert with_history_step > without_history_step
+    assert "modal_boost" in with_history.flags
+
+
+def test_preconditioned_controller_disables_modal_boost_during_charge_caution() -> None:
+    grid_geometry = _xlarge_grid_geometry()
+    occupations = resolve_h2_spin_occupations("singlet", case=H2_BENCHMARK_CASE)
+    rho_up, rho_down, _, _ = build_h2_initial_density_guess(
+        occupations=occupations,
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+    )
+    bump = np.zeros_like(rho_up)
+    center = tuple(length // 2 for length in bump.shape)
+    bump[center] = 0.04 * float(np.max(rho_up))
+    modal_history = tuple(np.asarray(scale * bump, dtype=np.float64) for scale in (1.0, 0.98, 0.96))
+    state = ScfControllerState(
+        charge_mixing=0.015,
+        spin_mixing=0.18,
+        charge_cautious_steps_remaining=0,
+        stable_steps=5,
+        iteration_index=9,
+        last_flags=("charge_recovery",),
+        previous_hartree_share=0.70,
+        recent_charge_residual_history=modal_history,
+    )
+    signals = ScfControllerSignals(
+        density_residual_ratio=1.08,
+        hartree_share=0.82,
+        occupied_orbital_overlap_abs=0.15,
+        lowest_subspace_rotation_max_angle_deg=75.0,
+        lowest_gap_ha=0.05,
+    )
+
+    with_history = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=state,
+        signals=signals,
+    )
+    without_history = propose_next_density(
+        occupations=occupations,
+        rho_up_current=rho_up,
+        rho_down_current=rho_down,
+        rho_up_output=np.asarray(rho_up + bump, dtype=np.float64),
+        rho_down_output=np.asarray(rho_down + bump, dtype=np.float64),
+        grid_geometry=grid_geometry,
+        config=ScfControllerConfig.generic_charge_spin_preconditioned(),
+        state=ScfControllerState(
+            charge_mixing=0.015,
+            spin_mixing=0.18,
+            charge_cautious_steps_remaining=0,
+            stable_steps=5,
+            iteration_index=9,
+            last_flags=("charge_recovery",),
+            previous_hartree_share=0.70,
+        ),
+        signals=signals,
+    )
+
+    assert "modal_boost" not in with_history.flags
+    assert np.allclose(with_history.rho_up_next, without_history.rho_up_next)
+    assert np.allclose(with_history.rho_down_next, without_history.rho_down_next)
