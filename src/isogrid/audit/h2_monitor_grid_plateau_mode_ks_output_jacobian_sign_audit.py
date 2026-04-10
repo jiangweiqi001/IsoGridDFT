@@ -15,11 +15,15 @@ from isogrid.ops.kinetic import weighted_l2_norm
 from isogrid.scf import resolve_h2_spin_occupations
 
 from .h2_monitor_grid_local_linear_response_audit import _build_context
-from .h2_monitor_grid_local_linear_response_audit import _density_from_tracked_solve
-from .h2_monitor_grid_scf_amplification_ablation_audit import _baseline_track_solves
 from .h2_monitor_grid_scf_amplification_ablation_audit import _k_track
 from .h2_monitor_grid_scf_amplification_ablation_audit import _shared_source_result
 from .h2_monitor_grid_scf_amplification_ablation_audit import _weighted_field_norm
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _density_from_selection_or_tracked_solve,
+)
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _track_solves_with_optional_projector_route,
+)
 
 _DEFAULT_SHAPE = (15, 15, 17)
 _DEFAULT_BOX_HALF_EXTENTS_BOHR = (9.0, 9.0, 11.0)
@@ -132,6 +136,7 @@ def run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit(
     source_iteration_count: int = _DEFAULT_SOURCE_ITERATION_COUNT,
     probe_iteration: int = _DEFAULT_PROBE_ITERATION,
     controller_name: str = "generic_charge_spin_preconditioned",
+    singlet_experimental_route_name: str = "none",
 ) -> H2MonitorGridPlateauModeKsOutputJacobianSignAuditResult:
     """Estimate the sign of the one-step KS output Jacobian along the plateau mode."""
 
@@ -148,6 +153,7 @@ def run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit(
         grid_geometry=grid_geometry,
         source_iteration_count=source_iteration_count,
         controller_name=controller_name,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
     if len(source_result.history) < 2:
         raise ValueError("Plateau-mode Jacobian sign audit requires at least two SCF iterations.")
@@ -167,16 +173,18 @@ def run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit(
         rho_down=probe_record.input_rho_down,
     )
     track_count = _k_track(occupations, track_lowest_two_states=True)
-    baseline_solve, baseline_tracked = _baseline_track_solves(
+    baseline_solves, baseline_tracked_blocks, baseline_selections = _track_solves_with_optional_projector_route(
         contexts=(baseline_context,),
         case=case,
         count=track_count,
         occupations=occupations,
         grid_geometry=grid_geometry,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
-    baseline_rho_up_out, baseline_rho_down_out = _density_from_tracked_solve(
-        solve_up=baseline_solve[0],
-        tracked_occupied_orbitals=baseline_tracked[0],
+    baseline_rho_up_out, baseline_rho_down_out = _density_from_selection_or_tracked_solve(
+        solve_up=baseline_solves[0],
+        tracked_occupied_orbitals=baseline_tracked_blocks[0],
+        projector_selection=baseline_selections[0],
         occupations=occupations,
         grid_geometry=grid_geometry,
     )
@@ -210,29 +218,33 @@ def run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit(
         rho_up=rho_up_neg,
         rho_down=rho_down_neg,
     )
-    pos_solve, pos_tracked = _baseline_track_solves(
+    pos_solves, pos_tracked_blocks, pos_selections = _track_solves_with_optional_projector_route(
         contexts=(pos_context,),
         case=case,
         count=track_count,
         occupations=occupations,
         grid_geometry=grid_geometry,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
-    neg_solve, neg_tracked = _baseline_track_solves(
+    neg_solves, neg_tracked_blocks, neg_selections = _track_solves_with_optional_projector_route(
         contexts=(neg_context,),
         case=case,
         count=track_count,
         occupations=occupations,
         grid_geometry=grid_geometry,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
-    pos_rho_up_out, pos_rho_down_out = _density_from_tracked_solve(
-        solve_up=pos_solve[0],
-        tracked_occupied_orbitals=pos_tracked[0],
+    pos_rho_up_out, pos_rho_down_out = _density_from_selection_or_tracked_solve(
+        solve_up=pos_solves[0],
+        tracked_occupied_orbitals=pos_tracked_blocks[0],
+        projector_selection=pos_selections[0],
         occupations=occupations,
         grid_geometry=grid_geometry,
     )
-    neg_rho_up_out, neg_rho_down_out = _density_from_tracked_solve(
-        solve_up=neg_solve[0],
-        tracked_occupied_orbitals=neg_tracked[0],
+    neg_rho_up_out, neg_rho_down_out = _density_from_selection_or_tracked_solve(
+        solve_up=neg_solves[0],
+        tracked_occupied_orbitals=neg_tracked_blocks[0],
+        projector_selection=neg_selections[0],
         occupations=occupations,
         grid_geometry=grid_geometry,
     )

@@ -122,6 +122,7 @@ def run_h2_monitor_grid_mixed_density_to_output_response_audit(
     source_iteration_count: int = _DEFAULT_SOURCE_ITERATION_COUNT,
     late_window_size: int = _DEFAULT_LATE_WINDOW_SIZE,
     controller_name: str = "generic_charge_spin_preconditioned",
+    singlet_experimental_route_name: str = "none",
 ) -> H2MonitorGridMixedDensityToOutputResponseAuditResult:
     """Project the mixed-density to next-output response onto the dominant charge mode."""
 
@@ -138,6 +139,7 @@ def run_h2_monitor_grid_mixed_density_to_output_response_audit(
         grid_geometry=grid_geometry,
         source_iteration_count=source_iteration_count,
         controller_name=controller_name,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
     if len(source_result.history) < 2:
         raise ValueError("Mixed-density response audit requires at least two SCF iterations.")

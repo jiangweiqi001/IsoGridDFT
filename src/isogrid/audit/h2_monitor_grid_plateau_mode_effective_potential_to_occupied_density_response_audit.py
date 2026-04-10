@@ -24,15 +24,6 @@ from isogrid.scf.projector_route import update_projector_route
 
 from .h2_monitor_grid_local_linear_response_audit import _build_context
 from .h2_monitor_grid_local_linear_response_audit import _density_from_tracked_solve
-from .h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit import (
-    _grid_parameter_summary,
-)
-from .h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit import (
-    _principal_mode,
-)
-from .h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit import (
-    _weighted_inner,
-)
 from .h2_monitor_grid_scf_amplification_ablation_audit import _build_initial_track_guess
 from .h2_monitor_grid_scf_amplification_ablation_audit import _baseline_track_solves
 from .h2_monitor_grid_scf_amplification_ablation_audit import _k_track
@@ -75,6 +66,51 @@ def _charge_residual_field(record) -> np.ndarray:
         (record.output_rho_up + record.output_rho_down)
         - (record.input_rho_up + record.input_rho_down),
         dtype=np.float64,
+    )
+
+
+def _weighted_inner(
+    field_a: np.ndarray,
+    field_b: np.ndarray,
+    *,
+    grid_geometry: MonitorGridGeometry,
+) -> float:
+    weights = np.asarray(grid_geometry.cell_volumes, dtype=np.float64)
+    return float(
+        np.sum(
+            np.asarray(field_a, dtype=np.float64) * np.asarray(field_b, dtype=np.float64) * weights,
+            dtype=np.float64,
+        )
+    )
+
+
+def _principal_mode(
+    *,
+    residual_fields: tuple[np.ndarray, ...],
+    grid_geometry: MonitorGridGeometry,
+) -> tuple[np.ndarray, float]:
+    sqrt_weights = np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64))
+    matrix = np.stack(
+        [np.asarray(field, dtype=np.float64).reshape(-1) * sqrt_weights.reshape(-1) for field in residual_fields],
+        axis=0,
+    )
+    _, singular_values, right_vectors = np.linalg.svd(matrix, full_matrices=False)
+    weighted_mode = np.asarray(right_vectors[0], dtype=np.float64).reshape(grid_geometry.spec.shape)
+    mode = np.asarray(weighted_mode / np.maximum(sqrt_weights, 1.0e-30), dtype=np.float64)
+    norm = weighted_l2_norm(mode, grid_geometry=grid_geometry)
+    if norm <= 1.0e-16:
+        raise ValueError("Principal plateau mode has near-zero weighted norm.")
+    explained_fraction = float((singular_values[0] ** 2) / np.sum(singular_values**2, dtype=np.float64))
+    return mode / norm, explained_fraction
+
+
+def _grid_parameter_summary(grid_geometry: MonitorGridGeometry) -> str:
+    return (
+        f"shape={grid_geometry.spec.shape}, "
+        f"box_half_extents_bohr=("
+        f"{float(np.max(np.abs(grid_geometry.x_points))):.3f}, "
+        f"{float(np.max(np.abs(grid_geometry.y_points))):.3f}, "
+        f"{float(np.max(np.abs(grid_geometry.z_points))):.3f})"
     )
 
 

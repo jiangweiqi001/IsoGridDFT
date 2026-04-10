@@ -39,3 +39,17 @@ direction inside it.
 - `xxlarge` should expose “current subspace size is too small” rather than
   hiding it as an ordinary tracked-orbital continuity failure.
 - Existing small/large/xlarge local-only short-run behavior should not regress.
+
+## Follow-Up Note
+
+This design note captured the first active-subspace upgrade only. The current
+experimental branch has already moved one layer higher:
+
+- `local-only H2 singlet` still uses the active-subspace alignment machinery
+- but it now also has an experimental `projector_mixing` route that treats the
+  occupied projector / density response as an explicit object
+- and a narrower `guarded_projector_mixing` wrapper that auto-enables that
+  route only on strong late-step plateau signatures
+
+So this note is still historically useful, but it no longer describes the full
+current experimental singlet-response stack by itself.

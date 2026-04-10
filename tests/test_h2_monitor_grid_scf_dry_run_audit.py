@@ -215,3 +215,63 @@ def test_monitor_grid_scf_dry_run_records_projector_route_history_for_experiment
         snapshot.projector_response_frobenius_norm is not None
         for snapshot in result.projector_route_diagnostics_history
     )
+
+
+def test_monitor_grid_scf_dry_run_guarded_projector_route_triggers_on_xxlarge_plateau() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(17, 17, 19),
+        box_half_extents=(10.0, 10.0, 12.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+
+    result = run_h2_monitor_grid_scf_dry_run(
+        "singlet",
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        max_iterations=12,
+        mixing=0.2,
+        density_tolerance=1.0e-2,
+        energy_tolerance=1.0e-4,
+        eigensolver_tolerance=1.0e-2,
+        eigensolver_ncv=12,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="guarded_projector_mixing",
+    )
+
+    assert result.projector_route_guard_enabled is True
+    assert result.projector_route_name == "guarded_projector_mixing"
+    assert result.projector_route_enabled is True
+    assert len(result.projector_route_guard_active_iteration_history) == result.iteration_count
+    assert result.projector_route_guard_trigger_iterations
+    assert any(reason is not None for reason in result.projector_route_guard_reason_history)
+
+
+def test_monitor_grid_scf_dry_run_guarded_projector_route_does_not_mistrigger_on_xlarge() -> None:
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(13, 13, 15),
+        box_half_extents=(8.0, 8.0, 10.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+
+    result = run_h2_monitor_grid_scf_dry_run(
+        "singlet",
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        max_iterations=12,
+        mixing=0.2,
+        density_tolerance=1.0e-2,
+        energy_tolerance=1.0e-4,
+        eigensolver_tolerance=1.0e-2,
+        eigensolver_ncv=10,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="guarded_projector_mixing",
+    )
+
+    assert result.projector_route_guard_enabled is True
+    assert result.projector_route_name == "guarded_projector_mixing"
+    assert result.projector_route_guard_trigger_iterations == ()
+    assert not any(result.projector_route_guard_active_iteration_history)
+    assert result.projector_route_enabled is False
+    assert result.projector_route_diagnostics_history == ()

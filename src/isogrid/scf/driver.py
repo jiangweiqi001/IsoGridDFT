@@ -545,6 +545,10 @@ class H2StaticLocalScfDryRunResult:
     projector_route_enabled: bool = False
     projector_route_name: str | None = None
     projector_route_diagnostics_history: tuple[MonitorGridProjectorRouteIterationDiagnostics, ...] = ()
+    projector_route_guard_enabled: bool = False
+    projector_route_guard_active_iteration_history: tuple[bool, ...] = ()
+    projector_route_guard_trigger_iterations: tuple[int, ...] = ()
+    projector_route_guard_reason_history: tuple[str | None, ...] = ()
 
 
 def _empty_orbital_block(grid_geometry: GridGeometryLike) -> np.ndarray:
@@ -1661,6 +1665,161 @@ def _projector_route_diagnostics_snapshot(
         lowest_gap_ha=lowest_gap_ha,
         verdict=str(selection.verdict),
     )
+
+
+_PROJECTOR_ROUTE_GUARD_MIN_ITERATION = 8
+_PROJECTOR_ROUTE_GUARD_WINDOW_SIZE = 5
+_PROJECTOR_ROUTE_GUARD_MAX_EFFECTIVE_RESPONSE = 1.0e-3
+_PROJECTOR_ROUTE_GUARD_MIN_DENSITY_RESIDUAL = 0.48
+_PROJECTOR_ROUTE_GUARD_MIN_GRID_POINT_COUNT = 5000
+
+
+def _charge_density_from_pair(rho_up: np.ndarray, rho_down: np.ndarray) -> np.ndarray:
+    return np.asarray(rho_up + rho_down, dtype=np.float64)
+
+
+def _record_charge_density(record: ScfIterationRecord, kind: str) -> np.ndarray:
+    if kind == "input":
+        return _charge_density_from_pair(record.input_rho_up, record.input_rho_down)
+    if kind == "output":
+        return _charge_density_from_pair(record.output_rho_up, record.output_rho_down)
+    if kind == "mixed":
+        return _charge_density_from_pair(record.mixed_rho_up, record.mixed_rho_down)
+    raise ValueError(f"Unsupported charge density kind `{kind}`.")
+
+
+def _weighted_field_inner(
+    field_a: np.ndarray,
+    field_b: np.ndarray,
+    *,
+    grid_geometry: GridGeometryLike,
+) -> float:
+    weights = np.asarray(grid_geometry.cell_volumes, dtype=np.float64)
+    return float(
+        np.sum(
+            np.asarray(field_a, dtype=np.float64) * np.asarray(field_b, dtype=np.float64) * weights,
+            dtype=np.float64,
+        )
+    )
+
+
+def _principal_charge_residual_mode_from_history(
+    *,
+    history: tuple[ScfIterationRecord, ...],
+    grid_geometry: GridGeometryLike,
+    window_size: int,
+) -> tuple[np.ndarray, float]:
+    active_records = history[-max(2, min(int(window_size), len(history))):]
+    sqrt_weights = np.sqrt(np.asarray(grid_geometry.cell_volumes, dtype=np.float64))
+    matrix = np.stack(
+        [
+            (
+                np.asarray(
+                    _record_charge_density(record, "output") - _record_charge_density(record, "input"),
+                    dtype=np.float64,
+                ).reshape(-1)
+                * sqrt_weights.reshape(-1)
+            )
+            for record in active_records
+        ],
+        axis=0,
+    )
+    _, singular_values, right_vectors = np.linalg.svd(matrix, full_matrices=False)
+    weighted_mode = np.asarray(right_vectors[0], dtype=np.float64).reshape(grid_geometry.spec.shape)
+    mode = np.asarray(weighted_mode / np.maximum(sqrt_weights, 1.0e-30), dtype=np.float64)
+    norm = weighted_l2_norm(mode, grid_geometry=grid_geometry)
+    if norm <= 1.0e-16:
+        raise ValueError("Guarded projector route mode has near-zero weighted norm.")
+    explained_fraction = float((singular_values[0] ** 2) / np.sum(singular_values**2, dtype=np.float64))
+    mode = np.asarray(mode / norm, dtype=np.float64)
+    last_record = active_records[-1]
+    last_residual = np.asarray(
+        _record_charge_density(last_record, "output") - _record_charge_density(last_record, "input"),
+        dtype=np.float64,
+    )
+    if _weighted_field_inner(last_residual, mode, grid_geometry=grid_geometry) < 0.0:
+        mode = -mode
+    return mode, explained_fraction
+
+
+def _guarded_projector_route_trigger_reason(
+    *,
+    history: tuple[ScfIterationRecord, ...],
+    previous_solve: FixedPotentialEigensolverResult | None,
+    current_solve: FixedPotentialEigensolverResult | None,
+    grid_geometry: GridGeometryLike,
+    iteration: int,
+) -> str | None:
+    if iteration < _PROJECTOR_ROUTE_GUARD_MIN_ITERATION:
+        return None
+    if len(history) < 2 or previous_solve is None or current_solve is None:
+        return None
+    if previous_solve.eigenvalues.size < 2 or current_solve.eigenvalues.size < 2:
+        return None
+    try:
+        mode, explained_fraction = _principal_charge_residual_mode_from_history(
+            history=history,
+            grid_geometry=grid_geometry,
+            window_size=_PROJECTOR_ROUTE_GUARD_WINDOW_SIZE,
+        )
+    except ValueError:
+        return None
+    current_record = history[-1]
+    response_ratio = None
+    active_records = history[-max(2, min(_PROJECTOR_ROUTE_GUARD_WINDOW_SIZE, len(history))):]
+    for previous_record, next_record in zip(active_records[:-1], active_records[1:]):
+        previous_mixed_update = np.asarray(
+            _record_charge_density(previous_record, "mixed") - _record_charge_density(previous_record, "input"),
+            dtype=np.float64,
+        )
+        next_output_response = np.asarray(
+            _record_charge_density(next_record, "output") - _record_charge_density(previous_record, "mixed"),
+            dtype=np.float64,
+        )
+        mixed_update_coefficient = _weighted_field_inner(
+            previous_mixed_update,
+            mode,
+            grid_geometry=grid_geometry,
+        )
+        if abs(mixed_update_coefficient) <= 1.0e-16:
+            continue
+        output_response_coefficient = _weighted_field_inner(
+            next_output_response,
+            mode,
+            grid_geometry=grid_geometry,
+        )
+        response_ratio = float(output_response_coefficient / mixed_update_coefficient)
+    response_regime = "neutral"
+    if response_ratio is not None:
+        if response_ratio <= -0.2:
+            response_regime = "counteract"
+        elif response_ratio >= 0.2:
+            response_regime = "follow"
+    previous_gap = float(previous_solve.eigenvalues[1] - previous_solve.eigenvalues[0])
+    current_gap = float(current_solve.eigenvalues[1] - current_solve.eigenvalues[0])
+    spectral_scale = float(
+        max(
+            abs(float(current_solve.eigenvalues[0] - previous_solve.eigenvalues[0])),
+            abs(float(current_solve.eigenvalues[1] - previous_solve.eigenvalues[1])),
+            abs(current_gap - previous_gap),
+        )
+    )
+    grid_point_count = int(np.prod(grid_geometry.spec.shape))
+    if (
+        response_regime == "counteract"
+        and explained_fraction >= 0.95
+        and float(current_record.density_residual) >= _PROJECTOR_ROUTE_GUARD_MIN_DENSITY_RESIDUAL
+        and grid_point_count >= _PROJECTOR_ROUTE_GUARD_MIN_GRID_POINT_COUNT
+    ):
+        return (
+            "counteract+large_grid_strong_plateau:"
+            f" response_ratio={response_ratio:.3e};"
+            f" spectral_scale={spectral_scale:.3e};"
+            f" explained_fraction={explained_fraction:.3f};"
+            f" density_residual={float(current_record.density_residual):.3e};"
+            f" grid_point_count={grid_point_count}"
+        )
+    return None
 
 
 def _estimate_singlet_hartree_tail_channel_shares(
@@ -3208,9 +3367,14 @@ def run_h2_monitor_grid_scf_dry_run(
     normalized_singlet_experimental_route_name = (
         singlet_experimental_route_name.strip().lower()
     )
-    if normalized_singlet_experimental_route_name not in {"none", "projector_mixing"}:
+    if normalized_singlet_experimental_route_name not in {
+        "none",
+        "projector_mixing",
+        "guarded_projector_mixing",
+    }:
         raise ValueError(
-            "singlet_experimental_route_name must be `none` or `projector_mixing`; "
+            "singlet_experimental_route_name must be `none`, `projector_mixing`, "
+            "or `guarded_projector_mixing`; "
             f"received `{singlet_experimental_route_name}`."
         )
     normalized_hartree_backend = hartree_backend.strip().lower()
@@ -3283,10 +3447,19 @@ def run_h2_monitor_grid_scf_dry_run(
         _closed_shell_singlet_tracking_solve_count(occupations),
         int(active_subspace_config.subspace_size) if active_subspace_enabled else 0,
     )
-    projector_route_enabled = bool(
+    projector_route_guard_enabled = bool(
+        closed_shell_singlet_tracking_enabled
+        and normalized_singlet_experimental_route_name == "guarded_projector_mixing"
+    )
+    projector_route_forced_enabled = bool(
         closed_shell_singlet_tracking_enabled
         and normalized_singlet_experimental_route_name == "projector_mixing"
     )
+    projector_route_requested = bool(
+        closed_shell_singlet_tracking_enabled
+        and normalized_singlet_experimental_route_name in {"projector_mixing", "guarded_projector_mixing"}
+    )
+    projector_route_enabled = bool(projector_route_forced_enabled)
     if (
         normalized_singlet_experimental_route_name != "none"
         and not closed_shell_singlet_tracking_enabled
@@ -3295,8 +3468,11 @@ def run_h2_monitor_grid_scf_dry_run(
             "singlet_experimental_route_name currently supports only the local-only H2 closed-shell singlet path."
         )
     projector_route_config = (
-        ProjectorRouteConfig.local_only_h2_singlet_default(projector_mixing=mixing)
-        if projector_route_enabled
+        ProjectorRouteConfig.local_only_h2_singlet_default(
+            projector_mixing=mixing,
+            experimental_route_name=normalized_singlet_experimental_route_name,
+        )
+        if projector_route_requested
         else None
     )
     controller_config = (
@@ -3381,6 +3557,9 @@ def run_h2_monitor_grid_scf_dry_run(
     projector_route_diagnostics_history: list[
         MonitorGridProjectorRouteIterationDiagnostics
     ] = []
+    projector_route_guard_active_iteration_history: list[bool] = []
+    projector_route_guard_trigger_iterations: list[int] = []
+    projector_route_guard_reason_history: list[str | None] = []
     broyden_history: list[MonitorGridBroydenHistoryEntry] = []
     broyden_used_iterations: list[int] = []
     broyden_history_sizes: list[int] = []
@@ -3406,6 +3585,7 @@ def run_h2_monitor_grid_scf_dry_run(
     previous_controller_occupied_up: np.ndarray | None = None
     active_subspace_state: ActiveSubspaceState | None = None
     projector_route_state: ProjectorRouteState | None = None
+    guarded_projector_route_active = False
     hartree_solve_times: list[float] = []
     hartree_cg_iterations: list[int] = []
     hartree_cached_use_flags: list[bool] = []
@@ -3546,6 +3726,9 @@ def run_h2_monitor_grid_scf_dry_run(
         solve_down = None
         active_subspace_selection: ActiveSubspaceSelectionResult | None = None
         projector_route_selection: ProjectorRouteSelectionResult | None = None
+        projector_route_active_for_iteration = bool(
+            projector_route_forced_enabled or guarded_projector_route_active
+        )
         up_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         down_operator_context: FixedPotentialStaticLocalOperatorContext | None = None
         up_preparation_profile: FixedPotentialStaticLocalPreparationProfile | None = None
@@ -3643,7 +3826,7 @@ def run_h2_monitor_grid_scf_dry_run(
                         solve_up.orbitals[: active_subspace_config.subspace_size],
                         dtype=np.float64,
                     )
-                    if projector_route_enabled and projector_route_config is not None:
+                    if projector_route_active_for_iteration and projector_route_config is not None:
                         projector_route_selection = (
                             initialize_projector_route(
                                 raw_subspace_orbitals=raw_active_subspace,
@@ -3816,7 +3999,7 @@ def run_h2_monitor_grid_scf_dry_run(
 
         density_update_start = perf_counter()
         if (
-            projector_route_enabled
+            projector_route_active_for_iteration
             and projector_route_selection is not None
             and closed_shell_singlet_tracking_enabled
         ):
@@ -4071,7 +4254,7 @@ def run_h2_monitor_grid_scf_dry_run(
                 )
             )
         if (
-            projector_route_enabled
+            projector_route_active_for_iteration
             and projector_route_selection is not None
             and projector_route_config is not None
         ):
@@ -4083,6 +4266,9 @@ def run_h2_monitor_grid_scf_dry_run(
                     lowest_gap_ha=lowest_gap_ha,
                 )
             )
+        projector_route_guard_active_iteration_history.append(
+            bool(projector_route_active_for_iteration)
+        )
         if (
             enable_cycle_breaker
             and _is_h2_closed_shell_singlet(occupations)
@@ -4567,6 +4753,20 @@ def run_h2_monitor_grid_scf_dry_run(
                 ),
             )
         )
+        projector_route_guard_reason: str | None = None
+        if projector_route_guard_enabled and not guarded_projector_route_active:
+            projector_route_guard_reason = _guarded_projector_route_trigger_reason(
+                history=tuple(history),
+                previous_solve=previous_controller_solve_up,
+                current_solve=solve_up,
+                grid_geometry=grid_geometry,
+                iteration=iteration,
+            )
+            if projector_route_guard_reason is not None:
+                guarded_projector_route_active = True
+                projector_route_enabled = True
+                projector_route_guard_trigger_iterations.append(int(iteration))
+        projector_route_guard_reason_history.append(projector_route_guard_reason)
         previous_controller_solve_up = solve_up
         previous_controller_occupied_up = (
             np.asarray(orbitals_up[:1], dtype=np.float64)
@@ -5077,10 +5277,21 @@ def run_h2_monitor_grid_scf_dry_run(
         projector_route_enabled=bool(projector_route_enabled),
         projector_route_name=(
             None
-            if projector_route_config is None
-            else str(projector_route_config.experimental_route_name)
+            if not projector_route_requested
+            else str(normalized_singlet_experimental_route_name)
         ),
         projector_route_diagnostics_history=tuple(projector_route_diagnostics_history),
+        projector_route_guard_enabled=bool(projector_route_guard_enabled),
+        projector_route_guard_active_iteration_history=tuple(
+            bool(value) for value in projector_route_guard_active_iteration_history
+        ),
+        projector_route_guard_trigger_iterations=tuple(
+            int(value) for value in projector_route_guard_trigger_iterations
+        ),
+        projector_route_guard_reason_history=tuple(
+            None if value is None else str(value)
+            for value in projector_route_guard_reason_history
+        ),
         broyden_enabled=bool(enable_broyden),
         broyden_warmup_iterations=int(broyden_warmup_iterations),
         broyden_history_length=int(broyden_history_length),

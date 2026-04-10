@@ -125,13 +125,19 @@ Builds Kohn-Sham operators and solves frozen-potential eigenproblems:
 
 ### `src/isogrid/scf`
 
-Contains the narrow H2-oriented SCF drivers and dry-run logic. This package is intentionally not a general SCF framework yet, but it now also carries the first reusable `charge/spin-channel` controller prototype in `isogrid.scf.controller`.
+Contains the narrow H2-oriented SCF drivers and dry-run logic. This package is intentionally not a general SCF framework yet, but it now also carries the first reusable `charge/spin-channel` controller prototype in `isogrid.scf.controller` and an experimental singlet projector-response route in `isogrid.scf.projector_route`.
 
 That controller currently does three things on the local-only monitor-grid route:
 
 - decomposes feedback into `charge` and `spin` channels rather than mixing `rho_up/rho_down` directly
 - records route-level controller signals (`hartree_share`, residual ratio, low-subspace continuity metrics)
 - applies an early-step opening-policy cap on `charge` mixing for larger closed-shell singlet monitor-grid cases before handing control back to the regular Hartree-aware branch
+
+The current singlet-only projector route is intentionally narrower:
+
+- `projector_mixing` exposes an explicit occupied-projector / density-response experimental route on the `local-only H2 singlet` dry-run path
+- `guarded_projector_mixing` wraps that same route in a small late-step plateau guard so that the projector route only auto-enables when the default route shows `counteract`-style mixed-to-output response with very weak occupied-density response
+- neither route is currently a default-mainline SCF policy; both are audit-facing experimental slices
 
 ### `src/isogrid/audit`
 
@@ -141,6 +147,7 @@ Collects the repository's scientific validation scripts. This package is large b
 - H2 geometry / kinetic / Poisson / Hartree audits
 - monitor-grid fixed-potential and SCF dry-runs
 - generic-controller comparison and targeted bad-pair audits for the local-only monitor-grid SCF path
+- plateau-mode projector-route comparison audits across `none`, `projector_mixing`, and `guarded_projector_mixing`
 - JAX migration and performance audits
 - regression baselines for accepted intermediate states
 

@@ -63,3 +63,28 @@ def test_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit_identifies_s
     )
 
     assert result.output_density_sign_regime in {"positive", "negative", "near_zero"}
+
+
+def test_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit_accepts_projector_route() -> None:
+    from isogrid.audit.h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit import (
+        run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit,
+    )
+
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(15, 15, 17),
+        box_half_extents=(9.0, 9.0, 11.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    result = run_h2_monitor_grid_plateau_mode_ks_output_jacobian_sign_audit(
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        spin_label="singlet",
+        source_iteration_count=12,
+        probe_iteration=12,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="projector_mixing",
+    )
+
+    assert result.spin_state_label == "singlet"
+    assert result.output_density_sign_regime in {"positive", "negative", "near_zero"}

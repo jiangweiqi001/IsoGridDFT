@@ -85,6 +85,7 @@ What is present today:
 - a JAX-native fixed-potential eigensolver path for the current A-grid local-only route, with SciPy retained only as fallback / audit
 - a first very rough H2 A-grid SCF hot-path profiling audit for checking whether that same JAX eigensolver handoff improves end-to-end triplet dry-run timing
 - a reusable `charge/spin` SCF controller module for the local-only H2 monitor-grid dry-run route, including early-step opening-policy support for larger monitor grids
+- an experimental `projector_mixing` singlet route plus a more conservative `guarded_projector_mixing` auto-triggered route for plateau-mode projector/density-response studies on the local-only monitor-grid dry-run path
 - a first quantitative H2-vs-PySCF error audit for the singlet/triplet single-point energies and their relative gap
 - a first H2 singlet grid/box convergence audit that scans geometry-discretization choices and tracks energy-component drift
 - a `PySCF` audit baseline for H2 at `R = 1.4 Bohr`
@@ -183,6 +184,10 @@ The repaired `A-grid + patch + kinetic-trial-fix` path has now reached H2 SCF dr
 - H2 triplet dry-run is already convergent on the local static chain
 - H2 singlet is currently under an experimental, default-off, pattern-triggered structural stabilizer audit on top of the productionish Anderson route, with the current focus on a stronger Hartree-tail freeze-style guard rather than more mixer-family comparisons
 - the local-only dry-run route now also exposes an experimental `generic_charge_spin` controller branch that can suppress the strongest early singlet Hartree-feedback bad pairs on `small / large / xlarge` monitor-grid smoke cases, but this is still a lightweight audit result rather than a production-SCF acceptance claim
+- the local-only H2 singlet dry-run route now also exposes two projector-response experiments:
+  - manual `projector_mixing`, which is currently the stronger `xxlarge` plateau-response route
+  - `guarded_projector_mixing`, which is intentionally more conservative and auto-enables only when the late-step plateau signals indicate that projector/density response is missing
+- the guarded route currently behaves as a safety-oriented experimental layer rather than as a universal singlet improvement path: it helps `xxlarge`-style plateaus while intentionally staying off `xlarge`
 - nonlocal ionic action is still not migrated onto the A-grid path
 
 ## Minimal Setup
@@ -232,6 +237,9 @@ What is currently supported:
 - `baseline_linear` vs `generic_charge_spin` comparison on the H2 monitor-grid dry-run path
 - route-level controller histories in the SCF result object
 - an opening-policy cap on early-step `charge` mixing for larger closed-shell singlet monitor-grid cases
+- a manual `projector_mixing` singlet experimental route for explicit occupied-projector / density-response studies on plateau cases
+- a `guarded_projector_mixing` singlet experimental route that only auto-enables on `local-only H2 singlet` when late-step plateau signals indicate `counteract + tiny occupied-density response`
+- plateau compare audits across `none`, `projector_mixing`, and `guarded_projector_mixing`
 
 What is not yet claimed:
 
@@ -239,4 +247,5 @@ What is not yet claimed:
 - production default-mainline use
 - long-run SCF convergence on the full H2 acceptance path
 - transferability beyond the current local-only H2 audit envelope
+- that `guarded_projector_mixing` is stronger than manual `projector_mixing`; at the moment it should be read as a safer automatic trigger, not as the strongest plateau-fix route
 

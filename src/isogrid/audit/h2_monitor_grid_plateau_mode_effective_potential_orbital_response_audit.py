@@ -14,11 +14,15 @@ from isogrid.grid import build_monitor_grid_for_case
 from isogrid.ops.kinetic import weighted_l2_norm
 
 from .h2_monitor_grid_local_linear_response_audit import _build_context
-from .h2_monitor_grid_local_linear_response_audit import _density_from_tracked_solve
 from .h2_monitor_grid_local_linear_response_audit import _overlap_tracking
-from .h2_monitor_grid_scf_amplification_ablation_audit import _baseline_track_solves
 from .h2_monitor_grid_scf_amplification_ablation_audit import _k_track
 from .h2_monitor_grid_scf_amplification_ablation_audit import _shared_source_result
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _density_from_selection_or_tracked_solve,
+)
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _track_solves_with_optional_projector_route,
+)
 
 _DEFAULT_SHAPE = (15, 15, 17)
 _DEFAULT_BOX_HALF_EXTENTS_BOHR = (9.0, 9.0, 11.0)
@@ -171,6 +175,7 @@ def run_h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit(
     source_iteration_count: int = _DEFAULT_SOURCE_ITERATION_COUNT,
     late_window_size: int = _DEFAULT_LATE_WINDOW_SIZE,
     controller_name: str = "generic_charge_spin_preconditioned",
+    singlet_experimental_route_name: str = "none",
 ) -> H2MonitorGridPlateauModeEffectivePotentialOrbitalResponseAuditResult:
     """Audit which channel remaps the plateau mode on the local-only SCF trace."""
 
@@ -187,6 +192,7 @@ def run_h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit(
         grid_geometry=grid_geometry,
         source_iteration_count=source_iteration_count,
         controller_name=controller_name,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
     if len(source_result.history) < 2:
         raise ValueError("Plateau-mode response audit requires at least two SCF iterations.")
@@ -244,24 +250,28 @@ def run_h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit(
         )
 
         track_count = _k_track(occupations, track_lowest_two_states=True)
-        solves, tracked = _baseline_track_solves(
+        solves, tracked, selections = _track_solves_with_optional_projector_route(
             contexts=(input_context, mixed_context),
             case=case,
             count=track_count,
             occupations=occupations,
             grid_geometry=grid_geometry,
+            singlet_experimental_route_name=singlet_experimental_route_name,
         )
         baseline_solve, mixed_solve = solves
         baseline_tracked, mixed_tracked = tracked
-        baseline_rho_up_out, baseline_rho_down_out = _density_from_tracked_solve(
+        baseline_selection, mixed_selection = selections
+        baseline_rho_up_out, baseline_rho_down_out = _density_from_selection_or_tracked_solve(
             solve_up=baseline_solve,
             tracked_occupied_orbitals=baseline_tracked,
+            projector_selection=baseline_selection,
             occupations=occupations,
             grid_geometry=grid_geometry,
         )
-        mixed_rho_up_out, mixed_rho_down_out = _density_from_tracked_solve(
+        mixed_rho_up_out, mixed_rho_down_out = _density_from_selection_or_tracked_solve(
             solve_up=mixed_solve,
             tracked_occupied_orbitals=mixed_tracked,
+            projector_selection=mixed_selection,
             occupations=occupations,
             grid_geometry=grid_geometry,
         )

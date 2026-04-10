@@ -35,13 +35,14 @@ class ProjectorRouteConfig:
         cls,
         *,
         projector_mixing: float = 0.35,
+        experimental_route_name: str = "projector_mixing",
     ) -> "ProjectorRouteConfig":
         return cls(
             enabled=True,
             active_subspace_size=2,
             target_projector_rank=1,
             projector_mixing=float(projector_mixing),
-            experimental_route_name="projector_mixing",
+            experimental_route_name=str(experimental_route_name),
         )
 
 

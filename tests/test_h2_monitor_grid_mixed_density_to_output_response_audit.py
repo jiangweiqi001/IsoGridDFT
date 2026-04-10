@@ -66,3 +66,28 @@ def test_h2_monitor_grid_mixed_density_to_output_response_audit_identifies_respo
     )
 
     assert result.response_regime in {"follow", "neutral", "counteract"}
+
+
+def test_h2_monitor_grid_mixed_density_to_output_response_audit_accepts_projector_route() -> None:
+    from isogrid.audit.h2_monitor_grid_mixed_density_to_output_response_audit import (
+        run_h2_monitor_grid_mixed_density_to_output_response_audit,
+    )
+
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(15, 15, 17),
+        box_half_extents=(9.0, 9.0, 11.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    result = run_h2_monitor_grid_mixed_density_to_output_response_audit(
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        spin_label="singlet",
+        source_iteration_count=12,
+        late_window_size=5,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="projector_mixing",
+    )
+
+    assert result.spin_state_label == "singlet"
+    assert result.response_regime in {"follow", "neutral", "counteract"}

@@ -96,3 +96,28 @@ def test_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit_treat
 
     assert abs(result.occupied_to_rebuilt_stage_loss) < 1.0e-9
     assert "closely aligned" in result.verdict
+
+
+def test_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit_accepts_projector_route() -> None:
+    from isogrid.audit.h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit import (
+        run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit,
+    )
+
+    grid_geometry = build_monitor_grid_for_case(
+        H2_BENCHMARK_CASE,
+        shape=(15, 15, 17),
+        box_half_extents=(9.0, 9.0, 11.0),
+        element_parameters=build_h2_local_patch_development_element_parameters(),
+    )
+    result = run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit(
+        case=H2_BENCHMARK_CASE,
+        grid_geometry=grid_geometry,
+        spin_label="singlet",
+        source_iteration_count=12,
+        probe_iteration=12,
+        controller_name="generic_charge_spin_preconditioned",
+        singlet_experimental_route_name="projector_mixing",
+    )
+
+    assert result.spin_state_label == "singlet"
+    assert result.rebuilt_charge_sign_regime in {"positive", "negative", "near_zero"}

@@ -16,7 +16,6 @@ from isogrid.ops import weighted_l2_norm
 from isogrid.scf import resolve_h2_spin_occupations
 from isogrid.scf.driver import _build_density_from_occupied_orbitals
 
-from .h2_monitor_grid_local_linear_response_audit import _density_from_tracked_solve
 from .h2_monitor_grid_plateau_mode_effective_potential_orbital_response_audit import (
     _grid_parameter_summary,
 )
@@ -47,7 +46,12 @@ from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_respo
 from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
     _DEFAULT_SOURCE_ITERATION_COUNT,
 )
-from .h2_monitor_grid_scf_amplification_ablation_audit import _baseline_track_solves
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _density_from_selection_or_tracked_solve,
+)
+from .h2_monitor_grid_plateau_mode_effective_potential_to_occupied_density_response_audit import (
+    _track_solves_with_optional_projector_route,
+)
 from .h2_monitor_grid_scf_amplification_ablation_audit import _k_track
 from .h2_monitor_grid_scf_amplification_ablation_audit import _shared_source_result
 
@@ -115,6 +119,7 @@ def run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit(
     probe_iteration: int = _DEFAULT_PROBE_ITERATION,
     late_window_size: int = _DEFAULT_LATE_WINDOW_SIZE,
     controller_name: str = "generic_charge_spin_preconditioned",
+    singlet_experimental_route_name: str = "none",
 ) -> H2MonitorGridOccupiedDensityToRebuiltChargeResponseAuditResult:
     """Audit whether density reconstruction suppresses the plateau-mode response."""
 
@@ -131,6 +136,7 @@ def run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit(
         grid_geometry=grid_geometry,
         source_iteration_count=source_iteration_count,
         controller_name=controller_name,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
     if len(source_result.history) < 2:
         raise ValueError(
@@ -183,19 +189,21 @@ def run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit(
     )
 
     track_count = _k_track(occupations, track_lowest_two_states=True)
-    _, pos_tracked_blocks = _baseline_track_solves(
+    pos_solves, pos_tracked_blocks, pos_selections = _track_solves_with_optional_projector_route(
         contexts=(baseline_context, pos_context),
         case=case,
         count=track_count,
         occupations=occupations,
         grid_geometry=grid_geometry,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
-    _, neg_tracked_blocks = _baseline_track_solves(
+    neg_solves, neg_tracked_blocks, neg_selections = _track_solves_with_optional_projector_route(
         contexts=(baseline_context, neg_context),
         case=case,
         count=track_count,
         occupations=occupations,
         grid_geometry=grid_geometry,
+        singlet_experimental_route_name=singlet_experimental_route_name,
     )
     pos_tracked = pos_tracked_blocks[1]
     neg_tracked = neg_tracked_blocks[1]
@@ -225,29 +233,17 @@ def run_h2_monitor_grid_occupied_density_to_rebuilt_charge_response_audit(
         - np.asarray(neg_raw_up + neg_raw_down, dtype=np.float64)
     )
 
-    from .h2_monitor_grid_local_linear_response_audit import _density_from_tracked_solve as _rebuild
-    # Reuse the standard rebuild+renormalize path used by the tracked dry-run.
-    pos_rebuilt_up, pos_rebuilt_down = _rebuild(
-        solve_up=_baseline_track_solves(
-            contexts=(pos_context,),
-            case=case,
-            count=track_count,
-            occupations=occupations,
-            grid_geometry=grid_geometry,
-        )[0][0],
+    pos_rebuilt_up, pos_rebuilt_down = _density_from_selection_or_tracked_solve(
+        solve_up=pos_solves[1],
         tracked_occupied_orbitals=pos_tracked,
+        projector_selection=pos_selections[1],
         occupations=occupations,
         grid_geometry=grid_geometry,
     )
-    neg_rebuilt_up, neg_rebuilt_down = _rebuild(
-        solve_up=_baseline_track_solves(
-            contexts=(neg_context,),
-            case=case,
-            count=track_count,
-            occupations=occupations,
-            grid_geometry=grid_geometry,
-        )[0][0],
+    neg_rebuilt_up, neg_rebuilt_down = _density_from_selection_or_tracked_solve(
+        solve_up=neg_solves[1],
         tracked_occupied_orbitals=neg_tracked,
+        projector_selection=neg_selections[1],
         occupations=occupations,
         grid_geometry=grid_geometry,
     )
